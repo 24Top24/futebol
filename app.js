@@ -1,6 +1,6 @@
-import { DB, novoToken } from './db.js?v=20';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=20';
-import { paginaMarcador } from './marcador.js?v=20';
+import { DB, novoToken } from './db.js?v=21';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=21';
+import { paginaMarcador } from './marcador.js?v=21';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -920,7 +920,7 @@ function secEquipas(el, X = A.ctxEq) {
       g('gerar').click();
     });
   }
-  // Cartão do jogo ao estilo FIFA: emblemas + rating da equipa com estrelas, barras espelhadas por área
+  // Cartão do jogo: emblemas + rating da equipa com estrelas, barras espelhadas por área
   // (Brancos à esquerda, Pretos à direita) e os plantéis em pequeno. Rating = média do overall sem GR
   // (o que o gerador equilibra). 🧤 = melhor GR da equipa (só informativo, não conta).
   const medE = (eq, f) => { const v = eq.map(f).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
@@ -982,7 +982,7 @@ function secEquipas(el, X = A.ctxEq) {
     };
     const plantel = (eq) => { const g1 = melhorGR(eq);
       return eq.map((id) => `<div>${nm(id)}${id === g1 ? ' <span title="Melhor GR da equipa">🧤</span>' : ''} <small class="mute">${ov(id)}</small></div>`).join(''); };
-    return `<div class="fifa">
+    return `<div class="cjogo">
       <div class="ftopo">
         <div class="fequipa">${LOGO.B}<div class="fnome">BRANCOS</div><div class="frat">${o.ovA.toFixed(0)}</div><div class="festr">${estrelas(o.ovA)}</div></div>
         <div class="fvs">VS</div>
