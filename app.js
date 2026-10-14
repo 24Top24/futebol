@@ -1,6 +1,6 @@
-import { DB, novoToken } from './db.js?v=21';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=21';
-import { paginaMarcador } from './marcador.js?v=21';
+import { DB, novoToken } from './db.js?v=22';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=22';
+import { paginaMarcador } from './marcador.js?v=22';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,7 +73,10 @@ function fotoParaDataURL(file) {
 // =====================================================================
 const juntarPerfis = (players, perfis) => players.map((p) => {
   const pf = perfis.find((x) => x.id === p.id);
-  return pf ? { ...p, alias: pf.alias || '', fotoPropria: pf.foto || '' } : p;
+  if (!pf) return p;
+  // foto '-' = o jogador pediu para não ter foto (nem a própria nem a do WhatsApp).
+  if (pf.foto === '-') return { ...p, alias: pf.alias || '', fotoPropria: '', foto: '', semFoto: true };
+  return { ...p, alias: pf.alias || '', fotoPropria: pf.foto || '' };
 });
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -154,9 +157,18 @@ function editarPerfil(eu, todos) {
     <div class="alvo"><span id="pf-foto">${foto(eu)}</span><div><div class="nome">${esc(nomeDe(eu))}</div><div class="mute">${esc(eu.nome)}</div></div></div>
     <label>Como queres ser tratado? (opcional)</label><input id="pf-alias" maxlength="20" placeholder="${esc(eu.nome)}" value="${esc(eu.alias || '')}">
     <label>Foto melhor do que a do WhatsApp? (opcional)</label><input id="pf-file" type="file" accept="image/*">
+    <button id="pf-semfoto" class="peq" style="margin-top:8px">🗑 Apagar a minha foto (fica só a inicial)</button>
     <button class="prim" id="pf-ok" style="width:100%;margin-top:16px">Guardar e continuar</button>
+    <p class="mute" style="margin-top:12px;font-size:12px">Privacidade: guardamos o teu nome, a foto (se quiseres) e as notas que dás e recebes.
+      As notas que dás só o organizador as vê. Para apagares tudo, pede ao organizador do grupo.</p>
     <button id="pf-trocar" style="width:100%;margin-top:10px">← Não sou eu / escolher outro perfil</button>`;
   document.getElementById('pf-trocar').onclick = () => { lsDel('meu-perfil'); escolherPerfil(todos); };
+  document.getElementById('pf-semfoto').onclick = () => {
+    novaFoto = '-';
+    document.getElementById('pf-file').value = '';
+    document.getElementById('pf-foto').innerHTML = foto({ nome: eu.nome, alias: eu.alias });
+    toast('Foto apagada — carrega em Guardar');
+  };
   document.getElementById('pf-file').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     novaFoto = await fotoParaDataURL(f);
@@ -164,9 +176,10 @@ function editarPerfil(eu, todos) {
   };
   document.getElementById('pf-ok').onclick = async () => {
     const alias = document.getElementById('pf-alias').value.trim().slice(0, 20);
-    const fotoP = novaFoto || eu.fotoPropria || '';
+    const fotoP = novaFoto || eu.fotoPropria || (eu.semFoto ? '-' : '');
     try { await DB.savePerfil(eu.id, { alias, foto: fotoP }); } catch (e) { console.error(e); return toast('Erro a guardar o perfil'); }
-    eu.alias = alias; eu.fotoPropria = fotoP;
+    eu.alias = alias; eu.fotoPropria = fotoP === '-' ? '' : fotoP;
+    if (fotoP === '-') { eu.foto = ''; eu.semFoto = true; }
     lsSet('perfil-ok-' + eu.id, '1');
     votar(eu, todos);
   };
@@ -326,6 +339,13 @@ async function recarregar() {
   // Quem jogou com quem: só jogos terminados e registados (relógio/telemóvel) — equipas escolhidas não contam (Rui, 14/10).
   const reg = jogos.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
   A.conv = contarConvivio(reg);
+  // RGPD: quem pediu "sem foto" fica sem a foto do WhatsApp também na base de dados.
+  for (const p of A.players) {
+    if (p.foto && perfis.find((x) => x.id === p.id)?.foto === '-') {
+      const { id, ...d } = p;
+      DB.savePlayer({ id, ...d, foto: '' }).catch((e) => console.error(e));
+    }
+  }
   A.players = juntarPerfis(A.players, perfis);
   A.players.sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), 'pt'));
 }
