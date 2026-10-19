@@ -1,4 +1,4 @@
-import { DB, novoToken } from './db.js?v=22';
+import { DB, novoToken, novoPin } from './db.js?v=24';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=22';
 import { paginaMarcador } from './marcador.js?v=22';
 
@@ -129,6 +129,8 @@ async function paginaVotar(el) {
   const todos = juntarPerfis(players, perfis).filter((p) => p.ativo !== false && !p.convidado);
   const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
   if (!eu) return escolherPerfil(todos);
+  // Sem ligação válida (outro telemóvel, ou o Rui mudou o PIN) → pede o PIN outra vez.
+  if (!(await DB.ligacaoOk(eu.id))) return pedirPin(eu, todos);
   if (!lsGet('perfil-ok-' + eu.id)) return editarPerfil(eu, todos);
   votar(eu, todos);
 }
@@ -146,8 +148,36 @@ function escolherPerfil(todos) {
       <h2>És o ${esc(p.nome)}?</h2>
       <div class="linha" style="justify-content:center"><button id="nao">Não</button><button class="prim" id="sim">Sim, sou eu</button></div></div>`;
     document.getElementById('nao').onclick = () => escolherPerfil(todos);
-    document.getElementById('sim').onclick = () => { lsSet('meu-perfil', p.id); editarPerfil(p, todos); };
+    document.getElementById('sim').onclick = () => pedirPin(p, todos);
   }));
+}
+
+// PIN de 4 algarismos que o Rui envia a cada um em privado. Pede-se uma vez por telemóvel.
+function pedirPin(p, todos) {
+  const $app = document.getElementById('pub') || document.getElementById('app');
+  $app.innerHTML = `<div class="fim"><div class="alvo" style="justify-content:center">${foto(p)}</div>
+    <h2>${esc(p.nome)}, qual é o teu PIN?</h2>
+    <p class="mute">São 4 algarismos que o Rui te enviou em privado. Só pedimos uma vez neste telemóvel.</p>
+    <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••"
+      style="font-size:28px;text-align:center;letter-spacing:10px;max-width:180px;margin:0 auto;display:block">
+    <div class="linha" style="justify-content:center;margin-top:14px"><button id="pin-voltar">← Não sou eu</button><button class="prim" id="pin-ok">Entrar</button></div>
+    <p class="mute" style="margin-top:12px">Não tens PIN ou esqueceste-te? Pede ao Rui.</p></div>`;
+  const inp = document.getElementById('pin');
+  inp.focus();
+  document.getElementById('pin-voltar').onclick = () => { lsDel('meu-perfil'); escolherPerfil(todos); };
+  let aEntrar = false;
+  const entrar = async () => {
+    const pin = inp.value.trim();
+    if (!/^\d{4}$/.test(pin)) return toast('São 4 algarismos');
+    if (aEntrar) return; aEntrar = true;
+    try { await DB.ligar(p.id, pin); }
+    catch { aEntrar = false; inp.value = ''; inp.focus(); return toast('PIN errado'); }
+    lsSet('meu-perfil', p.id);
+    if (lsGet('perfil-ok-' + p.id)) votar(p, todos); else editarPerfil(p, todos);
+  };
+  document.getElementById('pin-ok').onclick = entrar;
+  inp.onkeydown = (e) => { if (e.key === 'Enter') entrar(); };
+  inp.oninput = () => { if (/^\d{4}$/.test(inp.value)) entrar(); };
 }
 
 function editarPerfil(eu, todos) {
@@ -161,8 +191,22 @@ function editarPerfil(eu, todos) {
     <button class="prim" id="pf-ok" style="width:100%;margin-top:16px">Guardar e continuar</button>
     <p class="mute" style="margin-top:12px;font-size:12px">Privacidade: guardamos o teu nome, a foto (se quiseres) e as notas que dás e recebes.
       As notas que dás só o organizador as vê. Para apagares tudo, pede ao organizador do grupo.</p>
+    <details style="margin-top:12px"><summary>🔑 Mudar o meu PIN</summary>
+      <p class="mute" style="font-size:12px">Escolhe 4 algarismos que fixes. Não uses o PIN do multibanco. Nem o Rui fica a saber o teu PIN novo.</p>
+      <div class="linha"><input id="pf-pin1" inputmode="numeric" maxlength="4" placeholder="novo PIN" style="max-width:120px">
+        <input id="pf-pin2" inputmode="numeric" maxlength="4" placeholder="repetir" style="max-width:120px">
+        <button class="peq" id="pf-pin-ok">Mudar PIN</button></div></details>
     <button id="pf-trocar" style="width:100%;margin-top:10px">← Não sou eu / escolher outro perfil</button>`;
-  document.getElementById('pf-trocar').onclick = () => { lsDel('meu-perfil'); escolherPerfil(todos); };
+  document.getElementById('pf-trocar').onclick = async () => { lsDel('meu-perfil'); await DB.desligar(); escolherPerfil(todos); };
+  document.getElementById('pf-pin-ok').onclick = async () => {
+    const a = document.getElementById('pf-pin1').value.trim(), b = document.getElementById('pf-pin2').value.trim();
+    if (!/^\d{4}$/.test(a)) return toast('O PIN são 4 algarismos');
+    if (a !== b) return toast('Os dois PINs não são iguais');
+    if (/^(\d)\1{3}$/.test(a) || '0123456789'.includes(a) || '9876543210'.includes(a)) return toast('Demasiado fácil — escolhe outro');
+    try { await DB.mudarPin(eu.id, a); } catch (e) { console.error(e); return toast('Não deu para mudar o PIN'); }
+    document.getElementById('pf-pin1').value = document.getElementById('pf-pin2').value = '';
+    toast('PIN mudado ✔');
+  };
   document.getElementById('pf-semfoto').onclick = () => {
     novaFoto = '-';
     document.getElementById('pf-file').value = '';
@@ -758,7 +802,9 @@ async function secPartilhar(el) {
 }
 
 // ---------- Votação ----------
-const msgGrupo = () => `⚽ Malta, inspirei-me no grupo de segunda-feira e vamos passar a ter as equipas feitas de forma automática e equilibrada. Para isso preciso que cada um dê nota de 1 a 10 a todos os outros jogadores (menos a si próprio). Quem não conhecerem, carreguem em "Não conheço". Leva poucos minutos:\n👉 ${BASE}\nEscolham o vosso nome, deem as notas e carreguem em OK. Podem voltar ao link para mudar.`;
+const msgGrupo = () => `⚽ Malta, inspirei-me no grupo de segunda-feira e vamos passar a ter as equipas feitas de forma automática e equilibrada. Para isso preciso que cada um dê nota de 1 a 10 a todos os outros jogadores (menos a si próprio). Quem não conhecerem, carreguem em "Não conheço". Leva poucos minutos:\n👉 ${BASE}\nEscolham o vosso nome, metam o PIN de 4 algarismos que vos mando em privado, deem as notas e carreguem em OK. Podem voltar ao link para mudar.`;
+const msgPin = (p, pin) => `⚽ Olá ${nomeDe(p)}! O teu PIN para a votação da futebolada é *${pin}* — é só teu, não o partilhes.
+👉 ${BASE}`;
 
 async function secVotacao(el) {
   const estado = (await DB.getPublic('estado')) || {};
@@ -771,6 +817,8 @@ async function secVotacao(el) {
     return { p, c: Object.keys(r).length > 0, n };
   });
   const feitos = linhas.filter((l) => l.n >= total).length;
+  const pins = Object.fromEntries((await DB.listPins()).map((x) => [x.id, x]));
+  const semPin = votantes.filter((p) => !pins[p.id]);
   el.innerHTML = `
     <div class="opcao">
       <div class="linha"><b>Votação ${aberta ? '🟢 ABERTA' : '🔴 FECHADA'}</b>
@@ -779,10 +827,30 @@ async function secVotacao(el) {
       <div class="linha"><button class="prim" id="cpgrupo">Copiar mensagem p/ grupo</button>
         <a class="btn" target="_blank" href="https://wa.me/?text=${encodeURIComponent(msgGrupo())}">Abrir no WhatsApp</a></div>
     </div>
+    <div class="opcao">
+      <b>PINs (4 algarismos, um por jogador)</b>
+      <p class="mute">Sem o PIN ninguém vota nem muda o perfil de outro. Envia a cada um <b>em privado</b> (o botão 💬 abre o WhatsApp com a mensagem; escolhes o contacto).
+        Cada um pode mudar o seu PIN no perfil — aí deixas de o ver (🔒). "Reset" dá um PIN aleatório novo e anula o antigo (esqueceu-se, ou espalhou-se).</p>
+      ${semPin.length ? `<button class="prim" id="pins-gerar">Gerar PINs em falta (${semPin.length})</button>` : '<small class="mute">Todos têm PIN.</small>'}
+    </div>
     <h3>${linhas.filter((l) => l.c).length} já começaram · ${feitos}/${votantes.length} terminaram</h3>
     ${linhas.map(({ p, c, n }) => `<div class="jog">${foto(p)}<div class="info"><b>${esc(nomeDe(p))}</b>
       <small>${c ? `${n}/${total} ${n >= total ? '✅' : ''}` : 'ainda não votou'}${nomeDe(p) !== p.nome ? ` · ${esc(p.nome)}` : ''}</small></div>
+      ${!pins[p.id] ? '<small class="mute">sem PIN</small>' : pins[p.id].pin
+        ? `<code style="font-size:16px;margin-right:6px">${esc(pins[p.id].pin)}</code>
+          <a class="btn peq" target="_blank" title="Enviar o PIN no WhatsApp" href="https://wa.me/?text=${encodeURIComponent(msgPin(p, pins[p.id].pin))}">💬</a>`
+        : '<small class="mute" title="Escolhido pelo jogador — não fica guardado">🔒 escolhido</small>'}
+      ${pins[p.id] ? `<button class="peq" data-resetpin="${p.id}">Reset</button>` : ''}
       </div>`).join('')}`;
+  document.getElementById('pins-gerar')?.addEventListener('click', async () => {
+    for (const p of semPin) await DB.definirPin(p.id, novoPin());
+    toast(`${semPin.length} PINs gerados`); secVotacao(el);
+  });
+  el.querySelectorAll('[data-resetpin]').forEach((b) => (b.onclick = async () => {
+    const p = votantes.find((x) => x.id === b.dataset.resetpin);
+    if (!confirm(`Reset ao PIN de ${nomeDe(p)}? Fica com um PIN aleatório novo e o antigo deixa de funcionar.`)) return;
+    await DB.definirPin(p.id, novoPin()); toast('PIN novo — envia-lho com 💬'); secVotacao(el);
+  }));
   document.getElementById('toggle').onclick = async () => { await DB.setPublic('estado', { ...estado, votacaoAberta: !aberta }); secVotacao(el); };
   document.getElementById('cpgrupo').onclick = () => copiar(msgGrupo());
 }

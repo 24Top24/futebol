@@ -1,8 +1,15 @@
 // Camada de dados: Firestore se houver configuração, senão localStorage (modo demo).
-// Votantes não fazem login: escolhem o perfil (guardado no browser). Só o admin faz login (Google).
+// Votantes não fazem login: escolhem o perfil e provam-no UMA vez com o PIN (liga o browser ao jogador).
+// Só o admin faz login (Google).
 import { FIREBASE_CONFIG } from './config.js?v=7';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
+
+export async function sha256hex(t) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, '0')).join('');
+}
+export const novoPin = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0');
 
 export function novoToken(n = 22) {
   const abc = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -34,6 +41,20 @@ function demoDb() {
     async listClaims() { return list('claims'); },
     async reclamar(id) { if (s.claims[id] && s.claims[id].uid !== uid) throw new Error('Perfil já escolhido'); s.claims[id] = { uid, ts: Date.now() }; save(); },
     async libertar(id) { delete s.claims[id]; save(); },
+    // PIN: imita as regras (o PIN certo liga este browser ao jogador).
+    async ligar(id, pin) {
+      const h = await sha256hex(pin + id);
+      if (!s.pins?.[id] || s.pins[id].h !== h) throw new Error('PIN errado');
+      s.ligacao = { player: id, h }; save();
+    },
+    async ligacaoOk(id) { return s.ligacao?.player === id && s.ligacao.h === s.pins?.[id]?.h; },
+    async desligar() { delete s.ligacao; save(); },
+    async mudarPin(id, pin) {
+      if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
+      const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
+    },
+    async listPins() { return Object.entries(s.pins || {}).map(([id, d]) => ({ id, ...d })); },
+    async definirPin(id, pin) { (s.pins ||= {})[id] = { h: await sha256hex(pin + id), pin }; save(); },
     async getVotes(id) { return s.votes[id] || null; },
     async listVotes() { return list('votes'); },
     async saveVote(voter, target, rating) {
@@ -74,7 +95,7 @@ async function fireDb() {
   const app = initializeApp(FIREBASE_CONFIG);
   const db = fs.getFirestore(app);
   const auth = au.getAuth(app);
-  const { doc, getDoc, getDocs, setDoc, deleteDoc, collection } = fs;
+  const { doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch } = fs;
   const list = async (c) => (await getDocs(collection(db, c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const get = async (c, id) => { const d = await getDoc(doc(db, c, id)); return d.exists() ? d.data() : null; };
   const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
@@ -94,6 +115,25 @@ async function fireDb() {
     listClaims: () => list('claims'),
     async reclamar(id) { const uid = await this.uid(); await setDoc(doc(db, 'claims', id), { uid, ts: Date.now() }); },
     libertar: (id) => deleteDoc(doc(db, 'claims', id)),
+    // PIN: as regras só aceitam a ligação se h = sha256(PIN certo + id).
+    async ligar(id, pin) {
+      const uid = await this.uid();
+      try { await setDoc(doc(db, 'ligacoes', uid), { player: id, h: await sha256hex(pin + id), ts: Date.now() }); }
+      catch (e) { throw new Error('PIN errado'); }
+    },
+    // Ligação válida = consigo ler o meu voto (as regras confirmam o PIN atual).
+    async ligacaoOk(id) { try { await this.uid(); await getDoc(doc(db, 'votes', id)); return true; } catch { return false; } },
+    async desligar() { try { const u = await atual(); if (u) await deleteDoc(doc(db, 'ligacoes', u.uid)); } catch {} },
+    // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
+    async mudarPin(id, pin) {
+      const uid = await this.uid(), h = await sha256hex(pin + id), b = writeBatch(db);
+      b.set(doc(db, 'pins', id), { h });
+      b.set(doc(db, 'ligacoes', uid), { player: id, h, ts: Date.now() });
+      await b.commit();
+    },
+    // Admin: PINs (aleatórios guardam 'pin' para reenviar; os escolhidos pelo jogador só têm 'h').
+    listPins: () => list('pins'),
+    definirPin: async (id, pin) => setDoc(doc(db, 'pins', id), { h: await sha256hex(pin + id), pin }),
     getVotes: (id) => get('votes', id),
     listVotes: () => list('votes'),
     saveVote: (voter, target, rating) =>
