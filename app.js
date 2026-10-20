@@ -458,7 +458,7 @@ function htmlElo(elo, ligado) {
   const j = elo?.jogos || 0, pct = elo?.pct ?? 0, aj = elo?.ajuste ?? 0, max = ELO.maxPct * 100;
   const n = Math.abs(pct) < 1 ? 0 : Math.abs(pct) < max / 3 ? 1 : Math.abs(pct) < (2 * max) / 3 ? 2 : 3;
   const s = !j ? '<b class="elo-s igual">–</b>' : !n ? '<b class="elo-s igual">=</b>'
-    : `<b class="elo-s ${pct > 0 ? 'sobe' : 'desce'}">${(pct > 0 ? '▲' : '▼').repeat(n)}</b>`;
+    : `<b class="elo-s ${pct > 0 ? 'sobe' : 'desce'}">${`<i>${pct > 0 ? '▲' : '▼'}</i>`.repeat(n)}</b>`;   // empilhadas
   const q = ['', 'um pouco', 'bastante', 'muito'][n];
   const txt = !j ? 'Ainda sem jogos registados.'
     : !n ? 'Neutro: contas como a tua carta a fazer as equipas.'
