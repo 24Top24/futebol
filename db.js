@@ -20,7 +20,7 @@ export function novoToken(n = 22) {
 // ---------- MODO DEMO ----------
 function demoDb() {
   const KEY = 'futebol-demo-v2';
-  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {}, minhacarta: {} });
+  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {}, minhacarta: {}, saude: {}, treinos: {} });
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
   let s = Object.assign(VAZIO(), load());
   const save = () => localStorage.setItem(KEY, JSON.stringify(s));
@@ -55,6 +55,13 @@ function demoDb() {
     },
     async listPins() { return Object.entries(s.pins || {}).map(([id, d]) => ({ id, ...d })); },
     async definirPin(id, pin) { (s.pins ||= {})[id] = { h: await sha256hex(pin + id), pin }; save(); },
+    async getSaude(id) { return (s.saude ||= {})[id] || null; },
+    async listSaude() { return Object.entries(s.saude || {}).map(([id, d]) => ({ id, ...d })); },
+    async setSaude(id, d) { (s.saude ||= {})[id] = d; save(); },
+    async listTreinos(id) { return Object.entries((s.treinos ||= {})[id] || {}).map(([tid, d]) => ({ id: tid, ...d })); },
+    async saveTreino(id, t, d) { ((s.treinos ||= {})[id] ||= {})[t] = d; save(); },
+    async deleteTreino(id, t) { delete s.treinos?.[id]?.[t]; save(); },
+    async apagarSaude(id) { delete s.saude?.[id]; delete s.treinos?.[id]; save(); },
     async getMinhaCarta(id) { return (s.minhacarta ||= {})[id] || null; },
     async listMinhasCartas() { return Object.entries(s.minhacarta || {}).map(([id, d]) => ({ id, ...d })); },
     async setMinhaCarta(id, d) { (s.minhacarta ||= {})[id] = d; save(); },
@@ -138,6 +145,17 @@ async function fireDb() {
     listPins: () => list('pins'),
     definirPin: async (id, pin) => setDoc(doc(db, 'pins', id), { h: await sha256hex(pin + id), pin }),
     // Carta de cada um (sem votos individuais) + histórico mensal: escreve o admin, lê só o próprio (PIN).
+    // Dados de saúde e treinos do relógio: escreve só o próprio (PIN); o admin só lê.
+    getSaude: (id) => get('saude', id),
+    listSaude: () => list('saude'),
+    setSaude: (id, d) => setDoc(doc(db, 'saude', id), d),
+    listTreinos: async (id) => (await getDocs(collection(db, 'saude', id, 'treinos'))).docs.map((d) => ({ id: d.id, ...d.data() })),
+    saveTreino: (id, t, d) => setDoc(doc(db, 'saude', id, 'treinos', t), d),
+    deleteTreino: (id, t) => deleteDoc(doc(db, 'saude', id, 'treinos', t)),
+    async apagarSaude(id) {
+      for (const d of (await getDocs(collection(db, 'saude', id, 'treinos'))).docs) await deleteDoc(d.ref);
+      await deleteDoc(doc(db, 'saude', id));
+    },
     getMinhaCarta: (id) => get('minhacarta', id),
     listMinhasCartas: () => list('minhacarta'),
     setMinhaCarta: (id, d) => setDoc(doc(db, 'minhacarta', id), d),

@@ -1,6 +1,7 @@
-import { DB, novoToken, novoPin } from './db.js?v=25';
+import { DB, novoToken, novoPin } from './db.js?v=26';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=25';
 import { paginaMarcador } from './marcador.js?v=22';
+import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -263,7 +264,7 @@ function graficoEvolucao(hist) {
 
 // Resumo de um jogo visto por um jogador: resultado, o que ele fez e os golos do jogo.
 // Só usa o resumo público do jogo (nada dos dados de saúde do relógio).
-function resumoJogo(j, euId, aberto) {
+function resumoJogo(j, euId, aberto, extra = '') {
   const lado = (j.brancos || []).some((x) => x.id === euId) ? 'B' : 'P';
   const v = vencedorDe(j), r = v === 'E' ? 'E' : v === lado ? 'V' : 'D';
   const ev = j.eventos || [];
@@ -282,8 +283,172 @@ function resumoJogo(j, euId, aberto) {
   const data = j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT');
   return `<details class="opcao jogo-eu"${aberto ? ' open' : ''}><summary><b class="res res-${r}">${r}</b> ${esc(data)} · ${LOGO.B} ${marcaDe(j, 'B')} – ${marcaDe(j, 'P')} ${LOGO.P}</summary>
     <p><b>O teu jogo:</b> ${meu.length ? meu.join(' · ') : 'sem golos nem assistências'}${dur ? ` · ⏱ ${dur} min de jogo` : ''}</p>
+    ${extra}
     <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${eq('B')}</div><div class="eq preto"><h4>${LOGO.P} Pretos</h4>${eq('P')}</div></div>
     ${linhasEventos(j)}</details>`;
+}
+
+// ---------- Dados físicos e treinos do relógio ----------
+// Dados de saúde (RGPD, categoria especial): só com consentimento; só o próprio e o organizador veem;
+// o organizador só lê. O ficheiro do relógio é lido no browser e não é guardado — só o resumo.
+const fmtMin = (s) => (s ? Math.round(s / 60) + ' min' : '–');
+const n1 = (x, d = 0) => (x == null ? '–' : Number(x).toFixed(d).replace('.', ','));
+const SENS = ['', '😫 péssimo', '😕 mal', '😐 normal', '🙂 bem', '💪 muito bem'];
+
+function graficoFC(fc) {
+  const v = (fc || []).map((x, i) => [i, x]).filter(([, x]) => x);
+  if (v.length < 2) return '';
+  const W = 300, H = 70, lo = Math.min(...v.map(([, x]) => x)) - 5, hi = Math.max(...v.map(([, x]) => x)) + 5, n = fc.length - 1 || 1;
+  return `<svg viewBox="0 0 ${W} ${H}" class="fcg" role="img" aria-label="Frequência cardíaca ao longo do jogo">
+    <polyline fill="none" stroke="var(--vermelho)" stroke-width="1.8" points="${v.map(([i, x]) => `${(i / n) * W},${H - ((x - lo) / (hi - lo)) * H}`).join(' ')}"/></svg>`;
+}
+function htmlZonas(z) {
+  if (!z) return '';
+  return `<div class="zonas">${z.map((p, i) => (p ? `<i class="z${i + 1}" style="width:${p}%" title="${ZONAS[i]}: ${p}%"></i>` : '')).join('')}</div>
+    <div class="mute zleg">${z.map((p, i) => `<span><i class="z${i + 1}"></i>${ZONAS[i].split(' ')[0]} ${p}%</span>`).join('')}</div>`;
+}
+const fcRef = (saude) => fcMaxIdade(idadeDe(saude?.ano));
+function htmlTreino(t, saude) {
+  const z = zonas(t.fc, fcRef(saude), saude?.fcRep);
+  const pre = [t.sensacao && SENS[t.sensacao], t.sono && `${n1(t.sono, 1)} h de sono`, t.dores && `dores: ${esc(t.dores)}`].filter(Boolean);
+  return `<div class="treino"><b>⌚ Relógio</b> <small class="mute">(${t.origem === 'manual' ? 'à mão' : '.' + t.origem})</small><br>
+    ${fmtMin(t.dur)} · ❤️ ${n1(t.fcMed)} média (máx ${n1(t.fcMax)}) · 🔥 ${n1(t.kcal)} kcal · 👟 ${n1(t.km, 2)} km
+    ${graficoFC(t.fc)}${htmlZonas(z)}${!z && t.fc?.length ? '<div class="mute">Mete o ano de nascimento para veres as zonas de esforço.</div>' : ''}
+    ${pre.length ? `<div class="mute">${pre.join(' · ')}</div>` : ''}</div>`;
+}
+// O que aparece dentro do resumo de cada jogo: o treino ligado a esse jogo (+ botões, se for o próprio).
+function extraTreino(jogoId, treinos, saude, leitura) {
+  const t = treinos.find((x) => x.jogoId === jogoId);
+  const bt = leitura || !saude ? '' : `<button class="peq" data-tr="${esc(jogoId)}">${t ? '✏️ Editar treino / pré-pós' : '⌚ Juntar treino do relógio'}</button>`;
+  return (t ? htmlTreino(t, saude) : '') + bt;
+}
+// Bloco "Dados físicos": consentimento, dados pessoais, médias dos treinos e treinos fora dos jogos.
+function blocoFisico(saude, treinos, meus, leitura) {
+  if (!saude) return leitura ? '<p class="mute">Este jogador não ativou os dados físicos.</p>' : `<div class="opcao">
+    <p>Podes guardar aqui os treinos do teu relógio (Garmin, Apple Watch, Wear OS, Samsung, Fitbit… ou à mão), o peso, a altura e como te sentiste em cada jogo.
+      Isto entra nas tuas estatísticas individuais.</p>
+    <p class="mute" style="font-size:12px">São dados de saúde: só tu e o organizador (Rui) os veem — ele só os pode ler, não mexe em nada.
+      Os ficheiros do relógio não são guardados, só o resumo. Podes apagar tudo quando quiseres.</p>
+    <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="fs-ok" style="width:auto;margin-top:3px"> Aceito guardar os meus dados físicos e de saúde para isto.</label>
+    <button class="prim" id="fs-ativar" style="margin-top:8px">Ativar</button></div>`;
+  const idade = idadeDe(saude.ano), ult = (saude.pesos || []).at(-1);
+  const M = mediasTreinos(treinos);
+  const zt = (() => { const todas = treinos.flatMap((t) => t.fc || []); return zonas(todas, fcRef(saude), saude.fcRep); })();
+  const fora = treinos.filter((t) => !t.jogoId || !meus.some((r) => r.id === t.jogoId)).sort((a, b) => (b.inicio || 0) - (a.inicio || 0));
+  return `<div class="opcao">
+    ${leitura ? `<p>Altura <b>${n1(saude.altura)} cm</b> · idade <b>${idade ?? '–'}</b> · FC repouso <b>${n1(saude.fcRep)}</b> · peso <b>${ult ? n1(ult.kg, 1) + ' kg' : '–'}</b></p>` : `
+    <div class="fgrid"><label>Altura (cm)<input id="fs-alt" inputmode="numeric" value="${saude.altura ?? ''}"></label>
+      <label>Ano de nascimento<input id="fs-ano" inputmode="numeric" value="${saude.ano ?? ''}"></label>
+      <label>FC em repouso<input id="fs-rep" inputmode="numeric" value="${saude.fcRep ?? ''}" placeholder="ao acordar"></label>
+      <label>Peso hoje (kg)<input id="fs-peso" inputmode="decimal" value="${ult?.kg ?? ''}"></label></div>
+    <button class="peq prim" id="fs-gravar">Guardar dados</button>`}
+    ${(saude.pesos || []).length > 1 ? `<p class="mute">Peso: ${saude.pesos.slice(-6).map((p) => `${n1(p.kg, 1)} (${p.data.slice(8, 10)}/${p.data.slice(5, 7)})`).join(' → ')}</p>` : ''}
+    ${idade ? `<p class="mute">FC máxima estimada pela idade: ${fcRef(saude)} bpm${saude.fcRep ? '' : ' · mete a FC em repouso para zonas mais certas'}</p>` : ''}
+    </div>
+    ${M.n ? `<div class="opcao"><b>${leitura ? 'Médias' : 'As tuas médias'} com relógio</b> <small class="mute">(${M.n} treino${M.n > 1 ? 's' : ''})</small>
+      <div class="fgrid medias"><span>⏱ <b>${fmtMin(M.dur)}</b></span><span>❤️ <b>${n1(M.fcMed)}</b> média</span><span>❤️ <b>${n1(M.fcMax)}</b> máx</span>
+        <span>🔥 <b>${n1(M.kcal)}</b> kcal/jogo</span><span>👟 <b>${n1(M.km, 2)}</b> km/jogo</span><span>👟 <b>${n1(M.kmTotal, 1)}</b> km no total</span>
+        ${M.sensacao ? `<span>🙂 <b>${n1(M.sensacao, 1)}</b>/5 sensação</span>` : ''}${M.sono ? `<span>😴 <b>${n1(M.sono, 1)}</b> h sono</span>` : ''}</div>
+      ${zt ? `<div class="mute" style="margin-top:6px">Tempo em cada zona (todos os treinos)</div>${htmlZonas(zt)}` : ''}
+      <p class="mute" style="font-size:12px;margin-bottom:0">Em pavilhão o GPS não funciona: os km são estimados pelo relógio e variam de marca para marca.</p></div>` : ''}
+    ${fora.length ? `<b>Treinos fora dos jogos</b>${fora.map((t) => `<div class="opcao">${esc(new Date(t.inicio || t.ts).toLocaleDateString('pt-PT'))} ${htmlTreino(t, saude)}${leitura ? '' : `<button class="peq" data-tr-id="${esc(t.id)}">✏️ Editar</button>`}</div>`).join('')}` : ''}
+    ${leitura ? '' : `<div class="linha"><button class="peq" id="fs-novo">⌚ Carregar treino</button><button class="peq perigo" id="fs-apagar">🗑 Apagar os meus dados físicos</button></div>`}`;
+}
+
+// Liga os botões da parte física do perfil.
+function ligarFisico(eu, todos, saude, treinos, meus) {
+  const g = (id) => document.getElementById(id);
+  const refrescar = () => perfilEu(eu, todos);
+  g('fs-ativar')?.addEventListener('click', async () => {
+    if (!g('fs-ok').checked) return toast('Tens de aceitar primeiro');
+    try { await DB.setSaude(eu.id, { consentimento: { ts: Date.now(), versao: 1 }, pesos: [] }); } catch (e) { console.error(e); return toast('Não deu para ativar'); }
+    refrescar();
+  });
+  g('fs-gravar')?.addEventListener('click', async () => {
+    const nr = (id, lo, hi) => { const v = g(id).value.trim().replace(',', '.'); if (!v) return null; const x = Number(v); return x >= lo && x <= hi ? x : NaN; };
+    const alt = nr('fs-alt', 120, 230), ano = nr('fs-ano', 1930, new Date().getFullYear() - 10), rep = nr('fs-rep', 30, 110), kg = nr('fs-peso', 35, 200);
+    if ([alt, ano, rep, kg].some((x) => Number.isNaN(x))) return toast('Há um valor fora do normal — confirma');
+    const pesos = [...(saude.pesos || [])], hoje = new Date().toISOString().slice(0, 10);
+    if (kg != null && pesos.at(-1)?.kg !== kg) { if (pesos.at(-1)?.data === hoje) pesos.pop(); pesos.push({ data: hoje, kg }); }
+    try { await DB.setSaude(eu.id, { ...saude, altura: alt, ano, fcRep: rep, pesos }); } catch (e) { console.error(e); return toast('Erro a guardar'); }
+    toast('Guardado ✔'); refrescar();
+  });
+  g('fs-apagar')?.addEventListener('click', async () => {
+    if (!confirm('Apagar TODOS os teus dados físicos e treinos? Não há volta atrás.')) return;
+    try { await DB.apagarSaude(eu.id); } catch (e) { console.error(e); return toast('Erro a apagar'); }
+    toast('Apagado'); refrescar();
+  });
+  g('fs-novo')?.addEventListener('click', () => formTreino(eu, saude, treinos, meus, null, refrescar));
+  document.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => formTreino(eu, saude, treinos, meus, b.dataset.tr, refrescar)));
+  document.querySelectorAll('[data-tr-id]').forEach((b) => (b.onclick = () => formTreino(eu, saude, treinos, meus, null, refrescar, treinos.find((t) => t.id === b.dataset.trId))));
+}
+
+// Formulário de um treino: ficheiro do relógio (preenche tudo) ou à mão, mais o pré/pós jogo.
+function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) {
+  const el = document.getElementById('eu-form');
+  const t = existente || treinos.find((x) => jogoId && x.jogoId === jogoId) || {};
+  let fc = t.fc || [], origem = t.origem || 'manual', inicio = t.inicio || null;
+  const dataJogo = (r) => r.jogo.data || new Date(r.jogo.inicioEpoch).toLocaleDateString('pt-PT');
+  const jSel = jogoId || t.jogoId || '';
+  el.innerHTML = `<div class="opcao form-treino"><b>⌚ Treino do relógio</b>
+    <label>Ficheiro do relógio (.FIT, .TCX ou .GPX)</label><input type="file" id="tr-fich" accept=".fit,.tcx,.gpx">
+    <details class="mute" style="font-size:12px"><summary>Como tiro o ficheiro do meu relógio?</summary>
+      <b>Garmin:</b> Garmin Connect no browser → a atividade → ⚙ → Exportar original (.FIT).<br>
+      <b>Apple Watch:</b> a app HealthFit (iPhone) exporta o treino em .FIT; ou liga ao Strava e usa o passo do Strava.<br>
+      <b>Wear OS / Samsung / Pixel / Huawei / Amazfit:</b> liga a app do relógio ao Strava → strava.com no browser → a atividade → ⋯ → Exportar GPX.<br>
+      <b>Fitbit:</b> fitbit.com → o treino → ⋯ → Exportar TCX.<br>
+      <b>Não consegues?</b> Escreve os números à mão em baixo (vê-os na app do relógio).</details>
+    <div id="tr-lido" class="mute"></div>
+    <label>Jogo</label><select id="tr-jogo"><option value="">Treino fora dos jogos</option>
+      ${meus.map((r) => `<option value="${esc(r.id)}" ${r.id === jSel ? 'selected' : ''}>${esc(dataJogo(r))}</option>`).join('')}</select>
+    <div class="fgrid"><label>Duração (min)<input id="tr-dur" inputmode="numeric" value="${t.dur ? Math.round(t.dur / 60) : ''}"></label>
+      <label>FC média<input id="tr-fcm" inputmode="numeric" value="${t.fcMed ?? ''}"></label>
+      <label>FC máxima<input id="tr-fcx" inputmode="numeric" value="${t.fcMax ?? ''}"></label>
+      <label>Calorias<input id="tr-kcal" inputmode="numeric" value="${t.kcal ?? ''}"></label>
+      <label>Km<input id="tr-km" inputmode="decimal" value="${t.km ?? ''}"></label></div>
+    <b>Pré / pós jogo</b>
+    <div class="fgrid"><label>Como te sentiste<select id="tr-sens"><option value="">—</option>${[1, 2, 3, 4, 5].map((k) => `<option value="${k}" ${t.sensacao === k ? 'selected' : ''}>${SENS[k]}</option>`).join('')}</select></label>
+      <label>Horas de sono<input id="tr-sono" inputmode="decimal" value="${t.sono ?? ''}"></label></div>
+    <label>Dores / lesão (opcional)<input id="tr-dores" maxlength="120" value="${esc(t.dores || '')}"></label>
+    <div class="linha" style="margin-top:10px"><button class="prim" id="tr-ok">Guardar</button><button id="tr-cancel">Cancelar</button>
+      ${t.id ? '<button class="perigo" id="tr-del">Apagar treino</button>' : ''}</div></div>`;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const g = (id) => document.getElementById(id);
+  g('tr-fich').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const r = await lerFicheiro(f);
+      fc = r.fc; origem = r.origem; inicio = r.inicio;
+      if (r.dur) g('tr-dur').value = Math.round(r.dur / 60);
+      if (r.fcMed) g('tr-fcm').value = r.fcMed;
+      if (r.fcMax) g('tr-fcx').value = r.fcMax;
+      if (r.kcal) g('tr-kcal').value = r.kcal;
+      if (r.km) g('tr-km').value = r.km;
+      // Junta ao jogo que começou até 3 h antes/depois do treino.
+      const jogo = r.inicio && meus.find((x) => Math.abs((x.jogo.inicioEpoch || 0) - r.inicio) < 3 * 3600000);
+      if (jogo && !jogoId) g('tr-jogo').value = jogo.id;
+      g('tr-lido').innerHTML = `✔ Lido: ${r.inicio ? new Date(r.inicio).toLocaleString('pt-PT') : ''} · ${fc.filter(Boolean).length ? `FC em ${fc.length} blocos de 30 s` : 'sem FC'}${jogo ? ' · ligado ao jogo do mesmo dia' : ''}`;
+    } catch (err) { console.error(err); toast(err.message || 'Não deu para ler o ficheiro'); }
+  };
+  g('tr-cancel').onclick = () => (el.innerHTML = '');
+  g('tr-del')?.addEventListener('click', async () => {
+    if (!confirm('Apagar este treino?')) return;
+    await DB.deleteTreino(eu.id, t.id); depois();
+  });
+  g('tr-ok').onclick = async () => {
+    const nr = (id) => { const v = g(id).value.trim().replace(',', '.'); return v === '' ? null : Number(v); };
+    const d = { jogoId: g('tr-jogo').value || null, origem, inicio, dur: nr('tr-dur') != null ? nr('tr-dur') * 60 : null, fcMed: nr('tr-fcm'), fcMax: nr('tr-fcx'),
+      kcal: nr('tr-kcal'), km: nr('tr-km'), fc: fc || [], sensacao: nr('tr-sens'), sono: nr('tr-sono'), dores: g('tr-dores').value.trim() || null, ts: Date.now() };
+    if (Object.entries(d).some(([k, v]) => typeof v === 'number' && Number.isNaN(v))) return toast('Há um número mal escrito');
+    if (d.fcMed && (d.fcMed < 40 || d.fcMed > 230)) return toast('FC média fora do normal');
+    const id = d.jogoId || t.id || 't' + (inicio || Date.now());
+    if (d.jogoId && treinos.some((x) => x.jogoId === d.jogoId && x.id !== t.id && x.id !== id)) return toast('Esse jogo já tem um treino — edita-o');
+    try {
+      await DB.saveTreino(eu.id, id, d);
+      if (t.id && t.id !== id) await DB.deleteTreino(eu.id, t.id);
+    } catch (e) { console.error(e); return toast('Erro a guardar'); }
+    toast('Treino guardado ✔'); depois();
+  };
 }
 
 // Perfil do jogador (com PIN): a sua carta com setas do último mês, a evolução, os seus jogos e as estatísticas.
@@ -291,7 +456,8 @@ function resumoJogo(j, euId, aberto) {
 async function perfilEu(eu, todos) {
   const $app = document.getElementById('pub') || document.getElementById('app');
   $app.innerHTML = '<p class="mute">A carregar…</p>';
-  const [estado, mc, jogosPub] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub()]);
+  const [estado, mc, jogosPub, saude, treinos] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub(),
+    DB.getSaude(eu.id).catch(() => null), DB.listTreinos(eu.id).catch(() => [])]);
   const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim');
   const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
@@ -306,9 +472,11 @@ async function perfilEu(eu, todos) {
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
       <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a>${estado?.votacaoAberta ? ' · <a href="#" id="eu-votar" style="color:inherit">votar</a>' : ''}</span></div>
     ${carta}
+    <h3>🩺 Dados físicos e relógio</h3><div id="eu-form"></div>${blocoFisico(saude, treinos, meus, false)}
     <h3>Os teus jogos (${meus.length})</h3>
-    ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0)).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
+    ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0, extraTreino(r.id, treinos, saude, false))).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
     <h3>Estatísticas de todos</h3><div id="eu-stats"></div>`;
+  ligarFisico(eu, todos, saude, treinos, meus);
   tabelaStats(document.getElementById('eu-stats'), res, todos, 'pts', eu.id);
   document.getElementById('eu-perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
   document.getElementById('eu-votar')?.addEventListener('click', (e) => { e.preventDefault(); A.pubTab = 'votar'; paginaInicio(); });
@@ -536,12 +704,12 @@ async function publicarRetrato() {
 }
 
 function renderAdmin() {
-  const tabs = [['jog', 'Jogadores'], ['vot', 'Votação'], ['cartas', 'Cartas'], ['equipas', 'Equipas'], ['jogos', 'Jogos'], ['stats', 'Estatísticas'], ['part', 'Partilhar']];
+  const tabs = [['jog', 'Jogadores'], ['vot', 'Votação'], ['cartas', 'Cartas'], ['equipas', 'Equipas'], ['jogos', 'Jogos'], ['stats', 'Estatísticas'], ['saude', 'Saúde'], ['part', 'Partilhar']];
   $app.innerHTML = `<div class="tabs">${tabs.map(([k, n]) => `<button data-t="${k}" class="${A.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="sec"></div>`;
   $app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { A.tab = b.dataset.t; renderAdmin(); }));
   const sec = document.getElementById('sec');
   if (A.tab === 'equipas') { sec.innerHTML = '<p class="mute">A carregar…</p>'; ctxAdmin().then((X) => { A.ctxEq = X; secEquipas(sec, X); }); return; }
-  ({ jog: secJogadores, vot: secVotacao, cartas: secCartas, jogos: secJogos, stats: secEstatisticas, part: secPartilhar })[A.tab](sec);
+  ({ jog: secJogadores, vot: secVotacao, cartas: secCartas, jogos: secJogos, stats: secEstatisticas, saude: secSaude, part: secPartilhar })[A.tab](sec);
 }
 
 // GR que sofreu: o relógio grava-o no golo; jogos antigos deduzem-no pelos turnos.
@@ -883,6 +1051,27 @@ async function simularJogos(n = 10) {
     await DB.saveResultado(id, { json: JSON.stringify({ jogo, fit: {} }) });
     await DB.saveJogoPub(id, { json: JSON.stringify(jogo) });
   }
+}
+
+// ---------- Saúde (só leitura: os dados são de cada jogador; o admin não altera nada) ----------
+async function secSaude(el) {
+  el.innerHTML = '<p class="mute">A carregar…</p>';
+  const lista = await DB.listSaude();
+  const nome = (id) => nomeDe(A.players.find((p) => p.id === id) || { nome: '?' });
+  el.innerHTML = `<p class="mute">Só leitura. Cada jogador ativa e gere os seus dados no perfil (👤 Eu); tu não podes alterar nada.</p>
+    ${lista.length ? `<select id="sd-sel"><option value="">— escolhe o jogador (${lista.length} com dados) —</option>
+      ${lista.sort((a, b) => nome(a.id).localeCompare(nome(b.id), 'pt')).map((s) => `<option value="${s.id}">${esc(nome(s.id))}</option>`).join('')}</select>` : '<p>Ainda ninguém ativou os dados físicos.</p>'}
+    <div id="sd-det"></div>`;
+  document.getElementById('sd-sel')?.addEventListener('change', async (e) => {
+    const id = e.target.value, det = document.getElementById('sd-det');
+    if (!id) return (det.innerHTML = '');
+    const [treinos, jogosPub] = await Promise.all([DB.listTreinos(id), DB.listJogosPub()]);
+    const saude = lista.find((s) => s.id === id);
+    const meus = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim'
+      && [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === id)).sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
+    det.innerHTML = blocoFisico(saude, treinos, meus, true) + meus.filter((r) => treinos.some((t) => t.jogoId === r.id))
+      .map((r) => resumoJogo(r.jogo, id, false, extraTreino(r.id, treinos, saude, true))).join('');
+  });
 }
 
 // ---------- Partilhar (link de colaborador) ----------
@@ -1293,3 +1482,18 @@ async function rota() {
 }
 window.addEventListener('hashchange', rota);
 rota();
+
+// ---------- App instalável (PWA) ----------
+// Android/Chrome/Edge: botão "Instalar app" quando o browser deixa. iPhone: o Safari não tem botão — explica-se o caminho.
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch((e) => console.error(e));
+const instalada = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const $inst = document.getElementById('instalar');
+let pedidoInstalar = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pedidoInstalar = e; $inst.hidden = false; });
+window.addEventListener('appinstalled', () => { $inst.hidden = true; toast('App instalada ✔'); });
+const iPhone = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (iPhone && !instalada()) $inst.hidden = false;
+$inst.onclick = async () => {
+  if (pedidoInstalar) { pedidoInstalar.prompt(); await pedidoInstalar.userChoice; pedidoInstalar = null; $inst.hidden = true; return; }
+  alert('Para instalar no iPhone:\n1. Abre este link no Safari\n2. Toca em Partilhar (o quadrado com a seta ↑)\n3. "Adicionar ao ecrã principal"');
+};
