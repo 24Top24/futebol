@@ -197,3 +197,7 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 .elo-s { font-size: 20px; line-height: 1; min-width: 28px; display: flex; flex-direction: column; align-items: center; }
 .elo-s i { font-style: normal; line-height: .62; }
 .elo-s.sobe { color: var(--verde); } .elo-s.desce { color: var(--vermelho); } .elo-s.igual { color: var(--mute); }
+
+/* Pedido para atualizar notas */
+.opcao.pedido { border: 1px solid var(--verde2); }
+.tag-atual { color: var(--amarelo); font-weight: 700; margin-left: 4px; }

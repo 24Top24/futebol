@@ -235,6 +235,24 @@ function editarPerfil(eu, todos) {
   };
 }
 
+// Jogadores a quem devo voltar a dar nota: já joguei com eles 3+ jogos desde a última nota que lhes dei
+// (ou nunca lhes dei nota / disse "não conheço" — agora já nos vimos jogar). Notas antigas sem data usam a data do voto.
+const JOGOS_PARA_ATUALIZAR = 3;
+function paraAtualizar(euId, r, tsVoto, jogos) {
+  const conta = {};
+  for (const j of jogos) {
+    if (j.fase !== 'fim') continue;
+    const ids = [...(j.brancos || []), ...(j.pretos || [])].map((x) => x.id);
+    if (!ids.includes(euId)) continue;
+    for (const o of ids) {
+      if (o === euId) continue;
+      const desde = r[o] ? (r[o].t ?? tsVoto ?? 0) : 0;
+      if ((j.inicioEpoch || 0) > desde) conta[o] = (conta[o] || 0) + 1;
+    }
+  }
+  return Object.entries(conta).filter(([, n]) => n >= JOGOS_PARA_ATUALIZAR).map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n);
+}
+
 // Depois do PIN: vai para onde o jogador estava (votar ou o perfil "Eu").
 const seguir = (eu, todos) => (A.pubTab === 'eu' ? perfilEu(eu, todos) : votar(eu, todos));
 
@@ -479,6 +497,16 @@ async function perfilEu(eu, todos) {
   const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
   const d = variacoes(mc?.hist);
+  // Pedido para atualizar notas (só faz sentido com a votação aberta).
+  let pedido = '';
+  if (estado?.votacaoAberta) {
+    const meuVoto = await DB.getVotes(eu.id).catch(() => null);
+    const ativos = new Set(todos.map((p) => p.id));
+    const L = paraAtualizar(eu.id, meuVoto?.r || {}, meuVoto?.ts, res.map((x) => x.jogo)).filter((x) => ativos.has(x.id));
+    if (L.length) pedido = `<div class="opcao pedido"><b>🗳 Atualiza as tuas notas</b>
+      <p class="mute" style="margin:4px 0 8px">Já jogaste ${JOGOS_PARA_ATUALIZAR}+ jogos com ${L.slice(0, 5).map((x) => esc(nomeDe(todos.find((p) => p.id === x.id)))).join(', ')}${L.length > 5 ? ` e mais ${L.length - 5}` : ''} desde a última nota que lhes deste. Leva um minuto.</p>
+      <button class="prim peq" id="eu-pedido">Atualizar agora</button></div>`;
+  }
   let carta;
   // Cartas escondidas: a mesma carta com tudo a 0 (fictícia) — quando o Rui as mostrar, só mudam os valores.
   if (!estado?.cartasPessoais) carta = `<div class="eu-carta">${htmlCarta(eu, { ficticia: true, overall: 0, stats: Object.fromEntries(AREAS.map((a) => [a.k, 0])) })}</div>
@@ -491,7 +519,7 @@ async function perfilEu(eu, todos) {
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
       <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a>${estado?.votacaoAberta ? ' · <a href="#" id="eu-votar" style="color:inherit">votar</a>' : ''}</span></div>
-    ${carta}
+    ${pedido}${carta}
     <h3>🩺 Dados físicos e relógio</h3><div id="eu-form"></div>${blocoFisico(saude, treinos, meus, false)}
     <h3>Os teus jogos (${meus.length})</h3>
     ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0, extraTreino(r.id, treinos, saude, false))).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
@@ -500,16 +528,24 @@ async function perfilEu(eu, todos) {
   tabelaStats(document.getElementById('eu-stats'), res, todos, 'pts', eu.id);
   document.getElementById('eu-perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
   document.getElementById('eu-votar')?.addEventListener('click', (e) => { e.preventDefault(); A.pubTab = 'votar'; paginaInicio(); });
+  document.getElementById('eu-pedido')?.addEventListener('click', () => { A.pubTab = 'votar'; paginaInicio(); });
 }
 
 // Todos os jogadores numa lista com todas as áreas. "Não conheço" ou "OK" fecham o jogador numa linha
 // (a seta ▾ volta a abri-lo). Filtro por área opcional, para comparar só o remate, por exemplo.
 async function votar(eu, todos) {
   const $app = document.getElementById('pub') || document.getElementById('app');
-  const alvos = todos.filter((p) => p.id !== eu.id).sort((a, b) => nomeDe(a).localeCompare(nomeDe(b), 'pt'));
-  const r = (await DB.getVotes(eu.id))?.r || {};
+  const [meuVoto, jogosPub] = await Promise.all([DB.getVotes(eu.id), DB.listJogosPub()]);
+  const r = meuVoto?.r || {};
+  // Primeiro os jogadores com quem mais jogo (mesma equipa ou contra), no fim aqueles com quem menos jogo.
+  const jogos = jogosPub.map((x) => { try { return JSON.parse(x.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
+  const juntos = contarConvivio(jogos)[eu.id] || {};
+  const atualizar = new Set(paraAtualizar(eu.id, r, meuVoto?.ts, jogos).map((x) => x.id));
+  const alvos = todos.filter((p) => p.id !== eu.id)
+    .sort((a, b) => (juntos[b.id] || 0) - (juntos[a.id] || 0) || nomeDe(a).localeCompare(nomeDe(b), 'pt'));
   let filtro = 'todos';
   const abertos = new Set();          // abertos à mão depois de fechados
+  atualizar.forEach((id) => abertos.add(id));   // os que estão para atualizar aparecem logo abertos
   const fechadosAgora = new Set();    // fechados nesta sessão com OK
   const completo = (p) => r[p.id]?.skip || AREAS.every((a) => typeof r[p.id]?.[a.k] === 'number');
   const fechado = (p) => !abertos.has(p.id) && (r[p.id]?.skip || completo(p) || fechadosAgora.has(p.id));
@@ -517,7 +553,9 @@ async function votar(eu, todos) {
   async function guardar(p, parcial) {
     const antes = r[p.id];
     r[p.id] = { ...(r[p.id] || {}), ...parcial };
-    try { await DB.saveVote(eu.id, p.id, parcial); }
+    r[p.id].t = Date.now(); atualizar.delete(p.id);
+    $app.querySelector(`.vrow[data-id="${p.id}"] .tag-atual`)?.remove();
+    try { await DB.saveVote(eu.id, p.id, { ...parcial, t: r[p.id].t }); }
     catch (e) { console.error(e); r[p.id] = antes; toast('Erro a guardar — tenta outra vez'); }
     atualizarTopo();
   }
@@ -533,7 +571,7 @@ async function votar(eu, todos) {
 
   function cartao(p) {
     const rr = r[p.id] || {};
-    const cab = `${foto(p)}<b>${esc(nomeDe(p))}</b>`;
+    const cab = `${foto(p)}<b>${esc(nomeDe(p))}</b>${atualizar.has(p.id) ? ' <small class="tag-atual" title="Já jogaram 3+ jogos desde a tua nota">⟳ atualizar</small>' : ''}`;
     // Fechado: uma linha com o resumo e a seta para reabrir.
     if (fechado(p)) {
       const resumo = rr.skip ? 'não conheço' : AREAS.map((a) => `${a.ab} ${rr[a.k] ?? '–'}`).join(' · ');
