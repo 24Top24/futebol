@@ -194,5 +194,5 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 
 /* Seta do Elo no perfil */
 .opcao.elo { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
-.elo-s { font-size: 26px; line-height: 1; min-width: 28px; text-align: center; }
+.elo-s { font-size: 20px; line-height: 1; min-width: 28px; text-align: center; letter-spacing: -2px; white-space: nowrap; }
 .elo-s.sobe { color: var(--verde); } .elo-s.desce { color: var(--vermelho); } .elo-s.igual { color: var(--mute); }

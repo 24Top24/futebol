@@ -226,7 +226,14 @@ export const marcaDe = (j, e) => (j.semGolos ? (vencedorDe(j) === 'E' ? 'E' : ve
 // Ponto de partida = a carta (10 pontos de overall = 100 de Elo). Cada jogo mexe só na "forma" de cada um:
 // quem ganha mais do que as cartas previam sobe, quem perde contra o previsto desce. Diferença de golos pesa (log2).
 // Desligado por defeito nas equipas: o admin liga no separador Equipas ("Ajustar pela forma").
-export const ELO = { k: 24, escala: 10, limite: 150 };
+// O Elo nunca substitui as pontuações: o ajuste ao overall está limitado a maxPct do próprio overall (decisão do Rui, 21/10).
+export const ELO = { k: 24, escala: 10, limite: 150, maxPct: 0.10 };
+// Pontos de overall a somar pela forma (com o teto de maxPct). Ex.: carta 70, forma +150 → +7 (e não +15).
+export const ajusteElo = (overall, forma) => {
+  if (overall == null || !forma) return 0;
+  const teto = ELO.maxPct * overall;
+  return Math.max(-teto, Math.min(teto, forma / ELO.escala));
+};
 
 // jogos: [{fase:'fim', inicioEpoch, brancos:[{id,nome}], pretos:[...], eventos:[{equipa}]}] (formato do relógio/marcador)
 export function calcularElo(jogos, cartas = {}) {
@@ -249,12 +256,12 @@ export function calcularElo(jogos, cartas = {}) {
   return F;
 }
 
-// Cartas com o overall corrigido pela forma (para gerar equipas). Não mexe nas áreas.
+// Cartas com o overall corrigido pela forma (para gerar equipas), no máximo ±maxPct. Não mexe nas áreas.
 export function aplicarForma(cartas, elo) {
   const out = {};
   for (const [id, c] of Object.entries(cartas)) {
     const f = elo[id]?.forma || 0;
-    out[id] = c.overall == null || !f ? c : { ...c, overall: Math.round(c.overall + f / ELO.escala) };
+    out[id] = c.overall == null || !f ? c : { ...c, overall: Math.round(c.overall + ajusteElo(c.overall, f)) };
   }
   return out;
 }

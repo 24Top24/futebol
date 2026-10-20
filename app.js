@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=28';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=25';
+import { DB, novoToken, novoPin } from './db.js?v=29';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=29';
 import { paginaMarcador } from './marcador.js?v=22';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
 
@@ -453,14 +453,18 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
 
 // Seta do Elo: a "forma" pelos resultados — ▲ conta acima da carta a fazer as equipas no próximo jogo, ▼ abaixo.
 // Nunca mexe na carta. 10 pontos de Elo = 1 ponto de overall.
+// Setas pelo peso do ajuste face ao máximo permitido (10 % do overall): ▲ até 1/3, ▲▲ até 2/3, ▲▲▲ perto do máximo.
 function htmlElo(elo, ligado) {
-  const f = Math.round(elo?.forma || 0), j = elo?.jogos || 0;
-  const s = !j ? '<b class="elo-s igual">–</b>' : f >= 5 ? `<b class="elo-s sobe">▲</b>` : f <= -5 ? `<b class="elo-s desce">▼</b>` : '<b class="elo-s igual">=</b>';
+  const j = elo?.jogos || 0, pct = elo?.pct ?? 0, aj = elo?.ajuste ?? 0, max = ELO.maxPct * 100;
+  const n = Math.abs(pct) < 1 ? 0 : Math.abs(pct) < max / 3 ? 1 : Math.abs(pct) < (2 * max) / 3 ? 2 : 3;
+  const s = !j ? '<b class="elo-s igual">–</b>' : !n ? '<b class="elo-s igual">=</b>'
+    : `<b class="elo-s ${pct > 0 ? 'sobe' : 'desce'}">${(pct > 0 ? '▲' : '▼').repeat(n)}</b>`;
+  const q = ['', 'um pouco', 'bastante', 'muito'][n];
   const txt = !j ? 'Ainda sem jogos registados.'
-    : f >= 5 ? `Valorizado no próximo jogo: contas como +${n1(f / 10, 1)} acima da tua carta a fazer as equipas.`
-    : f <= -5 ? `Desvalorizado no próximo jogo: contas como ${n1(f / 10, 1)} abaixo da tua carta a fazer as equipas.`
-    : 'Neutro: contas como a tua carta a fazer as equipas.';
-  return `<div class="opcao elo">${s}<div><b>Elo (forma pelos resultados)</b> <small class="mute">${j} jogo${j === 1 ? '' : 's'}</small>
+    : !n ? 'Neutro: contas como a tua carta a fazer as equipas.'
+    : pct > 0 ? `${q[0].toUpperCase() + q.slice(1)} valorizado no próximo jogo: contas como +${n1(aj, 1)} (${n1(pct, 1)} %) acima da tua carta a fazer as equipas.`
+    : `${q[0].toUpperCase() + q.slice(1)} desvalorizado no próximo jogo: contas como ${n1(aj, 1)} (${n1(pct, 1)} %) abaixo da tua carta a fazer as equipas.`;
+  return `<div class="opcao elo">${s}<div><b>Elo (forma pelos resultados)</b> <small class="mute">${j} jogo${j === 1 ? '' : 's'} · no máximo ±${max} % da carta</small>
     <div class="mute">${txt}${j && !ligado ? ' O ajuste pelo Elo ainda não está ligado.' : ''} Não mexe na carta.</div></div></div>`;
 }
 
@@ -703,7 +707,8 @@ async function publicarCartasPessoais() {
     const hist = [...(antes[p.id]?.hist || [])];
     if (hist.at(-1)?.mes === mes) hist[hist.length - 1] = foto; else hist.push(foto);
     const e = elo[p.id];
-    const novo = { carta, hist, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo) } : null };
+    const aj = e ? ajusteElo(c.overall, e.forma) : 0;   // pontos de overall que o Elo soma/tira (já com o teto)
+    const novo = { carta, hist, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo), ajuste: Math.round(aj * 10) / 10, pct: Math.round((aj / c.overall) * 1000) / 10 } : null };
     const { id: _, ts: __, ...velho } = antes[p.id] || {};
     if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
     await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
@@ -776,7 +781,7 @@ async function secEstatisticas(el) {
   if (!L.length) return;
   document.getElementById('st-elo').innerHTML = `<h3>Elo / forma <span class="mute">(só tu vês)</span></h3>
     <p class="mute">Parte da carta (overall 60 = 1000; 10 pontos de carta = 100 de Elo). "Forma" = quanto os jogos mexeram: ganhar contra o previsto sobe, perder desce.
-      Nas Equipas há a opção "Ajustar pela forma" (desligada por defeito).</p>
+      Nas Equipas há a opção "Ajustar pela forma": soma a forma ÷ 10 ao overall, no máximo ±10 % da carta.</p>
     <div style="overflow-x:auto"><table><tr><th>Jogador</th><th>Elo</th><th>Forma</th><th>J</th><th>Último</th></tr>
     ${L.map((x) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === x.id) || { nome: x.nome }))}</td><td>${x.elo}</td><td>${x.forma > 0 ? '+' : ''}${Math.round(x.forma)}</td><td>${x.jogos}</td><td>${x.ultimo > 0 ? '▲' : x.ultimo < 0 ? '▼' : '='}</td></tr>`).join('')}</table></div>`;
 }
@@ -1294,7 +1299,7 @@ function secEquipas(el, X = A.ctxEq) {
       <div class="cores">${sel.map((id) => `<div class="linha"><span style="flex:1">${nm(id)}</span>
         ${['', 'B', 'P'].map((c) => `<button class="peq ${(R.cor[id] || '') === c ? 'on' : ''}" data-cor="${id}" data-c="${c}">${c === 'B' ? '⚪' : c === 'P' ? '⚫' : 'qualquer'}</button>`).join('')}</div>`).join('')}</div>`}
     </details>
-    ${X.elo && Object.keys(X.elo).length ? `<label style="margin:6px 0"><input type="checkbox" id="usar-elo" ${A.usarElo ? 'checked' : ''} style="width:auto"> Ajustar pela forma (Elo dos jogos registados)</label>` : ''}
+    ${X.elo && Object.keys(X.elo).length ? `<label style="margin:6px 0"><input type="checkbox" id="usar-elo" ${A.usarElo ? 'checked' : ''} style="width:auto"> Ajustar pela forma (Elo dos jogos registados, no máximo ±10 % da carta de cada um)</label>` : ''}
     <button class="prim" id="gerar" style="width:100%">Gerar equipas equilibradas</button>
     <div id="res"></div>`;
 
