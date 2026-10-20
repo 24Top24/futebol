@@ -191,3 +191,8 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 /* Topo: o título ocupa o espaço livre e os botões ficam todos encostados à direita */
 #topo > #demo, #topo > #instalar, #topo > #ticket, #topo > #lnk-admin { margin-left: 0; }
 #titulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Seta do Elo no perfil */
+.opcao.elo { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+.elo-s { font-size: 26px; line-height: 1; min-width: 28px; text-align: center; }
+.elo-s.sobe { color: var(--verde); } .elo-s.desce { color: var(--vermelho); } .elo-s.igual { color: var(--mute); }

@@ -1,4 +1,4 @@
-import { DB, novoToken, novoPin } from './db.js?v=27';
+import { DB, novoToken, novoPin } from './db.js?v=28';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=25';
 import { paginaMarcador } from './marcador.js?v=22';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
@@ -451,6 +451,19 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
   };
 }
 
+// Seta do Elo: a "forma" pelos resultados — ▲ conta acima da carta a fazer as equipas no próximo jogo, ▼ abaixo.
+// Nunca mexe na carta. 10 pontos de Elo = 1 ponto de overall.
+function htmlElo(elo, ligado) {
+  const f = Math.round(elo?.forma || 0), j = elo?.jogos || 0;
+  const s = !j ? '<b class="elo-s igual">–</b>' : f >= 5 ? `<b class="elo-s sobe">▲</b>` : f <= -5 ? `<b class="elo-s desce">▼</b>` : '<b class="elo-s igual">=</b>';
+  const txt = !j ? 'Ainda sem jogos registados.'
+    : f >= 5 ? `Valorizado no próximo jogo: contas como +${n1(f / 10, 1)} acima da tua carta a fazer as equipas.`
+    : f <= -5 ? `Desvalorizado no próximo jogo: contas como ${n1(f / 10, 1)} abaixo da tua carta a fazer as equipas.`
+    : 'Neutro: contas como a tua carta a fazer as equipas.';
+  return `<div class="opcao elo">${s}<div><b>Elo (forma pelos resultados)</b> <small class="mute">${j} jogo${j === 1 ? '' : 's'}</small>
+    <div class="mute">${txt}${j && !ligado ? ' O ajuste pelo Elo ainda não está ligado.' : ''} Não mexe na carta.</div></div></div>`;
+}
+
 // Perfil do jogador (com PIN): a sua carta com setas do último mês, a evolução, os seus jogos e as estatísticas.
 // Nunca mostra quem votou nem as notas de cada um — só a carta final, calculada pelo admin.
 async function perfilEu(eu, todos) {
@@ -463,12 +476,15 @@ async function perfilEu(eu, todos) {
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
   const d = variacoes(mc?.hist);
   let carta;
-  if (!estado?.cartasPessoais) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não está à vista — aparece depois do jogo 😉</p></div>';
+  // Cartas escondidas: a mesma carta com tudo a 0 (fictícia) — quando o Rui as mostrar, só mudam os valores.
+  if (!estado?.cartasPessoais) carta = `<div class="eu-carta">${htmlCarta(eu, { ficticia: true, overall: 0, stats: Object.fromEntries(AREAS.map((a) => [a.k, 0])) })}</div>
+    <p class="mute" style="text-align:center">Carta fictícia — os valores reais aparecem quando o Rui mostrar as cartas.</p>`;
   else if (!mc?.carta) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não há carta para ti (faltam votos).</p></div>';
   else carta = `<div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
     <p class="mute" style="text-align:center">${d ? 'Setas = mudança desde o mês passado.' : 'As setas ▲▼ aparecem a partir do próximo mês.'}
-      ${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>
-    <h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
+      ${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
+  carta += htmlElo(mc?.elo, !!estado?.usarElo);
+  if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
       <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a>${estado?.votacaoAberta ? ' · <a href="#" id="eu-votar" style="color:inherit">votar</a>' : ''}</span></div>
     ${carta}
@@ -597,7 +613,7 @@ function htmlCarta(p, c, d = null) {
   const st = c?.stats || {};
   const ov = c?.overall;
   return `<div class="carta ${tier(ov)}">
-    <div class="ov">${ov ?? '–'}${d ? seta(d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
+    <div class="ov">${ov ?? '–'}${d ? seta(d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.ficticia ? '<div class="prov">fictícia</div>' : c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
     ${foto(p)}<div class="nm">${esc(nomeDe(p))}</div>
     <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}${d ? seta(d[a.k]) : ''}</span>`).join('')}</div>
   </div>`;
@@ -626,6 +642,7 @@ async function paginaAdmin() {
     return;
   }
   await recarregar();
+  A.usarElo ??= !!(await DB.getPublic('estado'))?.usarElo;
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
   publicarCartasPessoais().catch((e) => console.error(e));
@@ -677,6 +694,7 @@ async function publicarCartasPessoais() {
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
+  const elo = calcularElo((await DB.listResultados()).map((r) => { try { return JSON.parse(r.json || '{}').jogo; } catch { return null; } }).filter(Boolean), cartas);
   for (const p of ativos) {
     const c = cartas[p.id];
     if (!c || c.overall == null) continue;
@@ -684,7 +702,8 @@ async function publicarCartasPessoais() {
     const foto = { mes, ov: c.overall, st: Object.fromEntries(AREAS.map((a) => [a.k, c.stats[a.k] != null ? Math.round(c.stats[a.k] * 10) : null])) };
     const hist = [...(antes[p.id]?.hist || [])];
     if (hist.at(-1)?.mes === mes) hist[hist.length - 1] = foto; else hist.push(foto);
-    const novo = { carta, hist };
+    const e = elo[p.id];
+    const novo = { carta, hist, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo) } : null };
     const { id: _, ts: __, ...velho } = antes[p.id] || {};
     if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
     await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
@@ -1311,7 +1330,11 @@ function secEquipas(el, X = A.ctxEq) {
     secEquipas(el, X);
   }));
 
-  g('usar-elo')?.addEventListener('change', (e) => (A.usarElo = e.target.checked));
+  g('usar-elo')?.addEventListener('change', async (e) => {
+    A.usarElo = e.target.checked;
+    const estado = (await DB.getPublic('estado')) || {};
+    await DB.setPublic('estado', { ...estado, usarElo: A.usarElo });   // o perfil de cada um diz se o Elo está a contar
+  });
   g('gerar').onclick = () => {
     const ids = [...A.sel];
     if (ids.length < 4 || ids.length % 2) return toast('Escolhe um número par de jogadores (10)');
