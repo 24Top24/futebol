@@ -20,7 +20,7 @@ export function novoToken(n = 22) {
 // ---------- MODO DEMO ----------
 function demoDb() {
   const KEY = 'futebol-demo-v2';
-  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {}, minhacarta: {}, saude: {}, treinos: {} });
+  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {}, minhacarta: {}, saude: {}, treinos: {}, tickets: {} });
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
   let s = Object.assign(VAZIO(), load());
   const save = () => localStorage.setItem(KEY, JSON.stringify(s));
@@ -55,6 +55,10 @@ function demoDb() {
     },
     async listPins() { return Object.entries(s.pins || {}).map(([id, d]) => ({ id, ...d })); },
     async definirPin(id, pin) { (s.pins ||= {})[id] = { h: await sha256hex(pin + id), pin }; save(); },
+    async novoTicket(d) { const id = novoToken(12); (s.tickets ||= {})[id] = d; save(); return id; },
+    async listTickets() { return Object.entries(s.tickets || {}).map(([id, d]) => ({ id, ...d })); },
+    async setTicket(id, d) { (s.tickets ||= {})[id] = d; save(); },
+    async deleteTicket(id) { delete s.tickets?.[id]; save(); },
     async getSaude(id) { return (s.saude ||= {})[id] || null; },
     async listSaude() { return Object.entries(s.saude || {}).map(([id, d]) => ({ id, ...d })); },
     async setSaude(id, d) { (s.saude ||= {})[id] = d; save(); },
@@ -145,6 +149,11 @@ async function fireDb() {
     listPins: () => list('pins'),
     definirPin: async (id, pin) => setDoc(doc(db, 'pins', id), { h: await sha256hex(pin + id), pin }),
     // Carta de cada um (sem votos individuais) + histórico mensal: escreve o admin, lê só o próprio (PIN).
+    // Tickets (problemas reportados): qualquer pessoa cria (com login anónimo); só o admin lê.
+    async novoTicket(d) { await this.uid(); const id = novoToken(12); await setDoc(doc(db, 'tickets', id), d); return id; },
+    listTickets: () => list('tickets'),
+    setTicket: (id, d) => setDoc(doc(db, 'tickets', id), d),
+    deleteTicket: (id) => deleteDoc(doc(db, 'tickets', id)),
     // Dados de saúde e treinos do relógio: escreve só o próprio (PIN); o admin só lê.
     getSaude: (id) => get('saude', id),
     listSaude: () => list('saude'),

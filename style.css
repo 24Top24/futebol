@@ -177,4 +177,17 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 
 /* Botão "Instalar app" (PWA) no topo */
 #instalar { margin-left: auto; font-size: 12px; padding: 4px 10px; }
-#instalar:not([hidden]) ~ #lnk-admin { margin-left: 0; }
+#instalar:not([hidden]) ~ #lnk-admin, #instalar:not([hidden]) ~ #ticket { margin-left: 0; }
+
+/* Tickets: botão 🐞 no topo, janela para reportar e lista no admin */
+#ticket { margin-left: auto; background: none; border: 0; font-size: 18px; padding: 0 4px; cursor: pointer; }
+#ticket ~ #lnk-admin { margin-left: 0; }
+.modal { position: fixed; inset: 0; background: #000a; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-caixa { background: var(--bg2); border: 1px solid var(--borda); border-radius: 14px; padding: 16px; width: 100%; max-width: 460px; }
+.modal-caixa textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.ticket.resolvido { opacity: .55; }
+.tk-foto { max-width: 160px; max-height: 160px; border-radius: 8px; display: block; margin: 4px 0; }
+.ticket pre { white-space: pre-wrap; font-size: 11px; }
+/* Topo: o título ocupa o espaço livre e os botões ficam todos encostados à direita */
+#topo > #demo, #topo > #instalar, #topo > #ticket, #topo > #lnk-admin { margin-left: 0; }
+#titulo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

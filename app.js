@@ -1,4 +1,4 @@
-import { DB, novoToken, novoPin } from './db.js?v=26';
+import { DB, novoToken, novoPin } from './db.js?v=27';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=25';
 import { paginaMarcador } from './marcador.js?v=22';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
@@ -704,12 +704,12 @@ async function publicarRetrato() {
 }
 
 function renderAdmin() {
-  const tabs = [['jog', 'Jogadores'], ['vot', 'Votação'], ['cartas', 'Cartas'], ['equipas', 'Equipas'], ['jogos', 'Jogos'], ['stats', 'Estatísticas'], ['saude', 'Saúde'], ['part', 'Partilhar']];
+  const tabs = [['jog', 'Jogadores'], ['vot', 'Votação'], ['cartas', 'Cartas'], ['equipas', 'Equipas'], ['jogos', 'Jogos'], ['stats', 'Estatísticas'], ['saude', 'Saúde'], ['tickets', '🐞 Tickets'], ['part', 'Partilhar']];
   $app.innerHTML = `<div class="tabs">${tabs.map(([k, n]) => `<button data-t="${k}" class="${A.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="sec"></div>`;
   $app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { A.tab = b.dataset.t; renderAdmin(); }));
   const sec = document.getElementById('sec');
   if (A.tab === 'equipas') { sec.innerHTML = '<p class="mute">A carregar…</p>'; ctxAdmin().then((X) => { A.ctxEq = X; secEquipas(sec, X); }); return; }
-  ({ jog: secJogadores, vot: secVotacao, cartas: secCartas, jogos: secJogos, stats: secEstatisticas, saude: secSaude, part: secPartilhar })[A.tab](sec);
+  ({ jog: secJogadores, vot: secVotacao, cartas: secCartas, jogos: secJogos, stats: secEstatisticas, saude: secSaude, tickets: secTickets, part: secPartilhar })[A.tab](sec);
 }
 
 // GR que sofreu: o relógio grava-o no golo; jogos antigos deduzem-no pelos turnos.
@@ -1051,6 +1051,38 @@ async function simularJogos(n = 10) {
     await DB.saveResultado(id, { json: JSON.stringify({ jogo, fit: {} }) });
     await DB.saveJogoPub(id, { json: JSON.stringify(jogo) });
   }
+}
+
+// ---------- Tickets (problemas reportados pelos jogadores) ----------
+// "Copiar para o Claude" junta os abertos num texto para colar na conversa e serem corrigidos.
+async function secTickets(el) {
+  el.innerHTML = '<p class="mute">A carregar…</p>';
+  const L = (await DB.listTickets()).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const nome = (id) => (id ? nomeDe(A.players.find((p) => p.id === id) || { nome: '?' }) : 'sem perfil');
+  const quando = (t) => new Date(t.ts).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' });
+  const abertos = L.filter((t) => t.estado !== 'resolvido');
+  el.innerHTML = `<div class="linha"><b>${abertos.length} aberto${abertos.length === 1 ? '' : 's'}</b> · ${L.length - abertos.length} resolvidos
+      ${abertos.length ? '<button class="prim peq" id="tk-copiar">📋 Copiar abertos para o Claude</button>' : ''}</div>
+    <p class="mute">Cola o texto na conversa com o Claude para ele corrigir. As imagens não vão no texto — se forem precisas, abre-as aqui.</p>
+    ${L.map((t) => `<div class="opcao ticket ${t.estado === 'resolvido' ? 'resolvido' : ''}">
+      <div class="linha" style="justify-content:space-between"><b>${t.estado === 'resolvido' ? '✔' : '🐞'} ${esc(nome(t.quem))}</b><small class="mute">${quando(t)} · ${esc(t.ecra || '')}</small></div>
+      <p style="white-space:pre-wrap;margin:6px 0">${esc(t.texto)}</p>
+      ${t.foto ? `<a href="${t.foto}" target="_blank"><img src="${t.foto}" class="tk-foto" alt="Imagem do ticket"></a>` : ''}
+      ${t.erros ? `<details class="mute"><summary>Erros técnicos da app</summary><pre>${esc(t.erros)}</pre></details>` : ''}
+      <details class="mute"><summary>Telemóvel / browser</summary><small>${esc(t.ua || '')}</small></details>
+      <div class="linha" style="margin-top:6px"><button class="peq" data-tk-estado="${t.id}">${t.estado === 'resolvido' ? 'Reabrir' : '✔ Resolvido'}</button>
+        <button class="peq perigo" data-tk-del="${t.id}">Apagar</button></div></div>`).join('') || '<p class="mute">Ainda não há tickets. 🎉</p>'}`;
+  document.getElementById('tk-copiar')?.addEventListener('click', () => copiar(
+    `Tickets da app do futebol (${abertos.length} abertos):\n\n` + abertos.map((t, i) => `#${i + 1} · ${quando(t)} · ${nome(t.quem)} · ecrã ${t.ecra || '?'}\n${t.texto}`
+      + `${t.foto ? '\n(tem imagem — ver no Admin → Tickets)' : ''}${t.erros ? `\nErros:\n${t.erros}` : ''}\nBrowser: ${t.ua || '?'}`).join('\n\n---\n\n')));
+  el.querySelectorAll('[data-tk-estado]').forEach((b) => (b.onclick = async () => {
+    const t = L.find((x) => x.id === b.dataset.tkEstado); const { id, ...d } = t;
+    await DB.setTicket(id, { ...d, estado: t.estado === 'resolvido' ? 'aberto' : 'resolvido' }); secTickets(el);
+  }));
+  el.querySelectorAll('[data-tk-del]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('Apagar este ticket?')) return;
+    await DB.deleteTicket(b.dataset.tkDel); secTickets(el);
+  }));
 }
 
 // ---------- Saúde (só leitura: os dados são de cada jogador; o admin não altera nada) ----------
@@ -1482,6 +1514,63 @@ async function rota() {
 }
 window.addEventListener('hashchange', rota);
 rota();
+
+// ---------- Reportar um problema (ticket) ----------
+// Guarda os últimos erros da app para irem com o ticket (ajudam a perceber o que falhou).
+const ERROS = [];
+const guardarErro = (m) => { ERROS.push(`${new Date().toTimeString().slice(0, 8)} ${String(m).slice(0, 300)}`); if (ERROS.length > 12) ERROS.shift(); };
+window.addEventListener('error', (e) => guardarErro(`${e.message} @ ${(e.filename || '').split('/').pop()}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => guardarErro(e.reason?.message || e.reason));
+const erroOriginal = console.error.bind(console);
+console.error = (...a) => { guardarErro(a.map((x) => x?.message || x).join(' ')); erroOriginal(...a); };
+
+// Imagem do ecrã (opcional), reduzida para caber no ticket.
+function printParaDataURL(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      let L = 900, q = 0.6, url;
+      do {
+        const k = Math.min(1, L / Math.max(img.width, img.height)), c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        url = c.toDataURL('image/jpeg', q); L -= 150; q -= 0.05;
+      } while (url.length > 240000 && L > 300);
+      res(url);
+    };
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function abrirTicket() {
+  if (document.getElementById('tk-modal')) return;
+  const m = document.createElement('div');
+  m.id = 'tk-modal'; m.className = 'modal';
+  m.innerHTML = `<div class="modal-caixa"><h3 style="margin-top:0">🐞 Reportar um problema</h3>
+    <p class="mute">Diz o que estavas a fazer e o que correu mal (ou uma ideia para melhorar). Vai direto para o Rui.</p>
+    <textarea id="tk-texto" rows="5" maxlength="2000" placeholder="Ex.: carreguei em Guardar no perfil e deu erro…"></textarea>
+    <label>Imagem do ecrã (opcional)</label><input type="file" id="tk-foto" accept="image/*">
+    <div class="linha" style="margin-top:12px"><button class="prim" id="tk-enviar">Enviar</button><button id="tk-cancelar">Cancelar</button></div></div>`;
+  document.body.appendChild(m);
+  const fechar = () => m.remove();
+  m.onclick = (e) => { if (e.target === m) fechar(); };
+  document.getElementById('tk-cancelar').onclick = fechar;
+  document.getElementById('tk-texto').focus();
+  document.getElementById('tk-enviar').onclick = async (e) => {
+    const texto = document.getElementById('tk-texto').value.trim();
+    if (texto.length < 5) return toast('Escreve o que aconteceu');
+    e.target.disabled = true;
+    try {
+      const f = document.getElementById('tk-foto').files[0];
+      await DB.novoTicket({ texto, ecra: (location.hash || '#') + (A.pubTab && !location.hash.startsWith('#admin') ? ' · ' + A.pubTab : ''),
+        quem: lsGet('meu-perfil') || null, ua: navigator.userAgent.slice(0, 250), erros: ERROS.join('\n').slice(-4000),
+        foto: f ? await printParaDataURL(f) : '', ts: Date.now(), estado: 'aberto' });
+      fechar(); toast('Enviado — obrigado! 👍');
+    } catch (err) { erroOriginal(err); e.target.disabled = false; toast('Não deu para enviar — tenta outra vez'); }
+  };
+}
+document.getElementById('ticket').onclick = abrirTicket;
 
 // ---------- App instalável (PWA) ----------
 // Android/Chrome/Edge: botão "Instalar app" quando o browser deixa. iPhone: o Safari não tem botão — explica-se o caminho.
