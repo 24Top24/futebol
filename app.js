@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=24';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=22';
+import { DB, novoToken, novoPin } from './db.js?v=25';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=25';
 import { paginaMarcador } from './marcador.js?v=22';
 
 const $app = document.getElementById('app');
@@ -86,13 +86,13 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 async function paginaInicio() {
   document.getElementById('titulo').textContent = 'Futebolada';
   const estado = (await DB.getPublic('estado')) || {};
-  const tabs = [['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ...(estado.votacaoAberta ? [['votar', '🗳 Votar']] : [])];
+  const tabs = [['eu', '👤 Eu'], ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ...(estado.votacaoAberta ? [['votar', '🗳 Votar']] : [])];
   A.pubTab ||= estado.votacaoAberta ? 'votar' : 'eq';
   if (!tabs.some(([k]) => k === A.pubTab)) A.pubTab = 'eq';
   $app.innerHTML = `<div class="tabs">${tabs.map(([k, n]) => `<button data-pt="${k}" class="${A.pubTab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="pub"></div>`;
   $app.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => { A.pubTab = b.dataset.pt; paginaInicio(); }));
   const el = document.getElementById('pub');
-  if (A.pubTab === 'votar') return paginaVotar(el);
+  if (A.pubTab === 'votar' || A.pubTab === 'eu') return paginaVotar(el);
   const [players, perfis, jogosPub, games] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listJogosPub(), DB.listGames()]);
   const todos = juntarPerfis(players, perfis);
   const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
@@ -111,15 +111,20 @@ async function paginaInicio() {
   }).join('') : '<p class="mute">Ainda não há equipas feitas.</p>';
 }
 
+// Golos (minuto, equipa, marcador, assistência, parte do corpo) e penáltis falhados/defendidos de um jogo.
+function linhasEventos(j) {
+  const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
+  return `${(j.eventos || []).map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
+    ${(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => `<div class="mute">${Math.floor(pn.t / 60000) + 1}' ${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${nome(pn.marcador)} ${pn.resultado === 'defendido' ? `defendido por ${nome(pn.gr)} 🧤` : 'falhado'}</div>`).join('')}`;
+}
+
 function listaResultados(el, res) {
   el.innerHTML = res.length ? res.map(({ jogo: j }) => {
-    const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
     const gol = (e) => marcaDe(j, e);
     return `<div class="opcao"><b>${esc(j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT'))}</b>
       <div class="equipas"><div class="eq branco"><h4>${LOGO.B} ${gol('B')}</h4>${(j.brancos || []).map((p) => esc(p.nome)).join('<br>')}</div>
         <div class="eq preto"><h4>${LOGO.P} ${gol('P')}</h4>${(j.pretos || []).map((p) => esc(p.nome)).join('<br>')}</div></div>
-      ${j.eventos.map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
-      ${(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => `<div class="mute">${Math.floor(pn.t / 60000) + 1}' ${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${nome(pn.marcador)} ${pn.resultado === 'defendido' ? `defendido por ${nome(pn.gr)} 🧤` : 'falhado'}</div>`).join('')}</div>`;
+      ${linhasEventos(j)}</div>`;
   }).join('') : '<p class="mute">Ainda não há jogos registados.</p>';
 }
 
@@ -132,7 +137,7 @@ async function paginaVotar(el) {
   // Sem ligação válida (outro telemóvel, ou o Rui mudou o PIN) → pede o PIN outra vez.
   if (!(await DB.ligacaoOk(eu.id))) return pedirPin(eu, todos);
   if (!lsGet('perfil-ok-' + eu.id)) return editarPerfil(eu, todos);
-  votar(eu, todos);
+  seguir(eu, todos);
 }
 
 function escolherPerfil(todos) {
@@ -173,7 +178,7 @@ function pedirPin(p, todos) {
     try { await DB.ligar(p.id, pin); }
     catch { aEntrar = false; inp.value = ''; inp.focus(); return toast('PIN errado'); }
     lsSet('meu-perfil', p.id);
-    if (lsGet('perfil-ok-' + p.id)) votar(p, todos); else editarPerfil(p, todos);
+    if (lsGet('perfil-ok-' + p.id)) seguir(p, todos); else editarPerfil(p, todos);
   };
   document.getElementById('pin-ok').onclick = entrar;
   inp.onkeydown = (e) => { if (e.key === 'Enter') entrar(); };
@@ -225,8 +230,88 @@ function editarPerfil(eu, todos) {
     eu.alias = alias; eu.fotoPropria = fotoP === '-' ? '' : fotoP;
     if (fotoP === '-') { eu.foto = ''; eu.semFoto = true; }
     lsSet('perfil-ok-' + eu.id, '1');
-    votar(eu, todos);
+    seguir(eu, todos);
   };
+}
+
+// Depois do PIN: vai para onde o jogador estava (votar ou o perfil "Eu").
+const seguir = (eu, todos) => (A.pubTab === 'eu' ? perfilEu(eu, todos) : votar(eu, todos));
+
+// Diferença para o mês anterior do histórico (escala 0–100). hist: [{ mes: 'AAAA-MM', ov, st: { rem: 72, … } }]
+function variacoes(hist) {
+  if (!hist || hist.length < 2) return null;
+  const [a, b] = hist.slice(-2);
+  const d = { ov: b.ov != null && a.ov != null ? b.ov - a.ov : null };
+  for (const ar of AREAS) d[ar.k] = b.st?.[ar.k] != null && a.st?.[ar.k] != null ? b.st[ar.k] - a.st[ar.k] : null;
+  return d;
+}
+const seta = (v) => v == null ? '' : v >= 1 ? `<i class="seta sobe">▲${v}</i>` : v <= -1 ? `<i class="seta desce">▼${-v}</i>` : '<i class="seta igual">=</i>';
+const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const nomeMes = (m) => MESES[Number(m.slice(5, 7)) - 1] + ' ' + m.slice(2, 4);
+
+// Gráfico simples do overall mês a mês (SVG, sem bibliotecas).
+function graficoEvolucao(hist) {
+  const pts = hist.filter((h) => h.ov != null);
+  if (pts.length < 2) return `<p class="mute">O gráfico começa quando houver dois meses. Este mês: <b>${pts[0]?.ov ?? '–'}</b>.</p>`;
+  const W = 320, H = 120, m = 24, vs = pts.map((h) => h.ov), lo = Math.min(...vs) - 3, hi = Math.max(...vs) + 3;
+  const x = (i) => m + (i * (W - 2 * m)) / (pts.length - 1), y = (v) => H - m - ((v - lo) * (H - 2 * m)) / (hi - lo || 1);
+  return `<svg viewBox="0 0 ${W} ${H}" class="evol" role="img" aria-label="Evolução do overall">
+    <polyline fill="none" stroke="var(--verde)" stroke-width="2.5" points="${pts.map((h, i) => `${x(i)},${y(h.ov)}`).join(' ')}"/>
+    ${pts.map((h, i) => `<circle cx="${x(i)}" cy="${y(h.ov)}" r="3.5" fill="var(--verde)"/><text x="${x(i)}" y="${y(h.ov) - 8}" text-anchor="middle">${h.ov}</text>
+      <text x="${x(i)}" y="${H - 6}" text-anchor="middle" class="mes">${nomeMes(h.mes)}</text>`).join('')}</svg>`;
+}
+
+// Resumo de um jogo visto por um jogador: resultado, o que ele fez e os golos do jogo.
+// Só usa o resumo público do jogo (nada dos dados de saúde do relógio).
+function resumoJogo(j, euId, aberto) {
+  const lado = (j.brancos || []).some((x) => x.id === euId) ? 'B' : 'P';
+  const v = vencedorDe(j), r = v === 'E' ? 'E' : v === lado ? 'V' : 'D';
+  const ev = j.eventos || [];
+  const golos = ev.filter((e) => e.tipo !== 'autogolo' && e.marcador === euId).length;
+  const ag = ev.filter((e) => e.tipo === 'autogolo' && e.marcador === euId).length;
+  const ass = ev.filter((e) => e.assist === euId).length;
+  const grMin = Math.round((j.turnos || []).filter((t) => t.jogador === euId).reduce((s, t) => s + t.ate - t.de, 0) / 60000);
+  const sofr = ev.filter((e) => grSofreu(j, e) === euId).length;
+  const pens = (j.penaltis || []).filter((p) => p.marcador === euId);
+  const pDef = (j.penaltis || []).filter((p) => p.gr === euId && p.resultado === 'defendido').length;
+  const dur = j.fimEpoch && j.inicioEpoch ? Math.round((j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0)) / 60000) : null;
+  const meu = [golos && `⚽ ${golos} golo${golos > 1 ? 's' : ''}`, ass && `🅰️ ${ass} assist.`, ag && `${ag} autogolo`,
+    pens.length && `penáltis ${pens.filter((p) => p.resultado === 'golo').length}/${pens.length}`,
+    grMin && `🧤 ${grMin} min na baliza (sofreste ${sofr})`, pDef && `defendeste ${pDef} penálti${pDef > 1 ? 's' : ''}`].filter(Boolean);
+  const eq = (e) => (e === 'B' ? j.brancos : j.pretos || []).map((p) => (p.id === euId ? `<b class="eu-nome">${esc(p.nome)}</b>` : esc(p.nome))).join('<br>');
+  const data = j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT');
+  return `<details class="opcao jogo-eu"${aberto ? ' open' : ''}><summary><b class="res res-${r}">${r}</b> ${esc(data)} · ${LOGO.B} ${marcaDe(j, 'B')} – ${marcaDe(j, 'P')} ${LOGO.P}</summary>
+    <p><b>O teu jogo:</b> ${meu.length ? meu.join(' · ') : 'sem golos nem assistências'}${dur ? ` · ⏱ ${dur} min de jogo` : ''}</p>
+    <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${eq('B')}</div><div class="eq preto"><h4>${LOGO.P} Pretos</h4>${eq('P')}</div></div>
+    ${linhasEventos(j)}</details>`;
+}
+
+// Perfil do jogador (com PIN): a sua carta com setas do último mês, a evolução, os seus jogos e as estatísticas.
+// Nunca mostra quem votou nem as notas de cada um — só a carta final, calculada pelo admin.
+async function perfilEu(eu, todos) {
+  const $app = document.getElementById('pub') || document.getElementById('app');
+  $app.innerHTML = '<p class="mute">A carregar…</p>';
+  const [estado, mc, jogosPub] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub()]);
+  const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim');
+  const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
+    .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
+  const d = variacoes(mc?.hist);
+  let carta;
+  if (!estado?.cartasPessoais) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não está à vista — aparece depois do jogo 😉</p></div>';
+  else if (!mc?.carta) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não há carta para ti (faltam votos).</p></div>';
+  else carta = `<div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
+    <p class="mute" style="text-align:center">${d ? 'Setas = mudança desde o mês passado.' : 'As setas ▲▼ aparecem a partir do próximo mês.'}
+      ${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>
+    <h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
+  $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
+      <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a>${estado?.votacaoAberta ? ' · <a href="#" id="eu-votar" style="color:inherit">votar</a>' : ''}</span></div>
+    ${carta}
+    <h3>Os teus jogos (${meus.length})</h3>
+    ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0)).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
+    <h3>Estatísticas de todos</h3><div id="eu-stats"></div>`;
+  tabelaStats(document.getElementById('eu-stats'), res, todos, 'pts', eu.id);
+  document.getElementById('eu-perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
+  document.getElementById('eu-votar')?.addEventListener('click', (e) => { e.preventDefault(); A.pubTab = 'votar'; paginaInicio(); });
 }
 
 // Todos os jogadores numa lista com todas as áreas. "Não conheço" ou "OK" fecham o jogador numa linha
@@ -340,13 +425,13 @@ async function votar(eu, todos) {
 // =====================================================================
 // CARTAS (#cartas — só existe depois de o admin as publicar)
 // =====================================================================
-function htmlCarta(p, c) {
+function htmlCarta(p, c, d = null) {
   const st = c?.stats || {};
   const ov = c?.overall;
   return `<div class="carta ${tier(ov)}">
-    <div class="ov">${ov ?? '–'}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
+    <div class="ov">${ov ?? '–'}${d ? seta(d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
     ${foto(p)}<div class="nm">${esc(nomeDe(p))}</div>
-    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}</span>`).join('')}</div>
+    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}${d ? seta(d[a.k]) : ''}</span>`).join('')}</div>
   </div>`;
 }
 
@@ -375,6 +460,7 @@ async function paginaAdmin() {
   await recarregar();
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
+  publicarCartasPessoais().catch((e) => console.error(e));
 }
 async function recarregar() {
   let perfis;
@@ -382,7 +468,8 @@ async function recarregar() {
   [A.players, perfis, A.votes, A.games, jogos] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listVotes(), DB.listGames(), DB.listJogosPub()]);
   // Quem jogou com quem: só jogos terminados e registados (relógio/telemóvel) — equipas escolhidas não contam (Rui, 14/10).
   const reg = jogos.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
-  A.conv = contarConvivio(reg);
+  A.conv = pontosConvivio(reg);      // pontos para o peso dos votos (sobem e descem)
+  A.juntos = contarConvivio(reg);    // jogos juntos (só para mostrar)
   // RGPD: quem pediu "sem foto" fica sem a foto do WhatsApp também na base de dados.
   for (const p of A.players) {
     if (p.foto && perfis.find((x) => x.id === p.id)?.foto === '-') {
@@ -413,6 +500,27 @@ async function ctxAdmin() {
       await recarregar(); A.ctxEq = await ctxAdmin();
     },
   };
+}
+
+// Carta de cada jogador para o seu perfil (sem votos individuais) + histórico mensal para as setas e o gráfico.
+// Corre sempre que o admin abre a app: o mês atual é atualizado, os anteriores ficam como estavam.
+async function publicarCartasPessoais() {
+  const ativos = A.players.filter((p) => p.ativo !== false && !p.convidado);
+  const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
+  const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
+  const mes = new Date().toISOString().slice(0, 7);
+  for (const p of ativos) {
+    const c = cartas[p.id];
+    if (!c || c.overall == null) continue;
+    const carta = { stats: c.stats, overall: c.overall, posicao: c.posicao || null, provisoria: !!c.provisoria, estimada: !!c.estimada, conhecem: c.conhecem || 0 };
+    const foto = { mes, ov: c.overall, st: Object.fromEntries(AREAS.map((a) => [a.k, c.stats[a.k] != null ? Math.round(c.stats[a.k] * 10) : null])) };
+    const hist = [...(antes[p.id]?.hist || [])];
+    if (hist.at(-1)?.mes === mes) hist[hist.length - 1] = foto; else hist.push(foto);
+    const novo = { carta, hist };
+    const { id: _, ts: __, ...velho } = antes[p.id] || {};
+    if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
+    await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
+  }
 }
 
 // Atualiza o "retrato" que o link de colaborador lê (notas finais, sem votos individuais).
@@ -486,7 +594,7 @@ async function secEstatisticas(el) {
     ${L.map((x) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === x.id) || { nome: x.nome }))}</td><td>${x.elo}</td><td>${x.forma > 0 ? '+' : ''}${Math.round(x.forma)}</td><td>${x.jogos}</td><td>${x.ultimo > 0 ? '▲' : x.ultimo < 0 ? '▼' : '='}</td></tr>`).join('')}</table></div>`;
 }
 
-function tabelaStats(el, res, players, ord = 'pts') {
+function tabelaStats(el, res, players, ord = 'pts', destaque = null) {
   const nomeAtual = (s) => nomeDe(players.find((p) => p.id === s.id) || { nome: s.nome });
   const L = estatisticas(res).map((s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.j ? s.g / s.j : 0,
     sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null }));
@@ -496,8 +604,8 @@ function tabelaStats(el, res, players, ord = 'pts') {
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.</p>
     <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}</th>`).join('')}</tr>
-    ${L.map((s) => `<tr>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
-  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o)));
+    ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque)));
 }
 
 // ---------- Jogos (resultados enviados pelo relógio) ----------
@@ -860,7 +968,9 @@ function secCartas(el) {
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   const lista = A.players.filter((p) => p.ativo !== false).sort((a, b) => (cartas[b.id].overall ?? 0) - (cartas[a.id].overall ?? 0));
   el.innerHTML = `
-    <div class="linha"><button class="prim" id="pub">Publicar cartas</button><button id="esconder">Esconder</button>
+    <div class="opcao"><b>Cartas pessoais (cada um vê só a sua, no separador 👤 Eu)</b>
+      <div class="linha" style="margin-top:6px"><span id="cp-estado" class="mute">…</span><button class="peq" id="cp-toggle">…</button></div></div>
+    <div class="linha"><button class="prim" id="pub">Publicar cartas de todos</button><button id="esconder">Esconder</button>
       </div>
     <p class="mute">Só tu vês isto. Ninguém sabe das cartas até carregares em Publicar (ficam em ${BASE}#cartas).<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p>
     <div class="cartas">${lista.map((p) => htmlCarta(p, cartas[p.id])).join('')}</div>
@@ -875,6 +985,14 @@ function secCartas(el) {
     toast('Cartas publicadas');
   };
   document.getElementById('esconder').onclick = async () => { await DB.setPublic('cartas', { visivel: false }); toast('Cartas escondidas'); };
+  (async () => {
+    const estado = (await DB.getPublic('estado')) || {}, on = !!estado.cartasPessoais;
+    document.getElementById('cp-estado').textContent = on ? '🟢 Visíveis' : '🔴 Escondidas';
+    const b = document.getElementById('cp-toggle');
+    b.textContent = on ? 'Esconder' : 'Mostrar a cada um a sua';
+    b.className = 'peq ' + (on ? 'perigo' : 'prim');
+    b.onclick = async () => { await DB.setPublic('estado', { ...estado, cartasPessoais: !on }); await publicarCartasPessoais(); secCartas(el); };
+  })();
   // Quem votou num jogador e que notas lhe deu (mais a média aparada que entra na carta).
   document.getElementById('rsel').onchange = (e) => {
     const id = e.target.value, el2 = document.getElementById('rdet');
@@ -886,7 +1004,7 @@ function secCartas(el) {
     const c = cartas[id];
     el2.innerHTML = `<p class="mute">${deram.length} votaram · ${nc.length} não conhecem${nc.length ? ` (${nc.map(nmv).join(', ')})` : ''}</p>
       <div style="overflow-x:auto"><table><tr><th>Votante</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}<th>Média</th><th title="Jogos em que o votante e este jogador estiveram juntos (mesma equipa ou contra)">Jogos juntos</th><th>Peso</th></tr>
-      ${deram.map((v) => { const n = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>${Math.round(pesoVoto(n) * 100)}%</td></tr>`; }).join('')}
+      ${deram.map((v) => { const n = A.juntos?.[v.voter]?.[id] || 0, pts = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>${Math.round(pesoVoto(pts) * 100)}%</td></tr>`; }).join('')}
       ${c ? `<tr><td><b>Carta</b> <small class="mute">(média aparada e pesada)</small></td>${AREAS.map((a) => `<td><b>${c.stats[a.k] != null ? c.stats[a.k].toFixed(1) : '–'}</b></td>`).join('')}<td><b>${c.overall ?? '–'}</b></td></tr>` : ''}</table></div>`;
   };
   document.getElementById('vsel').onchange = (e) => {

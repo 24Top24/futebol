@@ -148,3 +148,17 @@ details summary { cursor: pointer; }
 .fplant { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 13px; border-top: 1px solid #ffffff1a; padding-top: 8px; }
 .fplant > div:last-child { text-align: right; }
 .fplant small { font-size: 10px; }
+
+/* Perfil "Eu": setas do último mês, gráfico, os meus jogos e a minha linha nas estatísticas */
+.seta { font-style: normal; font-size: 10px; font-weight: 800; margin-left: 2px; vertical-align: super; }
+.seta.sobe { color: #0b7a3b; } .seta.desce { color: #b3261e; } .seta.igual { color: #0006; }
+.carta .ov .seta { font-size: 12px; }
+.eu-carta { display: flex; justify-content: center; } .eu-carta .carta { width: 190px; }
+.evol { width: 100%; max-width: 420px; display: block; margin: 0 auto; }
+.evol text { fill: currentColor; font-size: 11px; } .evol text.mes { opacity: .6; font-size: 10px; }
+tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
+.jogo-eu summary { cursor: pointer; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.jogo-eu summary .logo { width: 18px; height: 18px; }
+.res { display: inline-block; min-width: 22px; text-align: center; border-radius: 6px; padding: 1px 5px; color: #fff; }
+.res-V { background: var(--verde2); } .res-E { background: #6c757d; } .res-D { background: var(--vermelho); }
+.eu-nome { color: var(--verde); }

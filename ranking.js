@@ -26,10 +26,32 @@ export function mediaAparada(vals) {
   return u.reduce((a, [n, p]) => a + n * p, 0) / w;
 }
 
-// Peso de um voto: conta mais quem joga com/contra o votado (viu-o jogar). Nunca 0, nunca 100 %.
-// 0 jogos juntos → 0,4 · 2 → 0,64 · 4 → 0,73 · 10 → 0,86 · 20 → 0,92 (tende para 1 sem lá chegar).
-export const PESO = { min: 0.4, meio: 3 };
-export const pesoVoto = (n) => PESO.min + (1 - PESO.min) * (n / (n + PESO.meio));
+// Peso de um voto (decisão do Rui, 20/10/2026): conta mais quem joga com/contra o votado (viu-o jogar).
+// Pontos de convívio do par: +1 por jogo juntos (mesma equipa ou contra), até 10;
+// −0,5 por cada jogo em que QUEM VOTA joga e o votado não está (lesionado/parado não perde nada), até 0.
+// Peso = 20 % + 6 % por ponto → 20 % (nunca jogaram) … 80 % (10 jogos juntos). Sobe em 10 jogos, desce em 20.
+export const PESO = { min: 0.2, max: 0.8, sobe: 1, desce: 0.5, teto: 10 };
+export const pesoVoto = (pts) => PESO.min + (PESO.max - PESO.min) * Math.min(pts, PESO.teto) / PESO.teto;
+
+// Pontos de convívio de cada par, jogo a jogo por ordem de data. Devolve P[votante][votado].
+export function pontosConvivio(jogos) {
+  const P = {}, vistos = new Set(), todos = new Set();
+  const ord = [...jogos].sort((a, b) => (a.inicioEpoch || 0) - (b.inicioEpoch || 0));
+  for (const j of ord) {
+    const chave = j.gameId || j.id;
+    if (chave && vistos.has(chave)) continue;
+    if (chave) vistos.add(chave);
+    const ids = [...(j.brancos || []), ...(j.pretos || [])].map((x) => (typeof x === 'string' ? x : x.id)).filter(Boolean);
+    const aqui = new Set(ids);
+    ids.forEach((x) => todos.add(x));
+    for (const a of aqui) for (const b of todos) {
+      if (a === b) continue;
+      const v = (P[a] ||= {})[b] || 0;
+      P[a][b] = aqui.has(b) ? Math.min(PESO.teto, v + PESO.sobe) : Math.max(0, v - PESO.desce);
+    }
+  }
+  return P;
+}
 
 // Quantos jogos cada par jogou junto (mesma equipa ou contra). jogos: [{ id, gameId?, brancos, pretos }] com ids ou {id}.
 export function contarConvivio(jogos) {

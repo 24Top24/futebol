@@ -20,7 +20,7 @@ export function novoToken(n = 22) {
 // ---------- MODO DEMO ----------
 function demoDb() {
   const KEY = 'futebol-demo-v2';
-  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {} });
+  const VAZIO = () => ({ players: {}, perfis: {}, claims: {}, votes: {}, public: {}, games: {}, resultados: {}, segredos: {}, partilha: {}, jogos: {}, minhacarta: {} });
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
   let s = Object.assign(VAZIO(), load());
   const save = () => localStorage.setItem(KEY, JSON.stringify(s));
@@ -55,6 +55,9 @@ function demoDb() {
     },
     async listPins() { return Object.entries(s.pins || {}).map(([id, d]) => ({ id, ...d })); },
     async definirPin(id, pin) { (s.pins ||= {})[id] = { h: await sha256hex(pin + id), pin }; save(); },
+    async getMinhaCarta(id) { return (s.minhacarta ||= {})[id] || null; },
+    async listMinhasCartas() { return Object.entries(s.minhacarta || {}).map(([id, d]) => ({ id, ...d })); },
+    async setMinhaCarta(id, d) { (s.minhacarta ||= {})[id] = d; save(); },
     async getVotes(id) { return s.votes[id] || null; },
     async listVotes() { return list('votes'); },
     async saveVote(voter, target, rating) {
@@ -134,6 +137,10 @@ async function fireDb() {
     // Admin: PINs (aleatórios guardam 'pin' para reenviar; os escolhidos pelo jogador só têm 'h').
     listPins: () => list('pins'),
     definirPin: async (id, pin) => setDoc(doc(db, 'pins', id), { h: await sha256hex(pin + id), pin }),
+    // Carta de cada um (sem votos individuais) + histórico mensal: escreve o admin, lê só o próprio (PIN).
+    getMinhaCarta: (id) => get('minhacarta', id),
+    listMinhasCartas: () => list('minhacarta'),
+    setMinhaCarta: (id, d) => setDoc(doc(db, 'minhacarta', id), d),
     getVotes: (id) => get('votes', id),
     listVotes: () => list('votes'),
     saveVote: (voter, target, rating) =>
