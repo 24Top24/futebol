@@ -256,15 +256,9 @@ function paraAtualizar(euId, r, tsVoto, jogos) {
 // Depois do PIN: vai para onde o jogador estava (votar ou o perfil "Eu").
 const seguir = (eu, todos) => (A.pubTab === 'eu' ? perfilEu(eu, todos) : votar(eu, todos));
 
-// Diferença para o mês anterior do histórico (escala 0–100). hist: [{ mes: 'AAAA-MM', ov, st: { rem: 72, … } }]
-function variacoes(hist) {
-  if (!hist || hist.length < 2) return null;
-  const [a, b] = hist.slice(-2);
-  const d = { ov: b.ov != null && a.ov != null ? b.ov - a.ov : null };
-  for (const ar of AREAS) d[ar.k] = b.st?.[ar.k] != null && a.st?.[ar.k] != null ? b.st[ar.k] - a.st[ar.k] : null;
-  return d;
-}
-const seta = (v) => v == null ? '' : v >= 1 ? `<i class="seta sobe">▲${v}</i>` : v <= -1 ? `<i class="seta desce">▼${-v}</i>` : '<i class="seta igual">=</i>';
+// Setas como no FIFA: o valor novo, a seta e o valor antigo riscado (antes = carta antes do último jogo).
+const seta = (novo, velho) => (velho == null || novo == null || novo === velho ? ''
+  : `<i class="seta ${novo > velho ? 'sobe' : 'desce'}">${novo > velho ? '▲' : '▼'}</i><s class="antigo">${velho}</s>`);
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const nomeMes = (m) => MESES[Number(m.slice(5, 7)) - 1] + ' ' + m.slice(2, 4);
 
@@ -469,6 +463,19 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
   };
 }
 
+// O que mudou na carta desde o último jogo, separado em peso dos votos (jogos novos) e notas novas/alteradas.
+function htmlMudanca(mc) {
+  const m = mc?.mudanca;
+  if (!m) return '<p class="mute" style="text-align:center">As setas ▲▼ comparam com a tua carta antes do último jogo.</p>';
+  const sg = (x) => (x > 0 ? '+' : '') + x;
+  const tot = m.pesos + m.notas;
+  const quando = /^\d{4}-\d{2}-\d{2}$/.test(m.desde || '') ? `${m.desde.slice(8, 10)}/${m.desde.slice(5, 7)}` : m.desde || '';
+  if (!tot && !m.pesos && !m.notas) return `<p class="mute" style="text-align:center">Sem mudanças desde o jogo de ${esc(quando)}.</p>`;
+  const partes = [m.pesos ? `${sg(m.pesos)} pelo peso dos votos (quem joga mais contigo conta mais)` : '',
+    m.notas ? `${sg(m.notas)} por notas novas ou alteradas${m.quantos ? ` (${m.quantos} colega${m.quantos > 1 ? 's' : ''})` : ''}` : ''].filter(Boolean);
+  return `<p class="mute mudanca">Desde o jogo de ${esc(quando)}: <b>${sg(tot)}</b> no global — ${partes.join(' e ')}.</p>`;
+}
+
 // Seta do Elo: a "forma" pelos resultados — ▲ conta acima da carta a fazer as equipas no próximo jogo, ▼ abaixo.
 // Nunca mexe na carta. 10 pontos de Elo = 1 ponto de overall.
 // Setas pelo peso do ajuste face ao máximo permitido (10 % do overall): ▲ até 1/3, ▲▲ até 2/3, ▲▲▲ perto do máximo.
@@ -496,7 +503,7 @@ async function perfilEu(eu, todos) {
   const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim');
   const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
-  const d = variacoes(mc?.hist);
+  const d = mc?.ref || null;   // carta antes do último jogo: { ov, st, data }
   // Pedido para atualizar notas (só faz sentido com a votação aberta).
   let pedido = '';
   if (estado?.votacaoAberta) {
@@ -513,8 +520,8 @@ async function perfilEu(eu, todos) {
     <p class="mute" style="text-align:center">Carta fictícia — os valores reais aparecem quando o Rui mostrar as cartas.</p>`;
   else if (!mc?.carta) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não há carta para ti (faltam votos).</p></div>';
   else carta = `<div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
-    <p class="mute" style="text-align:center">${d ? 'Setas = mudança desde o mês passado.' : 'As setas ▲▼ aparecem a partir do próximo mês.'}
-      ${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
+    ${htmlMudanca(mc)}
+    <p class="mute" style="text-align:center">${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
   carta += htmlElo(mc?.elo, !!estado?.usarElo);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
@@ -655,9 +662,9 @@ function htmlCarta(p, c, d = null) {
   const st = c?.stats || {};
   const ov = c?.overall;
   return `<div class="carta ${tier(ov)}">
-    <div class="ov">${ov ?? '–'}${d ? seta(d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.ficticia ? '<div class="prov">fictícia</div>' : c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
+    <div class="ov">${ov ?? '–'}${d ? seta(ov, d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.ficticia ? '<div class="prov">fictícia</div>' : c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
     ${foto(p)}<div class="nm">${esc(nomeDe(p))}</div>
-    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}${d ? seta(d[a.k]) : ''}</span>`).join('')}</div>
+    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}${d ? seta(st[a.k] != null ? Math.round(st[a.k] * 10) : null, d.st?.[a.k]) : ''}</span>`).join('')}</div>
   </div>`;
 }
 
@@ -737,6 +744,15 @@ async function publicarCartasPessoais() {
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
   const elo = calcularElo((await DB.listResultados()).map((r) => { try { return JSON.parse(r.json || '{}').jogo; } catch { return null; } }).filter(Boolean), cartas);
+  // Último jogo terminado e a carta de cada um com os votos de agora mas os pesos de ANTES desse jogo:
+  // separa o que mudou por causa do peso dos votos (o jogo) do que mudou por notas novas/alteradas.
+  const jogos = (await DB.listJogosPub()).map((x) => { try { return { id: x.id, ...JSON.parse(x.json || '{}') }; } catch { return null; } })
+    .filter((j) => j?.fase === 'fim').sort((a, b) => (a.inicioEpoch || 0) - (b.inicioEpoch || 0));
+  const ultimo = jogos.at(-1);
+  const cartasPesosAntes = ultimo ? calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes,
+    pontosConvivio(jogos.filter((j) => (j.inicioEpoch || 0) < ultimo.inicioEpoch))) : cartas;
+  const foto10 = (cc) => ({ ov: cc?.overall ?? null, st: Object.fromEntries(AREAS.map((a) => [a.k, cc?.stats[a.k] != null ? Math.round(cc.stats[a.k] * 10) : null])) });
+  const dataJogo = ultimo ? (ultimo.data || new Date(ultimo.inicioEpoch).toLocaleDateString('pt-PT')) : null;
   for (const p of ativos) {
     const c = cartas[p.id];
     if (!c || c.overall == null) continue;
@@ -744,9 +760,22 @@ async function publicarCartasPessoais() {
     const foto = { mes, ov: c.overall, st: Object.fromEntries(AREAS.map((a) => [a.k, c.stats[a.k] != null ? Math.round(c.stats[a.k] * 10) : null])) };
     const hist = [...(antes[p.id]?.hist || [])];
     if (hist.at(-1)?.mes === mes) hist[hist.length - 1] = foto; else hist.push(foto);
+    // Referência das setas: a carta como estava antes do último jogo. Muda quando aparece um jogo novo.
+    let ref = antes[p.id]?.ref || null;
+    if (ultimo && ref?.jogoId !== ultimo.id) {
+      // Base: a carta guardada, se for de antes deste jogo (já houve uma referência, ou foi gravada antes de ele começar);
+      // senão, a melhor aproximação = votos de agora com os pesos de antes do jogo.
+      const guardada = antes[p.id]?.carta && (ref || (antes[p.id].ts || 0) < ultimo.inicioEpoch);
+      const base = guardada ? foto10(antes[p.id].carta) : foto10(cartasPesosAntes[p.id]);
+      ref = { jogoId: ultimo.id, data: dataJogo, ...base };
+    }
+    const agora = foto10(c), semPesos = foto10(cartasPesosAntes[p.id]);
+    const desde = ultimo?.inicioEpoch || 0;
+    const quantos = A.votes.filter((v) => v.voter !== p.id && v.r?.[p.id]?.t > desde).length;   // só o número, nunca quem
+    const mudanca = ref ? { desde: ref.data, pesos: agora.ov - semPesos.ov, notas: semPesos.ov - ref.ov, quantos } : null;
     const e = elo[p.id];
     const aj = e ? ajusteElo(c.overall, e.forma) : 0;   // pontos de overall que o Elo soma/tira (já com o teto)
-    const novo = { carta, hist, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo), ajuste: Math.round(aj * 10) / 10, pct: Math.round((aj / c.overall) * 1000) / 10 } : null };
+    const novo = { carta, hist, ref, mudanca, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo), ajuste: Math.round(aj * 10) / 10, pct: Math.round((aj / c.overall) * 1000) / 10 } : null };
     const { id: _, ts: __, ...velho } = antes[p.id] || {};
     if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
     await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
@@ -781,15 +810,18 @@ const grSofreu = (j, ev) => ev.gr || (j.turnos || []).find((x) => x.equipa !== e
 // ---------- Estatísticas de todos os jogos (a partir do que o relógio envia) ----------
 export function estatisticas(resultados) {
   const S = {};
-  const linha = (id, nome) => (S[id] ||= { id, nome, j: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0 });
+  const linha = (id, nome) => (S[id] ||= { id, nome, j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0 });
   for (const { jogo: j } of resultados) {
     if (!j || j.fase !== 'fim') continue;
     const { B: gB, P: gP } = placarDe(j), venc = vencedorDe(j);
+    // Só contam para as médias os jogos com registos (decisão do Rui, 21/10): golos registados (não "só o vencedor")
+    // e trocas de GR registadas (sem turnos não se sabe quem esteve na baliza).
+    const reg = !j.semGolos, temGR = (j.turnos || []).length > 0;
     for (const [e, lista] of [['B', j.brancos || []], ['P', j.pretos || []]]) {
       const meus = e === 'B' ? gB : gP, deles = e === 'B' ? gP : gB;
       for (const p of lista) {
         const s = linha(p.id, p.nome);
-        s.nome = p.nome; s.j++; s.gm += meus; s.gs += deles;
+        s.nome = p.nome; s.j++; if (reg) { s.jReg++; s.gm += meus; s.gs += deles; } if (temGR) s.jGR++;
         if (venc === e) s.v++; else if (venc === 'E') s.e++; else s.d++;
       }
     }
@@ -797,7 +829,7 @@ export function estatisticas(resultados) {
       if (ev.tipo === 'autogolo') { if (S[ev.marcador]) S[ev.marcador].ag++; continue; }
       if (S[ev.marcador]) { S[ev.marcador].g++; if (ev.parte && ev.parte !== 'out') S[ev.marcador][ev.parte]++; }
       if (ev.assist && S[ev.assist]) S[ev.assist].a++;
-      const q = grSofreu(j, ev);
+      const q = temGR ? grSofreu(j, ev) : null;
       if (q && S[q]) S[q].sofr++;
     }
     for (const t of j.turnos || []) if (S[t.jogador]) S[t.jogador].grMs += t.ate - t.de;
@@ -826,13 +858,13 @@ async function secEstatisticas(el) {
 
 function tabelaStats(el, res, players, ord = 'pts', destaque = null) {
   const nomeAtual = (s) => nomeDe(players.find((p) => p.id === s.id) || { nome: s.nome });
-  const L = estatisticas(res).map((s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.j ? s.g / s.j : 0,
+  const L = estatisticas(res).map((s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.jReg ? s.g / s.jReg : null, grJ: s.jGR ? s.grMs / s.jGR : null,
     sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null }));
-  const cols = [['nome', 'Jogador'], ['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grMs', 'Min GR'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
+  const cols = [['nome', 'Jogador'], ['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
   L.sort((x, y) => ord === 'nome' ? nomeAtual(x).localeCompare(nomeAtual(y), 'pt') : ord === 'sofr10' ? (x.sofr10 ?? 99) - (y.sofr10 ?? 99) : (y[ord] ?? 0) - (x[ord] ?? 0));
-  const fmt = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1) : k === 'grMs' ? Math.round(v / 60000) : v;
+  const fmt = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1) : k === 'grJ' ? Math.round(v / 60000) : v;
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
-  el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.</p>
+  el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
     <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}</th>`).join('')}</tr>
     ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
   el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque)));

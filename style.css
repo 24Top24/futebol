@@ -201,3 +201,8 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 /* Pedido para atualizar notas */
 .opcao.pedido { border: 1px solid var(--verde2); }
 .tag-atual { color: var(--amarelo); font-weight: 700; margin-left: 4px; }
+
+/* Setas estilo FIFA: valor antigo riscado ao lado */
+.carta .antigo { font-size: 11px; opacity: .65; margin-left: 1px; vertical-align: super; }
+.carta .ov .antigo { font-size: 14px; }
+.mudanca { text-align: center; margin: 6px 0; }
