@@ -100,7 +100,7 @@ async function paginaInicio() {
   const todos = juntarPerfis(players, perfis);
   const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
     .sort((a, b) => b.jogo.inicioEpoch - a.jogo.inicioEpoch);
-  if (A.pubTab === 'stats') return tabelaStats(el, res, todos);
+  if (A.pubTab === 'stats') return tabelaStats(el, res, todos, 'pts', null, 'publico');
   if (A.pubTab === 'jogos') return listaResultados(el, res);
   // Equipas: as mais recentes (próximo jogo) e, se já houver resultado, o marcador.
   const ult = [...games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 2);
@@ -115,9 +115,11 @@ async function paginaInicio() {
 }
 
 // Golos (minuto, equipa, marcador, assistência, parte do corpo) e penáltis falhados/defendidos de um jogo.
-function linhasEventos(j) {
+// O pé com que se marcou só aparece nos golos do próprio (decisão do Rui, 21/10); cabeça e penálti aparecem sempre.
+const PES = ['pd', 'pe'];
+function linhasEventos(j, euId = null) {
   const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
-  return `${(j.eventos || []).map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
+  return `${(j.eventos || []).map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte && (!PES.includes(ev.parte) || ev.marcador === euId) ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
     ${(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => `<div class="mute">${Math.floor(pn.t / 60000) + 1}' ${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${nome(pn.marcador)} ${pn.resultado === 'defendido' ? `defendido por ${nome(pn.gr)} 🧤` : 'falhado'}</div>`).join('')}`;
 }
 
@@ -299,7 +301,7 @@ function resumoJogo(j, euId, aberto, extra = '') {
     <p><b>O teu jogo:</b> ${meu.length ? meu.join(' · ') : 'sem golos nem assistências'}${dur ? ` · ⏱ ${dur} min de jogo` : ''}</p>
     ${extra}
     <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${eq('B')}</div><div class="eq preto"><h4>${LOGO.P} Pretos</h4>${eq('P')}</div></div>
-    ${linhasEventos(j)}</details>`;
+    ${linhasEventos(j, euId)}</details>`;
 }
 
 // ---------- Dados físicos e treinos do relógio ----------
@@ -532,9 +534,9 @@ async function perfilEu(eu, todos) {
     <h3>🩺 Dados físicos e relógio</h3><div id="eu-form"></div>${blocoFisico(saude, treinos, meus, false)}
     <h3>Os teus jogos (${meus.length})</h3>
     ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0, extraTreino(r.id, treinos, saude, false))).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
-    <h3>Estatísticas de todos</h3><div id="eu-stats"></div>`;
+    <h3>As tuas estatísticas</h3><div id="eu-stats"></div>`;
   ligarFisico(eu, todos, saude, treinos, meus);
-  tabelaStats(document.getElementById('eu-stats'), res, todos, 'pts', eu.id);
+  minhasStats(document.getElementById('eu-stats'), res, eu.id);
   document.getElementById('eu-perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
   document.getElementById('eu-votar')?.addEventListener('click', (e) => { e.preventDefault(); A.pubTab = 'votar'; paginaInicio(); });
   document.getElementById('eu-pedido')?.addEventListener('click', () => { A.pubTab = 'votar'; paginaInicio(); });
@@ -859,18 +861,33 @@ async function secEstatisticas(el) {
     ${L.map((x) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === x.id) || { nome: x.nome }))}</td><td>${x.elo}</td><td>${x.forma > 0 ? '+' : ''}${Math.round(x.forma)}</td><td>${x.jogos}</td><td>${x.ultimo > 0 ? '▲' : x.ultimo < 0 ? '▼' : '='}</td></tr>`).join('')}</table></div>`;
 }
 
-function tabelaStats(el, res, players, ord = 'pts', destaque = null) {
+// Médias e totais de cada jogador a partir das estatísticas dos jogos.
+const comMedias = (s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.jReg ? s.g / s.jReg : null, grJ: s.jGR ? s.grMs / s.jGR : null,
+  sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null });
+const fmtStat = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1).replace('.', ',') : k === 'grJ' ? Math.round(v / 60000) : v;
+const COLS_STATS = [['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
+
+// Só as estatísticas do próprio (perfil 👤 Eu) — é o único sítio, além do admin, onde aparece o pé.
+function minhasStats(el, res, id) {
+  const s = estatisticas(res).find((x) => x.id === id);
+  if (!s) { el.innerHTML = '<p class="mute">Ainda não tens jogos registados.</p>'; return; }
+  const m = comMedias(s);
+  el.innerHTML = `<div class="fgrid medias">${COLS_STATS.map(([k, n]) => `<span>${n} <b>${fmtStat(k, m[k], m)}</b></span>`).join('')}</div>
+    <p class="mute" style="font-size:12px">G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</p>`;
+}
+
+// modo 'publico': sem as colunas do pé; 'admin': tudo.
+function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'admin') {
   const nomeAtual = (s) => nomeDe(players.find((p) => p.id === s.id) || { nome: s.nome });
-  const L = estatisticas(res).map((s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.jReg ? s.g / s.jReg : null, grJ: s.jGR ? s.grMs / s.jGR : null,
-    sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null }));
-  const cols = [['nome', 'Jogador'], ['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
+  const L = estatisticas(res).map(comMedias);
+  const cols = [['nome', 'Jogador'], ...COLS_STATS].filter(([k]) => modo !== 'publico' || !PES.includes(k));
   L.sort((x, y) => ord === 'nome' ? nomeAtual(x).localeCompare(nomeAtual(y), 'pt') : ord === 'sofr10' ? (x.sofr10 ?? 99) - (y.sofr10 ?? 99) : (y[ord] ?? 0) - (x[ord] ?? 0));
-  const fmt = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1) : k === 'grJ' ? Math.round(v / 60000) : v;
+  const fmt = fmtStat;
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
     <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}</th>`).join('')}</tr>
     ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
-  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque)));
+  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque, modo)));
 }
 
 // ---------- Jogos (resultados enviados pelo relógio) ----------
