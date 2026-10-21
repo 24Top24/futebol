@@ -8,10 +8,12 @@ const minuto = (ms) => `${Math.floor(ms / 60000) + 1}'`;
 const outra = (e) => (e === 'B' ? 'P' : 'B');
 const DUR = [6, 5, 4, 3, 2, 1];
 const PARTES = { pd: 'Pé direito', pe: 'Pé esquerdo', cab: 'Cabeça', out: 'Outro', pen: 'Penálti' };
+// Dia de hoje na hora de Portugal (toISOString é UTC: entre a meia-noite e a 1h dava o dia anterior).
+export const hojeLocal = () => new Date().toLocaleDateString('sv-SE');
 
 // ---------- estado (mesmo formato que o relógio envia) ----------
 function novoJogo(eq) {
-  return { gameId: eq?.id || '', data: eq?.data || new Date().toISOString().slice(0, 10), brancos: eq?.brancos || [], pretos: eq?.pretos || [],
+  return { gameId: eq?.id || '', data: eq?.data || hojeLocal(), brancos: eq?.brancos || [], pretos: eq?.pretos || [],
     minTurno: 6, rondas: 2, fase: 'prep', inicioEpoch: 0, fimEpoch: 0, pausadoEm: 0, pausaTotal: 0,
     eventos: [], penaltis: [], baliza: {}, turnos: [], enviado: false, origem: 'telemovel' };
 }
@@ -60,7 +62,9 @@ function bip() {
 }
 
 // =====================================================================
-// opts: { el, carregarEquipas: async () => equipa|null, enviar: async (id, doc) => void }
+// opts: { el, carregarEquipas: async () => equipa|null, enviar: async (id, doc) => void,
+//   mudou?: (jogo) => void            — cada mudança (para os moderadores verem ao vivo),
+//   outro?: () => { nome, jogo }|null — alguém noutro telemóvel já está a marcar este jogo }
 export function paginaMarcador(opts) {
   const { el } = opts;
   let j = ler() || novoJogo(null);
@@ -68,7 +72,7 @@ export function paginaMarcador(opts) {
   const abertos = new Set();  // trocas de GR já abertas automaticamente
   const ultimoAlarme = {};
   let wake = null;
-  const salvar = () => gravar(j);
+  const salvar = () => { gravar(j); try { opts.mudou?.(j); } catch (e) { console.error(e); } };
 
   async function pedirEcraLigado() { try { wake = await navigator.wakeLock?.request('screen'); } catch {} }
 
@@ -81,6 +85,7 @@ export function paginaMarcador(opts) {
 
   // ---------- render ----------
   function render() {
+    document.body.classList.toggle('modo-jogo', j.fase === 'jogo');   // fundo preto, sem topo nem separadores
     if (j.fase === 'prep') return renderPrep();
     if (j.fase === 'fim') return renderFim();
     renderJogo();
@@ -88,8 +93,12 @@ export function paginaMarcador(opts) {
 
   function renderPrep() {
     const gr = (e) => j.baliza[e]?.atual || jogs(j, e)[0]?.id;
+    const ou = opts.outro?.();
     el.innerHTML = `
       <h2>⚽ Marcador do jogo</h2>
+      ${ou ? `<div class="opcao pedido"><b>⏱ ${esc(ou.nome)} já está a marcar este jogo</b> <span class="mute">(⚪ ${golos(ou.jogo, 'B')} – ${golos(ou.jogo, 'P')} ⚫, ${mmss(decorrido(ou.jogo))})</span>
+        <p class="mute" style="margin:4px 0 8px">Só um telemóvel marca. Se o dele ficou sem bateria ou sem rede, assume aqui: continua com tudo o que ele já registou.</p>
+        <button class="prim" id="m-assumir" style="width:100%">Assumir a marcação</button></div>` : ''}
       <div class="opcao"><div class="linha" style="justify-content:space-between"><b>Equipas ${esc(j.data)}</b><button class="peq" id="m-eq">Carregar as mais recentes</button></div>
         ${j.brancos.length ? `<div class="equipas"><div class="eq branco"><h4>⚪ Brancos</h4>${j.brancos.map((p) => esc(p.nome)).join('<br>')}</div>
           <div class="eq preto"><h4>⚫ Pretos</h4>${j.pretos.map((p) => esc(p.nome)).join('<br>')}</div></div>` : '<p class="mute">Carrega as equipas feitas no site.</p>'}</div>
@@ -102,16 +111,25 @@ export function paginaMarcador(opts) {
       <button class="prim" id="m-start" style="width:100%;margin-top:16px;padding:16px;font-size:20px">START GAME</button>
       <p class="mute">O ecrã fica ligado durante o jogo. No fim o jogo é enviado para o site.</p>` : ''}`;
     el.querySelector('#m-eq').onclick = carregar;
+    el.querySelector('#m-assumir')?.addEventListener('click', () => {
+      if (!confirm(`Assumir a marcação no lugar de ${ou.nome}? O telemóvel dele deixa de contar.`)) return;
+      j = { ...ou.jogo, enviado: false }; salvar(); bipDesbloquear(); ecraInteiro(); pedirEcraLigado(); render();
+    });
     el.querySelectorAll('[data-min]').forEach((b) => (b.onclick = () => { j.minTurno = Number(b.dataset.min); salvar(); render(); }));
     el.querySelectorAll('[data-ron]').forEach((b) => (b.onclick = () => { j.rondas = Number(b.dataset.ron); salvar(); render(); }));
     el.querySelector('#m-start')?.addEventListener('click', () => {
       j.baliza = { B: { atual: el.querySelector('#m-grB').value, inicio: 0, expirou: false, dur: j.minTurno },
                    P: { atual: el.querySelector('#m-grP').value, inicio: 0, expirou: false, dur: j.minTurno } };
-      j.fase = 'jogo'; j.inicioEpoch = Date.now(); salvar(); bipDesbloquear(); pedirEcraLigado(); render();
+      if (ou && !confirm(`${ou.nome} já está a marcar. Começar outro registo mesmo assim? (fica duplicado)`)) return;
+      // A data do jogo é o dia em que começa (não o dia em que se fizeram as equipas).
+      j.fase = 'jogo'; j.inicioEpoch = Date.now(); j.data = hojeLocal(); salvar(); bipDesbloquear(); ecraInteiro(); pedirEcraLigado(); render();
     });
   }
   // O áudio só toca depois de um toque do utilizador: "acorda-o" no START.
   function bipDesbloquear() { try { audio ||= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {} }
+  // Ecrã inteiro durante o jogo (Android; no iPhone só com a app instalada no ecrã principal).
+  function ecraInteiro() { try { if (!document.fullscreenElement) document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch(() => {}); } catch {} }
+  function sairEcraInteiro() { try { if (document.fullscreenElement) document.exitFullscreen?.()?.catch(() => {}); } catch {} }
 
   function renderJogo() {
     const t = decorrido(j);
@@ -124,21 +142,28 @@ export function paginaMarcador(opts) {
       }).join('')}</div>
       <div class="linha" style="margin:10px 0">
         <button class="peq" id="m-pausa">${j.pausadoEm ? '▶ Retomar' : '⏸ Pausa'}</button>
+        ${document.fullscreenEnabled && !document.fullscreenElement ? '<button class="peq" id="m-ecra" title="Ecrã inteiro">⛶</button>' : ''}
         <button class="peq" id="m-dur">⏱ Turnos GR: ${j.minTurno} min</button>
         ${j.eventos.length ? '<button class="peq" id="m-undo">↩ Anular último golo</button>' : ''}
         <button class="peq perigo" id="m-stop">⏹ Terminar</button></div>
-      <div class="mlista">${[...j.eventos].reverse().map((ev) => `<div>${minuto(ev.t)} ${descr(ev)}</div>`).join('')}</div>
+      <div class="mlista">${lista()}</div>
       ${modal ? renderModal() : ''}`;
+    el.querySelector('#m-ecra')?.addEventListener('click', () => { ecraInteiro(); setTimeout(render, 300); });
     el.querySelector('#m-tempo').onclick = () => { pausar(j); salvar(); render(); };
     el.querySelector('#m-pausa').onclick = () => { pausar(j); salvar(); render(); };
     el.querySelector('#m-dur').onclick = () => { j.minTurno = DUR[(DUR.indexOf(j.minTurno) + 1) % DUR.length]; salvar(); render(); };
     el.querySelector('#m-undo')?.addEventListener('click', () => { if (confirm('Anular o último golo?')) { const ev = j.eventos.pop(); if (ev?.parte === 'pen') j.penaltis = (j.penaltis || []).filter((pn) => pn.t !== ev.t); salvar(); render(); } });
-    el.querySelector('#m-stop').onclick = () => { if (confirm('Terminar o jogo?')) { terminar(j); salvar(); render(); enviar(); } };
+    el.querySelector('#m-stop').onclick = () => { if (confirm('Terminar o jogo?')) { terminar(j); salvar(); sairEcraInteiro(); render(); enviar(); } };
     el.querySelectorAll('[data-golo]').forEach((b) => (b.onclick = () => { modal = { tipo: 'marcador', e: b.dataset.golo }; render(); }));
     el.querySelectorAll('[data-gr]').forEach((b) => (b.onclick = () => { modal = { tipo: 'gr', e: b.dataset.gr }; render(); }));
     ligarModal();
   }
 
+  // Golos e penáltis falhados/defendidos, o mais recente primeiro.
+  const lista = () => [...j.eventos.map((ev) => ({ t: ev.t, h: descr(ev) })),
+    ...(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => ({ t: pn.t,
+      h: `<span class="mute">${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${esc(nome(j, pn.marcador))} ${pn.resultado === 'defendido' ? `defendido por ${esc(nome(j, pn.gr))}` : 'falhado'}</span>` }))]
+    .sort((a, b) => b.t - a.t).map((x) => `<div>${minuto(x.t)} ${x.h}</div>`).join('');
   const descr = (ev) => `${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${esc(nome(j, ev.marcador))}`
     : esc(nome(j, ev.marcador)) + (ev.assist ? ` (${esc(nome(j, ev.assist))})` : '')}${ev.parte ? ` · ${PARTES[ev.parte]}` : ''}`;
 
@@ -224,19 +249,31 @@ export function paginaMarcador(opts) {
   const timer = setInterval(() => {
     if (!el.isConnected) { clearInterval(timer); try { wake?.release(); } catch {} return; }
     if (j.fase !== 'jogo') return;
+    let mudou = false;
     if (!j.pausadoEm) {
       const t = decorrido(j);
       for (const e of ['B', 'P']) {
         const b = j.baliza[e];
         if (!b) continue;
-        if (!b.expirou && b.dur * 60000 - (t - b.inicio) <= 0) { b.expirou = true; salvar(); bip(); ultimoAlarme[e] = Date.now(); }
+        if (!b.expirou && b.dur * 60000 - (t - b.inicio) <= 0) { b.expirou = true; salvar(); bip(); ultimoAlarme[e] = Date.now(); mudou = true; }
         else if (b.expirou && Date.now() - (ultimoAlarme[e] || 0) > 15000) { bip(); ultimoAlarme[e] = Date.now(); }
-        if (b.expirou && !modal && !abertos.has(`${e}-${b.inicio}`)) { abertos.add(`${e}-${b.inicio}`); modal = { tipo: 'gr', e }; }
+        if (b.expirou && !modal && !abertos.has(`${e}-${b.inicio}`)) { abertos.add(`${e}-${b.inicio}`); modal = { tipo: 'gr', e }; mudou = true; }
       }
     }
-    // Só redesenha o necessário quando não há janela aberta (não estragar toques a meio).
-    if (!modal || modal.tipo === 'gr') render();
+    // Redesenhar tudo a cada segundo trocava os botões debaixo do dedo (toques perdidos):
+    // só se redesenha quando muda alguma coisa; no resto do tempo só mudam os números.
+    if (mudou && (!modal || modal.tipo === 'gr')) render(); else tiquetaque();
   }, 1000);
+  function tiquetaque() {
+    const t = decorrido(j), tp = el.querySelector('#m-tempo');
+    if (tp && !j.pausadoEm) tp.textContent = mmss(t);
+    el.querySelectorAll('[data-gr]').forEach((bt) => {
+      const b = j.baliza[bt.dataset.gr]; if (!b) return;
+      const resta = b.dur * 60000 - (t - b.inicio);
+      bt.querySelector('b').textContent = b.expirou ? 'TROCA!' : mmss(resta);
+      bt.classList.toggle('alerta', b.expirou || resta < 30000);
+    });
+  }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && j.fase === 'jogo') pedirEcraLigado(); });
   // Vindo de "Abrir o marcador com estas equipas": carrega-as já (nunca por cima de um jogo a decorrer ou por enviar).
   if (opts.carregarJa && (j.fase === 'prep' || (j.fase === 'fim' && j.enviado))) { carregar(); return; }

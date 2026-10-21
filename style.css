@@ -5,10 +5,14 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; background: var(--bg); color: var(--txt); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 body { min-height: 100vh; }
-#topo { position: sticky; top: 0; z-index: 5; background: var(--bg2); padding: 12px 16px; font-weight: 700; font-size: 18px; border-bottom: 1px solid var(--borda); display: flex; align-items: center; gap: 8px; }
-#lnk-admin { margin-left: auto; color: var(--mute); text-decoration: none; font-size: 20px; padding: 0 4px; }
+/* Altura do topo (para o que fica preso por baixo dele). No iPhone instalado o topo desce para fora do entalhe. */
+:root { --topo: calc(53px + env(safe-area-inset-top)); }
+#topo { position: sticky; top: 0; z-index: 5; background: var(--bg2); padding: 6px max(12px, env(safe-area-inset-right)) 6px max(16px, env(safe-area-inset-left)); padding-top: calc(6px + env(safe-area-inset-top)); min-height: var(--topo); font-weight: 700; font-size: 18px; border-bottom: 1px solid var(--borda); display: flex; align-items: center; gap: 4px; }
+#lnk-admin { margin-left: auto; color: var(--mute); text-decoration: none; font-size: 20px; }
+/* Botões do topo com área de toque de 40 px */
+#lnk-admin, #ticket { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; border-radius: 10px; }
 #demo { margin-left: auto; font-size: 11px; background: var(--amarelo); color: #000; padding: 3px 8px; border-radius: 99px; }
-main { max-width: 720px; margin: 0 auto; padding: 16px; }
+main { max-width: 720px; margin: 0 auto; padding: 16px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .centro { text-align: center; }
 .mute { color: var(--mute); }
 h2 { margin: 8px 0 12px; font-size: 20px; }
@@ -18,12 +22,21 @@ button:active { transform: scale(.97); }
 .prim { background: var(--verde2); font-weight: 700; }
 .perigo { background: #5a1f1a; }
 .peq { padding: 6px 10px; font-size: 13px; }
-input, select { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--borda); background: var(--bg2); color: var(--txt); width: 100%; }
+input, select, textarea { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--borda); background: var(--bg2); color: var(--txt); width: 100%; }
+input[type=file] { padding: 6px; max-width: 100%; font-size: 13px; color: var(--mute); }
+input[type=file]::file-selector-button { font: inherit; font-weight: 700; border: 0; border-radius: 8px; padding: 8px 12px; margin-right: 10px; background: var(--bg3); color: var(--txt); cursor: pointer; }
+:focus-visible { outline: 2px solid var(--verde); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 label { display: block; margin: 10px 0 4px; color: var(--mute); font-size: 14px; }
 .linha { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.tabs { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
-.tabs button.on { background: var(--verde2); }
-#toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #000c; padding: 10px 16px; border-radius: 99px; z-index: 50; }
+/* Separadores: numa linha, presos por baixo do topo; na votação não (já lá está a barra das áreas). */
+.tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; position: sticky; top: var(--topo); z-index: 4; background: var(--bg); margin: -16px 0 12px; padding: 10px 0 8px; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs:has(+ #pub .vcab) { position: static; }
+/* Letra e margens acompanham a largura: os 5 separadores públicos cabem de 320 px para cima. */
+.tabs button { flex: 1 0 auto; white-space: nowrap; padding: 9px min(11px, 1.85vw); font-size: min(14px, 3.45vw); }
+.tabs button.on { background: var(--verde2); font-weight: 700; }
+#toast { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #000c; padding: 10px 16px; border-radius: 99px; z-index: 50; }
 
 /* ---------- Votação ---------- */
 .prog { height: 6px; background: var(--bg3); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
@@ -61,6 +74,8 @@ label { display: block; margin: 10px 0 4px; color: var(--mute); font-size: 14px;
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 td, th { padding: 5px 4px; border-bottom: 1px solid var(--borda); text-align: center; }
 td:first-child, th:first-child { text-align: left; }
+/* Tabela de estatísticas: o nome fica preso à esquerda ao deslizar para o lado */
+.tstats td:first-child, .tstats th:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: 1px 0 0 var(--borda); }
 
 /* ---------- Cartas ---------- */
 .cartas { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
@@ -79,7 +94,7 @@ td:first-child, th:first-child { text-align: left; }
 .carta .st b { display: inline-block; min-width: 22px; }
 
 /* ---------- Votação por área ---------- */
-.vcab { position: sticky; top: 49px; z-index: 4; background: var(--bg); padding: 8px 0 6px; }
+.vcab { position: sticky; top: var(--topo); z-index: 4; background: var(--bg); padding: 8px 0 6px; }
 .atabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
 .atabs button { flex: none; padding: 8px 10px; font-size: 14px; display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
 .atabs button small { font-size: 11px; color: var(--mute); }
@@ -150,9 +165,9 @@ details summary { cursor: pointer; }
 .fplant small { font-size: 10px; }
 
 /* Perfil "Eu": setas do último mês, gráfico, os meus jogos e a minha linha nas estatísticas */
-.seta { font-style: normal; font-size: 10px; font-weight: 800; margin-left: 2px; vertical-align: super; }
+.seta { font-style: normal; font-size: 12px; font-weight: 800; margin-left: 2px; vertical-align: super; }
 .seta.sobe { color: #0b7a3b; } .seta.desce { color: #b3261e; } .seta.igual { color: #0006; }
-.carta .ov .seta { font-size: 12px; }
+.carta .ov .seta { font-size: 14px; }
 .eu-carta { display: flex; justify-content: center; } .eu-carta .carta { width: 190px; }
 .evol { width: 100%; max-width: 420px; display: block; margin: 0 auto; }
 .evol text { fill: currentColor; font-size: 11px; } .evol text.mes { opacity: .6; font-size: 10px; }
@@ -203,6 +218,40 @@ tr.eu td { background: #12301f; font-weight: 800; color: var(--verde); }
 .tag-atual { color: var(--amarelo); font-weight: 700; margin-left: 4px; }
 
 /* Setas estilo FIFA: valor antigo riscado ao lado */
-.carta .antigo { font-size: 11px; opacity: .65; margin-left: 1px; vertical-align: super; }
-.carta .ov .antigo { font-size: 14px; }
+.carta .antigo { font-size: 12px; font-weight: 700; opacity: .8; margin-left: 1px; vertical-align: super; }
+.carta .ov .antigo { font-size: 15px; }
 .mudanca { text-align: center; margin: 6px 0; }
+
+/* Resultados: marcador grande ao centro, vencedor em destaque, golos fechados */
+.placar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin: 6px 0 4px; }
+.placar .lado { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--mute); }
+.placar .lado:last-child { justify-content: flex-end; }
+.placar .lado .logo { width: 26px; height: 30px; margin: 0; }
+.placar .golos { font-size: 30px; font-weight: 900; letter-spacing: 1px; white-space: nowrap; }
+.placar .golos .perde { opacity: .45; }
+.placar .golos small { display: block; font-size: 11px; font-weight: 400; letter-spacing: 0; white-space: normal; text-align: center; max-width: 80px; }
+.placar .lado.ganha { color: var(--txt); }
+.placar .lado.ganha::after, .placar .lado:last-child.ganha::before { content: '🏆'; font-size: 14px; }
+.placar .lado:last-child.ganha::after { content: none; }
+.resultado .equipas { margin: 6px 0 0; font-size: 14px; }
+.resultado .eq.ganha { box-shadow: 0 0 0 2px var(--verde); }
+.resultado details { margin-top: 8px; font-size: 14px; line-height: 1.6; }
+.resultado summary { color: var(--mute); padding: 6px 0; }
+
+/* Perfil: estatísticas principais em destaque */
+.destaques { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 6px 0; }
+.destaques span { background: var(--bg2); border-radius: 10px; padding: 8px 4px; text-align: center; font-size: 12px; color: var(--mute); }
+.destaques b { display: block; font-size: 22px; color: var(--txt); }
+
+/* Marcador durante o jogo: preto puro (OLED gasta menos), sem topo nem separadores; ecrã inteiro. */
+body.modo-jogo { --bg: #000; --bg2: #0e0e10; --bg3: #1c1c20; background: #000; }
+body.modo-jogo #topo, body.modo-jogo .tabs, body.modo-jogo .mod-barra { display: none; }
+body.modo-jogo main { padding-top: max(10px, env(safe-area-inset-top)); }
+body.modo-jogo .mgolo { padding: 9vh 0; font-size: 110px; }   /* alvos grandes para tocar a correr */
+/* Moderadores: estado do jogo de hoje, igual em todos os telemóveis. */
+.mod-barra { background: var(--bg2); border: 1px solid var(--borda); border-radius: 14px; padding: 10px; margin-bottom: 12px; }
+.mod-barra .passos { display: flex; gap: 4px; margin-top: 8px; font-size: 12px; }
+.mod-barra .passos span { flex: 1; text-align: center; padding: 4px 2px; border-radius: 8px; background: var(--bg3); color: var(--mute); }
+.mod-barra .passos span.feito { background: var(--verde2); color: #fff; }
+.ao-vivo { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; margin-right: 4px; animation: pisca 1.2s infinite; }
+@keyframes pisca { 50% { opacity: .25; } }
