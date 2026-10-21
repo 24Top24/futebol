@@ -1603,6 +1603,11 @@ async function paginaColab(K) {
 // =====================================================================
 async function rota() {
   const h = location.hash;
+  // No admin, o botão do topo leva ao próprio perfil (👤); fora dele, ao admin (⚙).
+  const lnk = document.getElementById('lnk-admin');
+  if (h === '#admin') { lnk.textContent = '👤'; lnk.href = '#eu'; lnk.title = 'O meu perfil'; }
+  else { lnk.textContent = '⚙'; lnk.href = '#admin'; lnk.title = 'Administração'; }
+  if (h === '#eu') A.pubTab = 'eu';
   try {
     if (h === '#admin') return await paginaAdmin();
     if (h === '#cartas') return await paginaCartas();
