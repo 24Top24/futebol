@@ -19,6 +19,8 @@ async function prova(chave, id) {
   return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 const nomeDe = (p) => p.alias || p.alcunha || p.nome;
+// Data de um jogo: o dia em que começou (a 'data' guardada pode ser a do dia em que se fizeram as equipas).
+const dataDe = (j) => (j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleDateString('pt-PT') : j.data || '');
 const LOGO = { B: '<img class="logo" src="brancos.svg?v=2" alt="Brancos">', P: '<img class="logo" src="pretos.svg?v=2" alt="Pretos">' };
 const foto = (p) => (p?.fotoPropria || p?.foto ? `<img src="${p.fotoPropria || p.foto}" alt="">` : `<span class="foto0">${esc((nomeDe(p || {}) || '?')[0])}</span>`);
 // Partilha imagem + texto: no telemóvel abre a folha de partilha (escolhe-se o WhatsApp);
@@ -122,7 +124,7 @@ function linhasEventos(j) {
 function listaResultados(el, res) {
   el.innerHTML = res.length ? res.map(({ jogo: j }) => {
     const gol = (e) => marcaDe(j, e);
-    return `<div class="opcao"><b>${esc(j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT'))}</b>
+    return `<div class="opcao"><b>${esc(dataDe(j))}</b>
       <div class="equipas"><div class="eq branco"><h4>${LOGO.B} ${gol('B')}</h4>${(j.brancos || []).map((p) => esc(p.nome)).join('<br>')}</div>
         <div class="eq preto"><h4>${LOGO.P} ${gol('P')}</h4>${(j.pretos || []).map((p) => esc(p.nome)).join('<br>')}</div></div>
       ${linhasEventos(j)}</div>`;
@@ -292,7 +294,7 @@ function resumoJogo(j, euId, aberto, extra = '') {
     pens.length && `penáltis ${pens.filter((p) => p.resultado === 'golo').length}/${pens.length}`,
     grMin && `🧤 ${grMin} min na baliza (sofreste ${sofr})`, pDef && `defendeste ${pDef} penálti${pDef > 1 ? 's' : ''}`].filter(Boolean);
   const eq = (e) => (e === 'B' ? j.brancos : j.pretos || []).map((p) => (p.id === euId ? `<b class="eu-nome">${esc(p.nome)}</b>` : esc(p.nome))).join('<br>');
-  const data = j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT');
+  const data = dataDe(j);
   return `<details class="opcao jogo-eu"${aberto ? ' open' : ''}><summary><b class="res res-${r}">${r}</b> ${esc(data)} · ${LOGO.B} ${marcaDe(j, 'B')} – ${marcaDe(j, 'P')} ${LOGO.P}</summary>
     <p><b>O teu jogo:</b> ${meu.length ? meu.join(' · ') : 'sem golos nem assistências'}${dur ? ` · ⏱ ${dur} min de jogo` : ''}</p>
     ${extra}
@@ -400,7 +402,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
   const el = document.getElementById('eu-form');
   const t = existente || treinos.find((x) => jogoId && x.jogoId === jogoId) || {};
   let fc = t.fc || [], origem = t.origem || 'manual', inicio = t.inicio || null;
-  const dataJogo = (r) => r.jogo.data || new Date(r.jogo.inicioEpoch).toLocaleDateString('pt-PT');
+  const dataJogo = (r) => dataDe(r.jogo);
   const jSel = jogoId || t.jogoId || '';
   el.innerHTML = `<div class="opcao form-treino"><b>⌚ Treino do relógio</b>
     <label>Ficheiro do relógio (.FIT, .TCX ou .GPX)</label><input type="file" id="tr-fich" accept=".fit,.tcx,.gpx">
@@ -752,7 +754,7 @@ async function publicarCartasPessoais() {
   const cartasPesosAntes = ultimo ? calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes,
     pontosConvivio(jogos.filter((j) => (j.inicioEpoch || 0) < ultimo.inicioEpoch))) : cartas;
   const foto10 = (cc) => ({ ov: cc?.overall ?? null, st: Object.fromEntries(AREAS.map((a) => [a.k, cc?.stats[a.k] != null ? Math.round(cc.stats[a.k] * 10) : null])) });
-  const dataJogo = ultimo ? (ultimo.data || new Date(ultimo.inicioEpoch).toLocaleDateString('pt-PT')) : null;
+  const dataJogo = ultimo ? dataDe(ultimo) : null;
   for (const p of ativos) {
     const c = cartas[p.id];
     if (!c || c.overall == null) continue;
@@ -762,6 +764,7 @@ async function publicarCartasPessoais() {
     if (hist.at(-1)?.mes === mes) hist[hist.length - 1] = foto; else hist.push(foto);
     // Referência das setas: a carta como estava antes do último jogo. Muda quando aparece um jogo novo.
     let ref = antes[p.id]?.ref || null;
+    if (ref && ultimo && ref.jogoId === ultimo.id && ref.data !== dataJogo) ref = { ...ref, data: dataJogo };
     if (ultimo && ref?.jogoId !== ultimo.id) {
       // Base: a carta guardada, se for de antes deste jogo (já houve uma referência, ou foi gravada antes de ele começar);
       // senão, a melhor aproximação = votos de agora com os pesos de antes do jogo.
@@ -972,7 +975,7 @@ async function secJogos(el) {
       const sofridos = {};
       for (const ev of j.eventos) { const q = grSofreu(j, ev); if (q) sofridos[q] = (sofridos[q] || 0) + 1; }
       return `<div class="opcao">
-        <div class="linha" style="justify-content:space-between"><span><b>${esc(j.data || new Date(j.inicioEpoch).toLocaleDateString('pt-PT'))}</b> · ${mmss(j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0))} de jogo${f.tipo ? ` · <span class="mute">${esc(f.tipo)}</span>` : ''}</span>
+        <div class="linha" style="justify-content:space-between"><span><b>${esc(dataDe(j))}</b> · ${mmss(j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0))} de jogo${f.tipo ? ` · <span class="mute">${esc(f.tipo)}</span>` : ''}</span>
           <button class="peq perigo" data-del="${r.id}">Apagar</button></div>
         <div class="equipas"><div class="eq branco"><h4>${LOGO.B} ${golos('B')}</h4>${(j.brancos || []).map((p) => esc(p.nome)).join('<br>')}</div>
           <div class="eq preto"><h4>${LOGO.P} ${golos('P')}</h4>${(j.pretos || []).map((p) => esc(p.nome)).join('<br>')}</div></div>
