@@ -85,12 +85,11 @@ const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return nu
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 
-// Página inicial (link geral): equipas, estatísticas, resultados e — quando aberta — a votação.
+// Página inicial (link geral): equipas, estatísticas, resultados e a votação (sempre aberta — decisão do Rui, 21/10).
 async function paginaInicio() {
   document.getElementById('titulo').textContent = 'Futebolada';
-  const estado = (await DB.getPublic('estado')) || {};
-  const tabs = [['eu', '👤 Eu'], ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ...(estado.votacaoAberta ? [['votar', '🗳 Votar']] : [])];
-  A.pubTab ||= estado.votacaoAberta ? 'votar' : 'eq';
+  const tabs = [['eu', '👤 Eu'], ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ['votar', '🗳 Votar']];
+  A.pubTab ||= 'votar';
   if (!tabs.some(([k]) => k === A.pubTab)) A.pubTab = 'eq';
   $app.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${A.pubTab === k}" data-pt="${k}" class="${A.pubTab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="pub"></div>`;
   $app.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => { A.pubTab = b.dataset.pt; paginaInicio(); }));
@@ -535,9 +534,9 @@ async function perfilEu(eu, todos) {
   const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
   const d = mc?.ref || null;   // carta antes do último jogo: { ov, st, data }
-  // Pedido para atualizar notas (só faz sentido com a votação aberta).
+  // Pedido para votar nos novos / atualizar notas.
   let pedido = '';
-  if (estado?.votacaoAberta) {
+  {
     const meuVoto = await DB.getVotes(eu.id).catch(() => null);
     const ativos = new Set(todos.map((p) => p.id));
     const L = paraAtualizar(eu.id, meuVoto?.r || {}, meuVoto?.ts, res.map((x) => x.jogo)).filter((x) => ativos.has(x.id));
@@ -561,7 +560,7 @@ async function perfilEu(eu, todos) {
   carta += htmlElo(mc?.elo, !!estado?.usarElo);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
-      <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a>${estado?.votacaoAberta ? ' · <a href="#" id="eu-votar" style="color:inherit">votar</a>' : ''}</span></div>
+      <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a> · <a href="#" id="eu-votar" style="color:inherit">votar</a></span></div>
     ${eu.moderador ? `<a class="btn prim" href="#jogo" style="display:block;text-align:center;padding:14px;margin-bottom:12px;font-size:17px">🛡 Moderador · ⚽ Jogo de hoje</a>` : ''}
     ${pedido}${carta}
     <h3>Os teus jogos (${meus.length})</h3>
@@ -1186,11 +1185,11 @@ function secJogadores(el, edit = null) {
     await recarregar(); toast(`${n} novos, ${m} atualizados`); secJogadores(el);
   };
   el.querySelectorAll('[data-ed]').forEach((b) => (b.onclick = () => { secJogadores(el, A.players.find((x) => x.id === b.dataset.ed)); window.scrollTo(0, 0); }));
-  // 🛡 Moderador (decisão do Rui, 21/10): faz equipas, abre/fecha a votação e marca o jogo, no próprio perfil (com o PIN).
+  // 🛡 Moderador (decisão do Rui, 21/10): faz equipas e marca o jogo, no próprio perfil (com o PIN).
   el.querySelectorAll('[data-mod]').forEach((b) => (b.onclick = async () => {
     const x = A.players.find((y) => y.id === b.dataset.mod); if (!x) return;
     const { alias: _a, fotoPropria: _f, ...base } = x;
-    if (!x.moderador && !confirm(`${nomeDe(x)} passa a moderador: faz equipas, abre e fecha a votação e marca o jogo. Continuar?`)) return;
+    if (!x.moderador && !confirm(`${nomeDe(x)} passa a moderador: faz equipas e marca o jogo. Continuar?`)) return;
     await DB.savePlayer({ ...base, moderador: !x.moderador });
     await recarregar(); toast(x.moderador ? 'Já não é moderador' : '🛡 Moderador'); secJogadores(el);
   }));
@@ -1328,8 +1327,6 @@ const msgPin = (p, pin) => `⚽ Olá ${nomeDe(p)}! O teu PIN para a votação da
 👉 ${BASE}`;
 
 async function secVotacao(el) {
-  const estado = (await DB.getPublic('estado')) || {};
-  const aberta = !!estado.votacaoAberta;
   const votantes = A.players.filter((p) => !p.convidado && p.ativo !== false);
   const total = votantes.length - 1;
   const linhas = votantes.map((p) => {
@@ -1342,9 +1339,8 @@ async function secVotacao(el) {
   const semPin = votantes.filter((p) => !pins[p.id]);
   el.innerHTML = `
     <div class="opcao">
-      <div class="linha"><b>Votação ${aberta ? '🟢 ABERTA' : '🔴 FECHADA'}</b>
-        <button class="${aberta ? 'perigo' : 'prim'}" id="toggle">${aberta ? 'Fechar votação' : 'Abrir votação'}</button></div>
-      <p class="mute">Um só link para o grupo. Cada um escolhe o seu nome e vota área a área.</p>
+      <b>Votação 🟢 sempre aberta</b>
+      <p class="mute">Um só link para o grupo. Cada um escolhe o seu nome e vota área a área, quando quiser; os jogadores novos aparecem a todos como "por votar".</p>
       <div class="linha"><button class="prim" id="cpgrupo">Copiar mensagem p/ grupo</button>
         <a class="btn" target="_blank" href="https://wa.me/?text=${encodeURIComponent(msgGrupo())}">Abrir no WhatsApp</a></div>
     </div>
@@ -1372,7 +1368,6 @@ async function secVotacao(el) {
     if (!confirm(`Reset ao PIN de ${nomeDe(p)}? Fica com um PIN aleatório novo e o antigo deixa de funcionar.`)) return;
     await DB.definirPin(p.id, novoPin()); toast('PIN novo — envia-lho com 💬'); secVotacao(el);
   }));
-  document.getElementById('toggle').onclick = async () => { await DB.setPublic('estado', { ...estado, votacaoAberta: !aberta }); secVotacao(el); };
   document.getElementById('cpgrupo').onclick = () => copiar(msgGrupo());
 }
 
@@ -1724,7 +1719,7 @@ async function paginaColab(K, mod = null) {
     return;
   }
   const V = mod ? A.vivo : null;
-  // Sem jogo aberto, o moderador só vê a barra (abrir jogo, votação).
+  // Sem jogo aberto, o moderador só vê a barra (abrir jogo).
   if (mod && !V) { $app.innerHTML = '<div class="mod-barra" id="mod-barra"></div><p class="mute">Abre o jogo para fazer as equipas e marcar. Os outros moderadores veem tudo ao mesmo tempo.</p>'; return barraModerador(K, mod); }
   A.colabTab ||=mod ? (V?.gameId && V.fase !== 'fim' ? 'marc' : 'eq') : 'marc';
   $app.innerHTML = `${mod ? '<div class="mod-barra" id="mod-barra"></div>' : ''}<div class="tabs"><button data-ct="marc" class="${A.colabTab === 'marc' ? 'on' : ''}">⏱ Marcador do jogo</button>
@@ -1818,10 +1813,10 @@ function publicarMarcacao(j, mod) {
   if (j.fase === 'fim') enviar(); else pubMarc = setTimeout(enviar, 1500);
 }
 
-// Barra do topo: o jogo de hoje (passos), votação e abrir um jogo novo.
+// Barra do topo: o jogo de hoje (passos) e abrir um jogo novo.
 async function barraModerador(K, mod) {
   const el = document.getElementById('mod-barra'); if (!el) return;
-  const v = A.vivo, estado = (await DB.getPublic('estado').catch(() => null)) || {};
+  const v = A.vivo;
   if (!document.getElementById('mod-barra')) return;
   const hora = (t) => (t ? new Date(t).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : '');
   const ativo = v && v.fase !== 'fim';
@@ -1837,7 +1832,7 @@ async function barraModerador(K, mod) {
       ${v.partilhado ? `<div class="mute" style="margin-top:4px">📤 Enviadas para o grupo por ${esc(v.partilhado.nome)} ${hora(v.partilhado.ts)}</div>` : ''}
       <div class="passos">${passos.map(([n, ok]) => `<span class="${ok ? 'feito' : ''}">${ok ? '✓ ' : ''}${n}</span>`).join('')}</div>` : '<b>Nenhum jogo aberto.</b>'}
     <div class="linha" style="margin-top:10px;justify-content:space-between">
-      <span>🗳 Votação <b>${estado.votacaoAberta ? 'aberta' : 'fechada'}</b> <button class="peq" id="mb-vot">${estado.votacaoAberta ? 'Fechar' : 'Abrir'}</button></span>
+      <span></span>
       ${ativo ? '<button class="peq" id="mb-novo">Abrir outro jogo</button>' : ''}</div>
     ${ativo ? '' : `<div class="linha" style="margin-top:8px"><input type="date" id="mb-data" value="${hojeLocal()}" style="width:auto"><button class="prim" id="mb-abrir">⚽ Abrir jogo</button></div>`}`;
   const abrir = async (data) => {
@@ -1850,13 +1845,6 @@ async function barraModerador(K, mod) {
     if (v.fase === 'jogo' && !confirm('Há um jogo a ser marcado. Abrir outro mesmo assim?')) return;
     if (confirm(`Fechar o jogo de ${diaPT(v.data)} aqui e abrir um novo (hoje)?`)) abrir(hojeLocal());
   });
-  el.querySelector('#mb-vot').onclick = async () => {
-    const e2 = (await DB.getPublic('estado')) || {};
-    if (!confirm(e2.votacaoAberta ? 'Fechar a votação para todos?' : 'Abrir a votação para todos?')) return;
-    try { await DB.setPublic('estado', { ...e2, votacaoAberta: !e2.votacaoAberta }); toast(e2.votacaoAberta ? 'Votação fechada' : 'Votação aberta'); }
-    catch (e) { console.error(e); toast('Não deu: ' + e.message); }
-    barraModerador(K, mod);
-  };
 }
 
 // #jogo — página dos moderadores (com o PIN no 👤 Eu): fazer equipas, votação e marcar o jogo, tudo partilhado.
