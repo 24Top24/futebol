@@ -882,14 +882,27 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
   const nomeAtual = (s) => nomeDe(players.find((p) => p.id === s.id) || { nome: s.nome });
   const L = estatisticas(res).map(comMedias);
   const cols = [['nome', 'Jogador'], ...COLS_STATS].filter(([k]) => modo !== 'publico' || (!PES.includes(k) && (A.statsMais || !MAIS_INFO.includes(k))));
-  L.sort((x, y) => ord === 'nome' ? nomeAtual(x).localeCompare(nomeAtual(y), 'pt') : ord === 'sofr10' ? (x.sofr10 ?? 99) - (y.sofr10 ?? 99) : (y[ord] ?? 0) - (x[ord] ?? 0));
+  // Ordem: por defeito Pontos (maior primeiro); tocar de novo na mesma coluna inverte. Desempate: %V, golos, nome.
+  // Nome e Sofr./10min começam do menor para o maior. Sem valor (–) fica sempre no fim.
+  const cresce = (ord === 'nome' || ord === 'sofr10') !== !!A.statsInv;
+  const val = (s) => (ord === 'nome' ? null : s[ord]);
+  L.sort((x, y) => {
+    if (ord === 'nome') return (cresce ? 1 : -1) * nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
+    const a = val(x), b = val(y);
+    if (a == null || b == null) return (a == null) - (b == null);
+    return (cresce ? a - b : b - a) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
+  });
   const fmt = fmtStat;
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
-  el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
-    ${modo === 'publico' ? `<button class="peq" id="st-mais" style="margin-bottom:8px">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}
-    <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}</th>`).join('')}</tr>
+  el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho (ou usa "Ordenar por") para ordenar; tocar outra vez inverte.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
+    <div class="linha" style="margin-bottom:8px"><label style="margin:0">Ordenar por <select id="st-ord" style="width:auto">${cols.map(([k, n]) => `<option value="${k}" ${k === ord ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <button class="peq" id="st-inv" title="Inverter a ordem">${cresce ? '▲ menor primeiro' : '▼ maior primeiro'}</button>
+      ${modo === 'publico' ? `<button class="peq" id="st-mais">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}</div>
+    <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr>
     ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
-  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque, modo)));
+  el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => { if (th.dataset.o === ord) A.statsInv = !A.statsInv; else A.statsInv = false; tabelaStats(el, res, players, th.dataset.o, destaque, modo); }));
+  el.querySelector('#st-ord').onchange = (e) => { A.statsInv = false; tabelaStats(el, res, players, e.target.value, destaque, modo); };
+  el.querySelector('#st-inv').onclick = () => { A.statsInv = !A.statsInv; tabelaStats(el, res, players, ord, destaque, modo); };
   el.querySelector('#st-mais')?.addEventListener('click', () => { A.statsMais = !A.statsMais; tabelaStats(el, res, players, ord, destaque, modo); });
 }
 
