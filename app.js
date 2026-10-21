@@ -876,18 +876,21 @@ function minhasStats(el, res, id) {
     <p class="mute" style="font-size:12px">G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</p>`;
 }
 
-// modo 'publico': sem as colunas do pé; 'admin': tudo.
+// modo 'publico': nunca o pé; cabeça e penáltis só com "Mais informações" (decisão do Rui, 21/10). 'admin': tudo.
+const MAIS_INFO = ['cab', 'pen', 'penDef'];
 function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'admin') {
   const nomeAtual = (s) => nomeDe(players.find((p) => p.id === s.id) || { nome: s.nome });
   const L = estatisticas(res).map(comMedias);
-  const cols = [['nome', 'Jogador'], ...COLS_STATS].filter(([k]) => modo !== 'publico' || !PES.includes(k));
+  const cols = [['nome', 'Jogador'], ...COLS_STATS].filter(([k]) => modo !== 'publico' || (!PES.includes(k) && (A.statsMais || !MAIS_INFO.includes(k))));
   L.sort((x, y) => ord === 'nome' ? nomeAtual(x).localeCompare(nomeAtual(y), 'pt') : ord === 'sofr10' ? (x.sofr10 ?? 99) - (y.sofr10 ?? 99) : (y[ord] ?? 0) - (x[ord] ?? 0));
   const fmt = fmtStat;
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho para ordenar.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
+    ${modo === 'publico' ? `<button class="peq" id="st-mais" style="margin-bottom:8px">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}
     <div style="overflow-x:auto"><table><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}</th>`).join('')}</tr>
     ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
   el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => tabelaStats(el, res, players, th.dataset.o, destaque, modo)));
+  el.querySelector('#st-mais')?.addEventListener('click', () => { A.statsMais = !A.statsMais; tabelaStats(el, res, players, ord, destaque, modo); });
 }
 
 // ---------- Jogos (resultados enviados pelo relógio) ----------
