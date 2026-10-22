@@ -1,6 +1,6 @@
-import { DB, novoToken, novoPin } from './db.js?v=30';
+import { DB, novoToken, novoPin } from './db.js?v=31';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=29';
-import { paginaMarcador, hojeLocal } from './marcador.js?v=23';
+import { paginaMarcador, hojeLocal } from './marcador.js?v=24';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
 
 const $app = document.getElementById('app');
@@ -88,13 +88,20 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 // Página inicial (link geral): equipas, estatísticas, resultados e a votação (sempre aberta — decisão do Rui, 21/10).
 async function paginaInicio() {
   document.getElementById('titulo').textContent = 'Futebolada';
-  const tabs = [['eu', '👤 Eu'], ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ['votar', '🗳 Votar']];
+  const tabs = [['eu', '👤 Eu'], ...(lsGet('sou-moderador') === '1' ? [['mod', '🛡 Moderador']] : []), ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ['votar', '🗳 Votar']];
   A.pubTab ||= 'votar';
   if (!tabs.some(([k]) => k === A.pubTab)) A.pubTab = 'eq';
+  if (A.pubTab !== 'mod') pararAoVivo();
   $app.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${A.pubTab === k}" data-pt="${k}" class="${A.pubTab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="pub"></div>`;
-  $app.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => { A.pubTab = b.dataset.pt; paginaInicio(); }));
+  $app.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => {
+    A.pubTab = b.dataset.pt;
+    if (['#jogo', '#eu'].includes(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+    paginaInicio();
+  }));
   tabAtivoVisivel();
   const el = document.getElementById('pub');
+  confirmarModerador();
+  if (A.pubTab === 'mod') return paginaJogo(el);
   if (A.pubTab === 'votar' || A.pubTab === 'eu') return paginaVotar(el);
   const [players, perfis, jogosPub, games] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listJogosPub(), DB.listGames()]);
   const todos = juntarPerfis(players, perfis);
@@ -561,7 +568,6 @@ async function perfilEu(eu, todos) {
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
       <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a> · <a href="#" id="eu-votar" style="color:inherit">votar</a></span></div>
-    ${eu.moderador ? `<a class="btn prim" href="#jogo" style="display:block;text-align:center;padding:14px;margin-bottom:12px;font-size:17px">🛡 Moderador · ⚽ Jogo de hoje</a>` : ''}
     ${pedido}${carta}
     <h3>Os teus jogos (${meus.length})</h3>
     ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0, extraTreino(r.id, treinos, saude, false))).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
@@ -1631,7 +1637,7 @@ function secEquipas(el, X = A.ctxEq) {
       b.disabled = true;
       const id = await X.saveGame({ data: VV.data || hojeLocal(), brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now() }, VV.gameId || undefined);
       Object.assign(VV, { escolhida: k, gameId: id, partilhado: null });
-      await X.publicar({ escolhida: k, gameId: id, partilhado: null });
+      await X.publicar({ escolhida: k, gameId: id, partilhado: null, nomes });
       escolhidas(o);
     }));
     el.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => {
@@ -1664,7 +1670,7 @@ function secEquipas(el, X = A.ctxEq) {
       ${cartaoJogo(o)}
       ${v.partilhado ? `<p class="mute">📤 Enviadas para o grupo por ${esc(v.partilhado.nome)} às ${hora(v.partilhado.ts)}.</p>` : '<p><b>⚠️ Ainda ninguém as enviou para o grupo.</b></p>'}
       <button class="${v.partilhado ? '' : 'prim'}" id="partilhar" style="width:100%;margin-bottom:8px">📤 ${v.partilhado ? 'Enviar outra vez' : 'Enviar'} para o grupo (WhatsApp)</button>
-      ${v.fase === 'fim' ? '<p>✅ Jogo terminado e registado.</p>' : '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador</button>'}
+      ${v.fase === 'fim' ? (X.teste ? '<p>🧪 Teste terminado (não foi registado).</p>' : '<p>✅ Jogo terminado e registado.</p>') : '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador</button>'}
       ${v.fase === 'fim' ? '' : '<button class="peq" id="refazer" style="margin-top:8px">Refazer equipas</button>'}
       ${v.fase === 'fim' ? '' : `<details class="opcao" style="text-align:left;margin-top:10px"><summary><b>Ninguém marcou? Fechar só com o vencedor</b></summary>
         <label>Dia em que se jogou</label><input type="date" class="pD" value="${esc(v.data || hojeLocal())}" style="width:auto">
@@ -1672,6 +1678,8 @@ function secEquipas(el, X = A.ctxEq) {
         <div class="linha"><input type="number" min="0" class="pB" placeholder="⚪" style="width:70px"> – <input type="number" min="0" class="pP" placeholder="⚫" style="width:70px"></div>
         <div class="linha" style="margin-top:8px"><button class="prim peq" data-fm="B">Ganhou ⚪</button><button class="peq" data-fm="E">Empate</button><button class="prim peq" data-fm="P">Ganhou ⚫</button></div></details>`}</div>`;
     g('partilhar').onclick = async () => {
+      // Jogo de teste: não abre o WhatsApp (não se mandam equipas a fingir para o grupo); só marca como enviado.
+      if (X.teste) { v.partilhado = { nome: nomeDe(X.eu), ts: Date.now() }; await X.publicar({ partilhado: v.partilhado }); toast('🧪 Teste: fica marcado como enviado (nada foi enviado)'); return escolhidas(o); }
       const data = v.data || hojeLocal();
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
       const texto = `⚽ Equipas de ${diaPT(data)}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}`;
@@ -1690,6 +1698,7 @@ function secEquipas(el, X = A.ctxEq) {
     });
     el.querySelectorAll('[data-fm]').forEach((b) => (b.onclick = async () => {
       const box = b.closest('details'), gm = { id: v.gameId, data: v.data, brancos: o.A, pretos: o.B, nomes: Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))])) };
+      if (X.teste) { await X.publicar({ fase: 'fim' }); v.fase = 'fim'; toast('🧪 Teste fechado (não conta)'); return escolhidas(o); }
       if (!(await fecharManual(box, gm, b.dataset.fm, X.K, (id) => nomeDe(pid(id) || { nome: id })))) return;
       await X.publicar({ fase: 'fim' }); v.fase = 'fim'; escolhidas(o);
     }));
@@ -1704,7 +1713,10 @@ function secEquipas(el, X = A.ctxEq) {
 // COLABORADOR (#c=CHAVE): fazer equipas + marcador no telemóvel, sem login
 // =====================================================================
 async function paginaColab(K, mod = null) {
-  document.getElementById('titulo').textContent = mod ? 'Jogo de hoje' : 'Futebol';
+  // Moderador: desenha dentro do separador 🛡 Moderador; o link de colaborador ocupa a página toda.
+  const $app = mod ? document.getElementById('pub') : document.getElementById('app');
+  if (!$app) return;
+  if (!mod) document.getElementById('titulo').textContent = 'Futebol';
   const retrato = await DB.getPart(K, 'dados', 'retrato');
   if (!retrato) { $app.innerHTML = '<p class="centro">Este link já não é válido. Pede um novo ao Rui.</p>'; return; }
   // Moderadores: o jogo de hoje (aovivo/jogo) está igual em todos os telemóveis, em tempo real.
@@ -1715,19 +1727,24 @@ async function paginaColab(K, mod = null) {
       A.vivo = v;
       if (primeiro) { primeiro = false; return paginaColab(K, mod); }
       aoVivoMudou(K, mod);
-    });
+    }, docVivo());
     return;
   }
   const V = mod ? A.vivo : null;
   // Sem jogo aberto, o moderador só vê a barra (abrir jogo).
-  if (mod && !V) { $app.innerHTML = '<div class="mod-barra" id="mod-barra"></div><p class="mute">Abre o jogo para fazer as equipas e marcar. Os outros moderadores veem tudo ao mesmo tempo.</p>'; return barraModerador(K, mod); }
+  if (mod && !V) { $app.innerHTML = `<div class="mod-barra ${A.teste ? 'teste' : ''}" id="mod-barra"></div><p class="mute">Abre um jogo novo para fazer as equipas e marcar. Os outros moderadores veem tudo ao mesmo tempo.</p>`; return barraModerador(K, mod); }
   A.colabTab ||=mod ? (V?.gameId && V.fase !== 'fim' ? 'marc' : 'eq') : 'marc';
-  $app.innerHTML = `${mod ? '<div class="mod-barra" id="mod-barra"></div>' : ''}<div class="tabs"><button data-ct="marc" class="${A.colabTab === 'marc' ? 'on' : ''}">⏱ Marcador do jogo</button>
+  $app.innerHTML = `${mod ? `<div class="mod-barra ${A.teste ? 'teste' : ''}" id="mod-barra"></div>` : ''}<div class="tabs"><button data-ct="marc" class="${A.colabTab === 'marc' ? 'on' : ''}">⏱ Marcador do jogo</button>
     <button data-ct="eq" class="${A.colabTab === 'eq' ? 'on' : ''}">👥 Fazer equipas</button></div><div id="sec"></div>`;
   $app.querySelectorAll('[data-ct]').forEach((b) => (b.onclick = () => { A.colabTab = b.dataset.ct; paginaColab(K, mod); }));
   if (mod) barraModerador(K, mod);
   const sec = document.getElementById('sec');
   const ultimasEquipas = async () => {
+    const VV = A.vivo;
+    if (mod && VV?.gameId && VV.opcoes?.[VV.escolhida]) {
+      const o = VV.opcoes[VV.escolhida], n = (id) => ({ id, nome: VV.nomes?.[id] || retrato.jogadores.find((p) => p.id === id)?.alias || retrato.jogadores.find((p) => p.id === id)?.nome || id });
+      return { id: VV.gameId, data: VV.data, brancos: o.A.map(n), pretos: o.B.map(n) };
+    }
     const todas = [...(await DB.listPart(K, 'games')), ...(await DB.listGames().catch(() => []))];
     const g = (A.vivo?.gameId && todas.find((x) => x.id === A.vivo.gameId)) || todas.sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
     if (!g) return null;
@@ -1737,17 +1754,20 @@ async function paginaColab(K, mod = null) {
   if (A.colabTab === 'marc') {
     let carregarJa = A.carregarJa; A.carregarJa = false;
     // Moderador: as equipas escolhidas entram sozinhas no marcador (se este telemóvel não estiver a meio de outro jogo).
-    const local = (() => { try { return JSON.parse(localStorage.getItem('futebol-marcador-jogo')); } catch { return null; } })();
+    const local = (() => { try { return JSON.parse(localStorage.getItem(lsMarcador())); } catch { return null; } })();
     if (mod && V?.gameId && local?.gameId !== V.gameId) carregarJa = true;
-    return paginaMarcador({ el: sec, carregarEquipas: ultimasEquipas, carregarJa,
+    return paginaMarcador({ el: sec, carregarEquipas: ultimasEquipas, carregarJa, ls: lsMarcador(), teste: !!(mod && A.teste),
       enviar: async (id, jogo) => {
+        if (mod && A.teste) return;   // jogo de teste: não vai para os resultados
         await DB.saveResultado(id, { chave: K, gameId: jogo.gameId || '', ts: Date.now(), origem: 'telemovel', json: JSON.stringify({ jogo, fit: {} }) });
         await DB.saveJogoPub(id, { prova: await prova(K, id), ts: Date.now(), json: JSON.stringify(jogo) });
       },
       ...(mod ? { mudou: (j) => publicarMarcacao(j, mod), outro: () => outroAMarcar() } : {}) });
   }
   const ctx = async () => {
-    const conv = (await DB.listPart(K, 'convidados')).map((c) => ({ ...c, convidado: true, ativo: true }));
+    const teste = !!(mod && A.teste);
+    // No jogo de teste os convidados novos só existem neste telemóvel (não ficam guardados).
+    const conv = [...(await DB.listPart(K, 'convidados')), ...(teste ? A.convTeste || [] : [])].map((c) => ({ ...c, convidado: true, ativo: true }));
     const base = retrato.jogadores.map((p) => ({ ...p, ativo: true }));
     const players = [...base, ...conv.filter((c) => !base.some((b) => b.id === c.id))];
     const cartas = Object.fromEntries(retrato.jogadores.map((p) => [p.id, { overall: p.overall, stats: p.stats || {} }]));
@@ -1755,16 +1775,21 @@ async function paginaColab(K, mod = null) {
     return {
       players, cartas, games: await DB.listPart(K, 'games'),
       irMarcador() { A.colabTab = 'marc'; A.carregarJa = true; paginaColab(K, mod); window.scrollTo(0, 0); },
-      async addConvidado(d) { const id = novoToken(10); await DB.setPart(K, 'convidados', id, d); Object.assign(X, await ctx()); if (mod) DB.setAoVivo({ conv: Date.now() }); return id; },
-      async notaConvidado(id, n) { const c = conv.find((x) => x.id === id); if (!c) return; const { id: _, convidado, ativo, ...d } = c; await DB.setPart(K, 'convidados', id, { ...d, nota100: n }); },
+      async addConvidado(d) {
+        const id = novoToken(10);
+        if (teste) (A.convTeste ||= []).push({ id, ...d }); else await DB.setPart(K, 'convidados', id, d);
+        Object.assign(X, await ctx()); if (mod && !teste) X.publicar({ conv: Date.now() }); return id;
+      },
+      async notaConvidado(id, n) { if (teste) return; const c = conv.find((x) => x.id === id); if (!c) return; const { id: _, convidado, ativo, ...d } = c; await DB.setPart(K, 'convidados', id, { ...d, nota100: n }); },
       // id: o moderador que refaz as equipas grava por cima do mesmo jogo (não fica um jogo em aberto a mais).
       async saveGame(g, id = novoToken(10)) {
+        if (teste) return id.startsWith('teste-') ? id : 'teste-' + id;   // jogo de teste: não grava equipas
         await DB.setPart(K, 'games', id, g);
         await DB.saveGame({ ...g, id, prova: await prova(K, id) });
         Object.assign(X, await ctx());
         return id;
       },
-      ...(mod ? { vivo: A.vivo || {}, eu: mod.eu, K, publicar: (d) => DB.setAoVivo(d).catch((e) => { console.error(e); toast('Sem rede? ' + e.message); }) } : {}),
+      ...(mod ? { vivo: A.vivo || {}, eu: mod.eu, K, teste, publicar: (d) => DB.setAoVivo(d, true, docVivo()).catch((e) => { console.error(e); toast('Sem rede? ' + e.message); }) } : {}),
     };
   };
   const X = await ctx();
@@ -1774,14 +1799,27 @@ async function paginaColab(K, mod = null) {
 
 // ---------- Moderadores: o jogo de hoje ao vivo ----------
 // aovivo/jogo = { fase: 'aberto'|'jogo'|'fim', data, por, ts, sel, restr, opcoes, escolhida, gameId, partilhado, marcador, live }
+// Jogo de teste (🧪): outro documento ao vivo (aovivo/teste), outro jogo guardado no telemóvel, e nada vai para
+// equipas, resultados, estatísticas, Elo ou peso dos votos. Os moderadores em teste veem-se uns aos outros.
+A.teste = lsGet('mod-teste') === '1';
+const docVivo = () => (A.teste ? 'teste' : 'jogo');
+const lsMarcador = () => (A.teste ? 'futebol-marcador-teste' : 'futebol-marcador-jogo');
+function pararAoVivo() { A.offVivo?.(); A.offVivo = null; A.vivo = null; }
+// O separador 🛡 só aparece a moderadores: confirma (sem atrasar a página) e redesenha se mudou.
+async function confirmarModerador() {
+  const id = lsGet('meu-perfil'); const antes = lsGet('sou-moderador') === '1';
+  let agora = false;
+  try { agora = !!id && !!(await DB.listPlayers()).find((p) => p.id === id)?.moderador; } catch { return; }
+  if (agora !== antes) { lsSet('sou-moderador', agora ? '1' : ''); if (!agora && A.pubTab === 'mod') A.pubTab = 'eu'; paginaInicio(); }
+}
 const MOD_DISP = (() => { let d = lsGet('futebol-disp'); if (!d) { d = novoToken(10); lsSet('futebol-disp', d); } return d; })();
 
 // Mudou no telemóvel de outro moderador: redesenha a barra e, se não houver nada a meio aqui, a secção aberta.
 function aoVivoMudou(K, mod) {
-  if (location.hash !== '#jogo' || !document.getElementById('mod-barra')) return;
+  if (A.pubTab !== 'mod' || !document.getElementById('mod-barra')) return;
   if (!document.getElementById('sec') || !A.vivo) return paginaColab(K, mod);   // jogo aberto (ou fechado) agora
   barraModerador(K, mod);
-  const local = (() => { try { return JSON.parse(localStorage.getItem('futebol-marcador-jogo')); } catch { return null; } })();
+  const local = (() => { try { return JSON.parse(localStorage.getItem(lsMarcador())); } catch { return null; } })();
   const escrever = document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);
   if (A.colabTab === 'eq' && !escrever && A.ctxColab) {
     if (A.vivo?.conv && A.vivo.conv !== A.convVisto) { A.convVisto = A.vivo.conv; return paginaColab(K, mod); }   // convidado novo
@@ -1806,8 +1844,8 @@ function publicarMarcacao(j, mod) {
   if (j.fase === 'prep' || !j.gameId || j.gameId !== A.vivo?.gameId) return;
   const enviar = () => {
     pubMarc = null;
-    DB.setAoVivo({ fase: j.fase === 'fim' && j.enviado ? 'fim' : 'jogo', live: JSON.stringify(j),
-      marcador: { id: mod.eu.id, nome: nomeDe(mod.eu), disp: MOD_DISP, ts: Date.now() } }).catch((e) => console.error(e));
+    DB.setAoVivo({ fase: j.fase === 'fim' && (j.enviado || A.teste) ? 'fim' : 'jogo', live: JSON.stringify(j),
+      marcador: { id: mod.eu.id, nome: nomeDe(mod.eu), disp: MOD_DISP, ts: Date.now() } }, true, docVivo()).catch((e) => console.error(e));
   };
   clearTimeout(pubMarc);
   if (j.fase === 'fim') enviar(); else pubMarc = setTimeout(enviar, 1500);
@@ -1824,8 +1862,12 @@ async function barraModerador(K, mod) {
   const golosL = (e) => (live?.eventos || []).filter((x) => x.equipa === e).length;
   const passos = [['Aberto', !!ativo || v?.fase === 'fim'], ['Opções', !!v?.opcoes?.length], ['Escolhidas', !!v?.gameId], ['No grupo', !!v?.partilhado],
     ['A jogar', v?.fase === 'jogo' || v?.fase === 'fim'], ['Fim', v?.fase === 'fim']];
+  el.classList.toggle('teste', !!A.teste);
   el.innerHTML = `
-    ${v ? `<div class="linha" style="justify-content:space-between"><b>⚽ Jogo de ${esc(diaPT(v.data))}</b><span class="mute">aberto por ${esc(v.por?.nome || '?')} ${hora(v.ts)}</span></div>
+    <label class="linha" style="margin:0 0 8px;gap:8px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" id="mb-teste" ${A.teste ? 'checked' : ''} style="width:auto;flex:none;margin-top:3px">
+      <span>🧪 <b>Jogo de teste</b> <span class="mute">— não conta para nada; para experimentar e mostrar à malta</span></span></label>
+    ${A.teste ? '<div class="teste-faixa">🧪 MODO DE TESTE — nada fica nas equipas, resultados nem estatísticas. Os outros moderadores em teste veem o mesmo.</div>' : ''}
+    ${v ? `<div class="linha" style="justify-content:space-between"><b>⚽ ${A.teste ? 'Teste' : 'Jogo'} de ${esc(diaPT(v.data))}</b><span class="mute">aberto por ${esc(v.por?.nome || '?')} ${hora(v.ts)}</span></div>
       ${v.fase === 'jogo' && live ? `<div style="margin-top:6px"><span class="ao-vivo"></span><b>⚪ ${golosL('B')} – ${golosL('P')} ⚫</b> <span class="mute">· marca ${esc(v.marcador?.nome || '?')}${v.marcador?.disp === MOD_DISP ? ' (este telemóvel)' : ''}</span></div>` : ''}
       ${v.fase === 'fim' && live ? `<div style="margin-top:6px">✅ Final: <b>⚪ ${golosL('B')} – ${golosL('P')} ⚫</b></div>` : ''}
       ${v.gameId && !v.partilhado && v.fase !== 'fim' ? '<div class="mute" style="margin-top:6px">⚠️ Equipas escolhidas mas ainda ninguém as enviou para o grupo.</div>' : ''}
@@ -1834,10 +1876,15 @@ async function barraModerador(K, mod) {
     <div class="linha" style="margin-top:10px;justify-content:space-between">
       <span></span>
       ${ativo ? '<button class="peq" id="mb-novo">Abrir outro jogo</button>' : ''}</div>
-    ${ativo ? '' : `<div class="linha" style="margin-top:8px"><input type="date" id="mb-data" value="${hojeLocal()}" style="width:auto"><button class="prim" id="mb-abrir">⚽ Abrir jogo</button></div>`}`;
+    ${ativo ? '' : `<div class="linha" style="margin-top:8px"><input type="date" id="mb-data" value="${hojeLocal()}" style="width:auto"><button class="prim" id="mb-abrir">⚽ Abrir ${A.teste ? 'jogo de teste' : 'jogo novo'}</button></div>`}`;
+  el.querySelector('#mb-teste').onchange = (e) => {
+    A.teste = e.target.checked; lsSet('mod-teste', A.teste ? '1' : '');
+    pararAoVivo(); A.colabTab = null; A.sel = new Set(); A.restr = null;
+    paginaColab(K, mod);
+  };
   const abrir = async (data) => {
     await DB.setAoVivo({ fase: 'aberto', data, por: { id: mod.eu.id, nome: nomeDe(mod.eu) }, ts: Date.now(), sel: [], restr: '', opcoes: null,
-      escolhida: null, gameId: null, partilhado: null, marcador: null, live: null }, false);
+      escolhida: null, gameId: null, partilhado: null, marcador: null, live: null, nomes: null }, false, docVivo());
     A.sel = new Set(); A.restr = null; A.colabTab = 'eq';
   };
   el.querySelector('#mb-abrir')?.addEventListener('click', () => abrir(el.querySelector('#mb-data').value || hojeLocal()));
@@ -1847,15 +1894,16 @@ async function barraModerador(K, mod) {
   });
 }
 
-// #jogo — página dos moderadores (com o PIN no 👤 Eu): fazer equipas, votação e marcar o jogo, tudo partilhado.
-async function paginaJogo() {
-  document.getElementById('titulo').textContent = 'Jogo de hoje';
+// Separador 🛡 Moderador (com o PIN no 👤 Eu): abrir jogo, fazer equipas e marcar, tudo partilhado entre moderadores.
+async function paginaJogo(el) {
+  const $app = el;
   const [players, perfis] = await Promise.all([DB.listPlayers(), DB.listPerfis()]);
   const todos = juntarPerfis(players, perfis);
   const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
-  const sair = (t) => { $app.innerHTML = `<div class="fim"><p>${t}</p><a class="btn prim" href="#eu">👤 Ir para o meu perfil</a></div>`; };
+  const sair = (t) => { $app.innerHTML = `<div class="fim"><p>${t}</p><button class="prim" id="ir-eu">👤 Ir para o meu perfil</button></div>`;
+    document.getElementById('ir-eu').onclick = () => { A.pubTab = 'eu'; paginaInicio(); }; };
   if (!eu || !(await DB.ligacaoOk(eu.id))) return sair('Entra primeiro no teu perfil com o PIN.');
-  if (!eu.moderador) return sair('Esta página é só para os moderadores. Fala com o Rui.');
+  if (!eu.moderador) return sair('Este separador é só para os moderadores. Fala com o Rui.');
   const K = (await DB.getModeracao('chave').catch(() => null))?.chave;
   if (!K) return sair('Ainda não está pronto: o Rui tem de abrir o admin uma vez.');
   return paginaColab(K, { eu });
@@ -1871,9 +1919,9 @@ async function rota() {
   lnk.setAttribute('aria-label', lnk.title);
   if (h === '#eu') A.pubTab = 'eu';
   document.body.classList.remove('modo-jogo');
-  if (h !== '#jogo') { A.offVivo?.(); A.offVivo = null; A.vivo = null; }
+  pararAoVivo();
+  if (h === '#jogo') A.pubTab = 'mod';
   try {
-    if (h === '#jogo') return await paginaJogo();
     if (h === '#admin') return await paginaAdmin();
     if (h === '#cartas') return await paginaCartas();
     if (h.startsWith('#c=')) return await paginaColab(h.slice(3));

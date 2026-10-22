@@ -95,11 +95,12 @@ function demoDb() {
     async deleteJogoPub(id) { delete s.jogos[id]; save(); },
     // Jogo de hoje ao vivo (moderadores) e chave do link para os moderadores.
     // (Na demo fica numa chave à parte, para dois separadores — dois "telemóveis" — não se pisarem.)
-    async getAoVivo() { try { return JSON.parse(localStorage.getItem(KEY + '-aovivo')); } catch { return null; } },
-    async setAoVivo(d, junta = true) { const v = junta ? { ...((await this.getAoVivo()) || {}), ...d } : d; localStorage.setItem(KEY + '-aovivo', JSON.stringify(v)); },
-    ouvirAoVivo(cb) {
+    // doc: 'jogo' (o a sério) ou 'teste' (jogo de teste dos moderadores, não conta para nada).
+    async getAoVivo(doc = 'jogo') { try { return JSON.parse(localStorage.getItem(KEY + '-aovivo' + (doc === 'jogo' ? '' : '-' + doc))); } catch { return null; } },
+    async setAoVivo(d, junta = true, doc = 'jogo') { const v = junta ? { ...((await this.getAoVivo(doc)) || {}), ...d } : d; localStorage.setItem(KEY + '-aovivo' + (doc === 'jogo' ? '' : '-' + doc), JSON.stringify(v)); },
+    ouvirAoVivo(cb, doc = 'jogo') {
       let ult;
-      const ver = () => { const v = localStorage.getItem(KEY + '-aovivo'); if (v !== ult) { ult = v; cb(v ? JSON.parse(v) : null); } };
+      const ver = () => { const v = localStorage.getItem(KEY + '-aovivo' + (doc === 'jogo' ? '' : '-' + doc)); if (v !== ult) { ult = v; cb(v ? JSON.parse(v) : null); } };
       ver(); const t = setInterval(ver, 700); return () => clearInterval(t);
     },
     async getModeracao(d) { return (s.moderacao ||= {})[d] || null; },
@@ -203,9 +204,10 @@ async function fireDb() {
     saveJogoPub: (id, d) => setDoc(doc(db, 'jogos', id), d),
     deleteJogoPub: (id) => deleteDoc(doc(db, 'jogos', id)),
     // Jogo de hoje ao vivo: aovivo/jogo (todos leem; escrevem moderadores e admin), em tempo real.
-    getAoVivo: () => get('aovivo', 'jogo'),
-    setAoVivo: (d, junta = true) => setDoc(doc(db, 'aovivo', 'jogo'), d, { merge: junta }),
-    ouvirAoVivo: (cb) => fs.onSnapshot(doc(db, 'aovivo', 'jogo'), (x) => cb(x.exists() ? x.data() : null), (e) => console.error(e)),
+    // d: 'jogo' (o a sério) ou 'teste' (jogo de teste dos moderadores, não conta para nada).
+    getAoVivo: (d = 'jogo') => get('aovivo', d),
+    setAoVivo: (v, junta = true, d = 'jogo') => setDoc(doc(db, 'aovivo', d), v, { merge: junta }),
+    ouvirAoVivo: (cb, d = 'jogo') => fs.onSnapshot(doc(db, 'aovivo', d), (x) => cb(x.exists() ? x.data() : null), (e) => console.error(e)),
     // moderacao/chave = chave do link (só moderadores com PIN e o admin leem; só o admin escreve).
     getModeracao: (d) => get('moderacao', d),
     setModeracao: (d, v) => setDoc(doc(db, 'moderacao', d), v),

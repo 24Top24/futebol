@@ -255,3 +255,6 @@ body.modo-jogo .mgolo { padding: 9vh 0; font-size: 110px; }   /* alvos grandes p
 .mod-barra .passos span.feito { background: var(--verde2); color: #fff; }
 .ao-vivo { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; margin-right: 4px; animation: pisca 1.2s infinite; }
 @keyframes pisca { 50% { opacity: .25; } }
+/* Jogo de teste dos moderadores */
+.mod-barra.teste { border: 2px dashed var(--amarelo); }
+.teste-faixa { background: var(--amarelo); color: #000; font-weight: 800; text-align: center; border-radius: 10px; padding: 6px 8px; margin: 0 0 8px; font-size: 13px; }

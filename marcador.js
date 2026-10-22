@@ -17,8 +17,9 @@ function novoJogo(eq) {
     minTurno: 6, rondas: 2, fase: 'prep', inicioEpoch: 0, fimEpoch: 0, pausadoEm: 0, pausaTotal: 0,
     eventos: [], penaltis: [], baliza: {}, turnos: [], enviado: false, origem: 'telemovel' };
 }
-const ler = () => { try { return JSON.parse(localStorage.getItem(LS)); } catch { return null; } };
-const gravar = (j) => { try { localStorage.setItem(LS, JSON.stringify(j)); } catch {} };
+// ls: chave própria (o jogo de teste não pisa o jogo a sério guardado neste telemóvel).
+const ler = (ls = LS) => { try { return JSON.parse(localStorage.getItem(ls)); } catch { return null; } };
+const gravar = (j, ls = LS) => { try { localStorage.setItem(ls, JSON.stringify(j)); } catch {} };
 const jogs = (j, e) => (e === 'B' ? j.brancos : j.pretos);
 const nome = (j, id) => [...j.brancos, ...j.pretos].find((p) => p.id === id)?.nome || '?';
 const golos = (j, e) => j.eventos.filter((x) => x.equipa === e).length;
@@ -64,15 +65,16 @@ function bip() {
 // =====================================================================
 // opts: { el, carregarEquipas: async () => equipa|null, enviar: async (id, doc) => void,
 //   mudou?: (jogo) => void            — cada mudança (para os moderadores verem ao vivo),
-//   outro?: () => { nome, jogo }|null — alguém noutro telemóvel já está a marcar este jogo }
+//   outro?: () => { nome, jogo }|null — alguém noutro telemóvel já está a marcar este jogo,
+//   ls?: chave no localStorage, teste?: true = jogo de teste (não vai para o site) }
 export function paginaMarcador(opts) {
   const { el } = opts;
-  let j = ler() || novoJogo(null);
+  let j = ler(opts.ls) || novoJogo(null);
   let modal = null;           // { tipo, ... }
   const abertos = new Set();  // trocas de GR já abertas automaticamente
   const ultimoAlarme = {};
   let wake = null;
-  const salvar = () => { gravar(j); try { opts.mudou?.(j); } catch (e) { console.error(e); } };
+  const salvar = () => { gravar(j, opts.ls); try { opts.mudou?.(j); } catch (e) { console.error(e); } };
 
   async function pedirEcraLigado() { try { wake = await navigator.wakeLock?.request('screen'); } catch {} }
 
@@ -96,6 +98,7 @@ export function paginaMarcador(opts) {
     const ou = opts.outro?.();
     el.innerHTML = `
       <h2>⚽ Marcador do jogo</h2>
+      ${opts.teste ? '<div class="teste-faixa">🧪 JOGO DE TESTE — não conta para nada</div>' : ''}
       ${ou ? `<div class="opcao pedido"><b>⏱ ${esc(ou.nome)} já está a marcar este jogo</b> <span class="mute">(⚪ ${golos(ou.jogo, 'B')} – ${golos(ou.jogo, 'P')} ⚫, ${mmss(decorrido(ou.jogo))})</span>
         <p class="mute" style="margin:4px 0 8px">Só um telemóvel marca. Se o dele ficou sem bateria ou sem rede, assume aqui: continua com tudo o que ele já registou.</p>
         <button class="prim" id="m-assumir" style="width:100%">Assumir a marcação</button></div>` : ''}
@@ -133,7 +136,7 @@ export function paginaMarcador(opts) {
 
   function renderJogo() {
     const t = decorrido(j);
-    el.innerHTML = `
+    el.innerHTML = `${opts.teste ? '<div class="teste-faixa">🧪 TESTE</div>' : ''}
       <div class="mtopo" id="m-tempo">${j.pausadoEm ? '⏸ PAUSA — toca para retomar' : mmss(t)}</div>
       <div class="mplacar">${['B', 'P'].map((e) => `<button class="mgolo ${e === 'B' ? 'branco' : 'preto'}" data-golo="${e}">${golos(j, e)}</button>`).join('')}</div>
       <div class="mplacar">${['B', 'P'].map((e) => {
@@ -234,7 +237,7 @@ export function paginaMarcador(opts) {
   function renderFim() {
     el.innerHTML = `<div class="fim"><h2>Final: ⚪ ${golos(j, 'B')} – ${golos(j, 'P')} ⚫</h2>
       <p>${mmss(decorrido(j))} de jogo</p>
-      <p>${j.enviado ? '✅ Enviado para o site' : '⚠️ Ainda não enviado (sem rede?)'}</p>
+      <p>${opts.teste ? '🧪 Jogo de teste — não foi gravado nos resultados.' : j.enviado ? '✅ Enviado para o site' : '⚠️ Ainda não enviado (sem rede?)'}</p>
       ${j.enviado ? '' : '<button class="prim" id="m-env">Enviar agora</button>'}
       <div class="mlista" style="text-align:left">${j.eventos.map((ev) => `<div>${minuto(ev.t)} ${descr(ev)}</div>`).join('')}</div>
       <button id="m-novo" style="margin-top:16px">Novo jogo</button></div>`;
