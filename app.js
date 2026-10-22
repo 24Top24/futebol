@@ -1222,6 +1222,10 @@ async function votar(eu, todos) {
   const botoes = (p, k) => `<div class="notas">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) =>
     `<button data-k="${k}" data-n="${n}" class="${r[p.id]?.[k] === n ? 'on' : ''}">${n}</button>`).join('')}</div>`;
 
+  // "Não conheço" (Rui, 23/10): quem já jogou comigo, conheço — não há essa opção. Para os outros fica no fundo do cartão,
+  // longe da seta ▾ que se toca para abrir (assim não se carrega nele sem querer).
+  const jogouComigo = (p) => (juntos[p.id] || 0) > 0;
+  const btnNc = (p, rr) => (rr.skip ? '<button class="nc">Afinal conheço</button>' : jogouComigo(p) ? '' : '<button class="nc">Não conheço</button>');
   function cartao(p) {
     const rr = r[p.id] || {};
     const cab = `${foto(p)}<b>${esc(nomeDe(p))}</b>${atualizar.has(p.id) ? ' <small class="tag-atual" title="Já jogaram 3+ jogos desde a tua nota">⟳ atualizar</small>'
@@ -1234,13 +1238,13 @@ async function votar(eu, todos) {
     }
     if (filtro !== 'todos') {
       const a = AREAS.find((x) => x.k === filtro);
-      return `<div class="vrow" data-id="${p.id}"><div class="vtop">${cab}<button class="peq nc">Não conheço</button></div>
-        <div class="lbl mute">${a.nome}</div>${botoes(p, a.k)}</div>`;
+      return `<div class="vrow" data-id="${p.id}"><div class="vtop">${cab}</div>
+        <div class="lbl mute">${a.nome}</div>${botoes(p, a.k)}${btnNc(p, rr) ? `<div class="v-acoes">${btnNc(p, rr)}</div>` : ''}</div>`;
     }
     return `<div class="vrow aberto" data-id="${p.id}">
-      <div class="vtop">${cab}${rr.skip ? '<button class="peq nc">Afinal conheço</button>' : '<button class="peq nc">Não conheço</button>'}</div>
+      <div class="vtop">${cab}${jogouComigo(p) ? `<small class="mute" title="Jogos juntos (mesma equipa ou contra)">${juntos[p.id]} ${juntos[p.id] > 1 ? 'jogos juntos' : 'jogo junto'}</small>` : ''}</div>
       ${rr.skip ? '' : AREAS.map((a) => `<div class="area"><div class="lbl"><span>${a.nome}</span></div>${botoes(p, a.k)}</div>`).join('')}
-      <button class="prim ok" style="width:100%;margin-top:6px">${rr.skip ? 'Fechar' : 'OK ✔'}</button></div>`;
+      <div class="v-acoes"><button class="prim ok">${rr.skip ? 'Fechar' : 'OK ✔'}</button>${btnNc(p, rr)}</div></div>`;
   }
 
   function redesenhar(p) {
