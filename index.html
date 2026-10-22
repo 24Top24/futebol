@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0b0d">
+  <meta name="theme-color" content="#070707">
+  <meta name="color-scheme" content="dark">
   <meta name="robots" content="noindex, nofollow">
   <title>Futebol</title>
   <link rel="manifest" href="manifest.webmanifest">
@@ -13,12 +14,30 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Futebolada">
-  <link rel="stylesheet" href="style.css?v=35">
+  <link rel="stylesheet" href="style.css?v=51">
 </head>
 <body>
-  <header id="topo"><span class="bola">⚽</span> <span id="titulo">Futebol</span><span id="demo" hidden>MODO DEMO</span><button id="instalar" class="peq" hidden>📲 Instalar app</button><button id="ticket" title="Reportar um problema" aria-label="Reportar um problema">🐞</button><a id="lnk-admin" href="#admin" title="Administração" aria-label="Administração">⚙</a></header>
-  <main id="app"><p class="centro">A carregar…</p></main>
+  <!-- Navegação principal: barra em baixo no telemóvel, barra lateral no computador. Ícones de traço, todos do mesmo desenho. -->
+  <nav id="nav" aria-label="Navegação principal">
+    <a class="marca" href="#" aria-label="Futebolada — início"><svg class="ic-bola" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="m12 7.2 4.1 3-1.6 4.8h-5l-1.6-4.8z"/><path d="M12 7.2V2.6M16.1 10.2l4.3-1.4M14.5 15l2.7 3.8M9.5 15l-2.7 3.8M7.9 10.2 3.6 8.8"/></svg><span>Futebolada</span></a>
+    <a href="#" data-r="inicio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.2 12 3l9 7.2V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/></svg><span>Início</span></a>
+    <a href="#jogos" data-r="jogos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><circle cx="12" cy="15" r="2.6"/></svg><span>Jogos</span></a>
+    <a href="#jogadores" data-r="jogadores"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 3 4 5 2.5 10l3 1V21h13V11l3-1L20 5l-4.5-2a3.5 3.5 0 0 1-7 0z"/></svg><span>Jogadores</span></a>
+    <a href="#tabela" data-r="tabela"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21V9.5h6V21M3 21v-7.5h6M15 21v-5h6v5M2 21h20"/><path d="m12 2.8.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2L9.1 5l2-.3z"/></svg><span><span class="so-pc">Classificação</span><span class="so-tm">Tabela</span></span></a>
+    <a href="#eu" data-r="eu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4.2"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Eu</span></a>
+    <a href="#jogo" data-r="mod" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 4 5.5V11c0 5 3.4 8.8 8 10.5 4.6-1.7 8-5.5 8-10.5V5.5z"/><path d="m8.8 11.8 2.2 2.2 4.4-4.6"/></svg><span>Moderador</span></a>
+    <a href="#admin" data-r="admin" class="nav-admin"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg><span>Administração</span></a>
+  </nav>
+  <div id="col">
+    <header id="topo">
+      <button id="voltar" hidden aria-label="Voltar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg></button>
+      <span id="titulo">Futebol</span><span id="demo" hidden>MODO DEMO</span><button id="instalar" class="peq" hidden>📲 Instalar app</button>
+      <button id="ticket" title="Reportar um problema" aria-label="Reportar um problema"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5V6a4 4 0 0 1 8 0v1.5"/><rect x="6.5" y="7.5" width="11" height="12.5" rx="5.5"/><path d="M12 11v9M3 12h3.5M17.5 12H21M4 18l2.8-1.4M20 18l-2.8-1.4M4 6.5 7 8.6M20 6.5 17 8.6"/></svg></button>
+      <a id="lnk-def" href="#definicoes" title="Definições" aria-label="Definições"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/></svg></a>
+    </header>
+    <main id="app"><p class="centro">A carregar…</p></main>
+  </div>
   <div id="toast" hidden></div>
-  <script type="module" src="app.js?v=42"></script>
+  <script type="module" src="app.js?v=51"></script>
 </body>
 </html>

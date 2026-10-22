@@ -57,6 +57,10 @@ function demoDb() {
     async definirPin(id, pin) { (s.pins ||= {})[id] = { h: await sha256hex(pin + id), pin }; save(); },
     async novoTicket(d) { const id = novoToken(12); (s.tickets ||= {})[id] = d; save(); return id; },
     async listTickets() { return Object.entries(s.tickets || {}).map(([id, d]) => ({ id, ...d })); },
+    // Avaliação de um jogo (nota de cada colega NESSE jogo): à parte, não entra nas cartas. Id = jogo_votante.
+    async getVotoJogo(jogo, votante) { return s.votosJogo?.[jogo + '_' + votante] || null; },
+    async saveVotoJogo(jogo, votante, d) { (s.votosJogo ||= {})[jogo + '_' + votante] = { ...d, jogo, votante }; save(); },
+    async listVotosJogo() { return Object.entries(s.votosJogo || {}).map(([id, d]) => ({ id, ...d })); },
     async setTicket(id, d) { (s.tickets ||= {})[id] = d; save(); },
     async deleteTicket(id) { delete s.tickets?.[id]; save(); },
     async getSaude(id) { return (s.saude ||= {})[id] || null; },
@@ -164,6 +168,10 @@ async function fireDb() {
     // Tickets (problemas reportados): qualquer pessoa cria (com login anónimo); só o admin lê.
     async novoTicket(d) { await this.uid(); const id = novoToken(12); await setDoc(doc(db, 'tickets', id), d); return id; },
     listTickets: () => list('tickets'),
+    // Avaliação de um jogo (votosJogo/{jogo}_{votante}): só o próprio (com PIN) lê e escreve; o admin lê tudo. Não entra nas cartas.
+    getVotoJogo: (jogo, votante) => get('votosJogo', jogo + '_' + votante),
+    saveVotoJogo: (jogo, votante, d) => setDoc(doc(db, 'votosJogo', jogo + '_' + votante), { ...d, jogo, votante }),
+    listVotosJogo: () => list('votosJogo'),
     setTicket: (id, d) => setDoc(doc(db, 'tickets', id), d),
     deleteTicket: (id) => deleteDoc(doc(db, 'tickets', id)),
     // Dados de saúde e treinos do relógio: escreve só o próprio (PIN); o admin só lê.

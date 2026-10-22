@@ -1,4 +1,4 @@
-import { DB, novoToken, novoPin } from './db.js?v=31';
+import { DB, novoToken, novoPin } from './db.js?v=32';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=29';
 import { paginaMarcador, hojeLocal } from './marcador.js?v=24';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
@@ -85,45 +85,425 @@ const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return nu
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 
-// Página inicial (link geral): equipas, estatísticas, resultados e a votação (sempre aberta — decisão do Rui, 21/10).
-async function paginaInicio() {
-  document.getElementById('titulo').textContent = 'Futebolada';
-  const tabs = [['eu', '👤 Eu'], ...(lsGet('sou-moderador') === '1' ? [['mod', '🛡 Moderador']] : []), ['eq', 'Equipas'], ['stats', 'Estatísticas'], ['jogos', 'Resultados'], ['votar', '🗳 Votar']];
-  A.pubTab ||= 'votar';
-  if (!tabs.some(([k]) => k === A.pubTab)) A.pubTab = 'eq';
-  if (A.pubTab !== 'mod') pararAoVivo();
-  $app.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${A.pubTab === k}" data-pt="${k}" class="${A.pubTab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="pub"></div>`;
-  $app.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => {
-    A.pubTab = b.dataset.pt;
-    if (['#jogo', '#eu'].includes(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-    paginaInicio();
-  }));
-  tabAtivoVisivel();
-  const el = document.getElementById('pub');
-  confirmarModerador();
-  if (A.pubTab === 'mod') return paginaJogo(el);
-  if (A.pubTab === 'votar' || A.pubTab === 'eu') return paginaVotar(el);
+// =====================================================================
+// PÁGINAS PÚBLICAS  (Início · Jogos · Jogadores · Tabela · Eu) — barra de navegação em baixo / ao lado
+// =====================================================================
+const titulo = (t) => (document.getElementById('titulo').textContent = t);
+const av = (p) => `<span class="av">${foto(p)}</span>`;
+const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}</span>${t}${extra ? `<div style="margin-top:12px">${extra}</div>` : ''}</div>`;
+// Jogos terminados (resumo público), do mais recente para o mais antigo.
+const lerRes = (jogosPub) => jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
+  .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
+async function dadosPublicos() {
   const [players, perfis, jogosPub, games] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listJogosPub(), DB.listGames()]);
-  const todos = juntarPerfis(players, perfis);
-  const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
-    .sort((a, b) => b.jogo.inicioEpoch - a.jogo.inicioEpoch);
-  if (A.pubTab === 'stats') return tabelaStats(el, res, todos, 'pts', null, 'publico');
-  if (A.pubTab === 'jogos') return listaResultados(el, res);
-  // Equipas: as mais recentes (próximo jogo) e, se já houver resultado, o marcador.
-  const ult = [...games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 2);
-  const nm = (g, id) => esc(nomeDe(todos.find((p) => p.id === id) || { nome: g.nomes?.[id] || '?' }));
-  const vivo = await DB.getAoVivo().catch(() => null);
+  return { todos: juntarPerfis(players, perfis), res: lerRes(jogosPub), games };
+}
+const minuto = (t) => Math.floor(t / 60000) + 1;
+const esqueleto = () => `<div class="esq" aria-busy="true" aria-label="A carregar"><i class="e-cab"></i><i></i><i></i><i class="e-curta"></i><i></i></div>`;
+
+// Marcadores de cada lado por baixo do resultado (como na FotMob): nome e minutos. Nunca o pé; penálti sim.
+function marcadoresHTML(j) {
+  const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
+  const lado = (e) => {
+    const por = new Map();
+    for (const ev of (j.eventos || []).filter((x) => x.equipa === e)) {
+      const ag = ev.tipo === 'autogolo', k = (ag ? 'ag:' : '') + ev.marcador;
+      if (!por.has(k)) por.set(k, { nm: (ag ? 'AG ' : '') + nome(ev.marcador), m: [] });
+      por.get(k).m.push(`${minuto(ev.t)}'${ev.parte === 'pen' ? ' (pen.)' : ''}`);
+    }
+    return [...por.values()].map((x) => `<div>${x.nm} ${x.m.join(', ')}</div>`).join('');
+  };
+  const B = lado('B'), P = lado('P');
+  return B || P ? `<div class="mj-marc"><div>${B}</div><div class="bolinha">⚽</div><div>${P}</div></div>` : '';
+}
+
+// Cartão de jogo ao estilo FotMob: emblemas, resultado (ou VS), marcadores e as duas equipas.
+// o = { estado, data, j (jogo terminado ou ao vivo, opcional), B: [p], P: [p], rodape }
+function cartaoJogo(o) {
+  const j = o.j;
+  let meio = '<span class="mj-vs">VS</span>';
+  if (j) {
+    const v = j.fase === 'fim' ? vencedorDe(j) : null;
+    const n = (e) => `<span class="${v && v !== 'E' && v !== e ? 'perde' : ''}">${j.fase === 'fim' ? marcaDe(j, e) : (j.eventos || []).filter((x) => x.equipa === e).length}</span>`;
+    meio = j.semGolos ? `<div class="mj-res" style="font-size:20px">${v === 'E' ? 'Empate' : `Ganharam os ${v === 'B' ? 'Brancos' : 'Pretos'}`}<small>sem golos registados</small></div>`
+      : `<div class="mj-res">${n('B')} – ${n('P')}${j.fase === 'fim' ? '<small>Terminado</small>' : ''}</div>`;
+  }
+  const lista = (ps) => ps.map((p) => (p.id ? `<a class="jl" href="#jogador=${esc(p.id)}">${av(p)}<span>${esc(nomeDe(p))}</span></a>` : `<div class="jl">${av(p)}<span>${esc(nomeDe(p))}</span></div>`)).join('');
+  return `<article class="mjogo">
+    <div class="mj-topo"><div class="mj-estado"><span>${o.estado}</span><span>${esc(o.data || '')}</span></div>
+      <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span></div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span></div></div>
+      ${j && !j.semGolos ? marcadoresHTML(j) : ''}</div>
+    ${o.B.length || o.P.length ? `<div class="mj-corpo"><div class="mj-lados"><div><h4>${LOGO.B} Brancos · ${o.B.length}</h4>${lista(o.B)}</div><div><h4>Pretos · ${o.P.length} ${LOGO.P}</h4>${lista(o.P)}</div></div></div>` : ''}
+    ${o.rodape ? `<div class="mj-rodape">${o.rodape}</div>` : ''}</article>`;
+}
+
+// Cartões do topo (Início e Jogos): jogo aberto à espera de equipas, e o jogo das equipas mais recentes (próximo / ao vivo / último).
+function cartoesTopo(todos, res, games, vivo) {
   const aoVivo = vivo?.fase === 'jogo' && vivo.live ? JSON.parse(vivo.live) : null;
-  const aberto = vivo && vivo.fase === 'aberto' && !vivo.gameId
-    ? `<div class="opcao"><b>⚽ Jogo de ${esc(diaPT(vivo.data))}</b><p class="mute" style="margin:4px 0 0">Aberto por ${esc(vivo.por?.nome || '?')} — as equipas estão a ser feitas.</p></div>` : '';
-  el.innerHTML = aberto + (ult.length ? ult.map((g, i) => {
-    const r = res.find((x) => x.jogo.gameId === g.id);
-    const vv = !r && aoVivo?.gameId === g.id ? aoVivo : null;
-    const gol = (e) => r ? marcaDe(r.jogo, e) : vv ? vv.eventos.filter((x) => x.equipa === e).length : '';
-    return `<div class="opcao"><b>${vv ? '<span class="ao-vivo"></span>Ao vivo' : i === 0 && !r ? 'Próximo jogo' : 'Jogo'} · ${esc(r ? dataDe(r.jogo) : diaPT(g.data))}</b>
-      <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos ${gol('B')}</h4>${(g.brancos || []).map((id) => nm(g, id)).join('<br>')}</div>
-        <div class="eq preto"><h4>${LOGO.P} Pretos ${gol('P')}</h4>${(g.pretos || []).map((id) => nm(g, id)).join('<br>')}</div></div></div>`;
-  }).join('') : '<div class="opcao"><b>Ainda não há equipas feitas.</b><p class="mute" style="margin:4px 0 0">Aparecem aqui quando o Rui ou um moderador as fizer, antes do jogo.</p></div>');
+  const pessoa = (id, nome) => todos.find((p) => p.id === id) || { nome: nome || '?' };   // sem id = não abre perfil
+  const ult = [...games].sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
+  let html = '', mostrado = null;
+  if (vivo && vivo.fase === 'aberto' && !vivo.gameId)
+    html += `<div class="aviso"><span class="ic">📋</span><div><b>Jogo de ${esc(diaPT(vivo.data))}</b><p>Aberto por ${esc(vivo.por?.nome || '?')} — as equipas estão a ser feitas.</p></div></div>`;
+  if (ult) {
+    const r = res.find((x) => x.jogo.gameId === ult.id);
+    const vv = !r && aoVivo?.gameId === ult.id ? aoVivo : null;
+    const eqs = (ids) => (ids || []).map((id) => pessoa(id, ult.nomes?.[id]));
+    if (r) mostrado = r.id;
+    html += cartaoJogo({ estado: vv ? '<span class="ao-vivo"></span>Ao vivo' : r ? 'Último jogo' : 'Próximo jogo', data: r ? dataDe(r.jogo) : diaPT(ult.data),
+      j: r?.jogo || vv, B: eqs(ult.brancos), P: eqs(ult.pretos), rodape: r ? `<span class="mute">${res.length} jogos registados</span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>` : '' });
+  }
+  return { html, mostrado, pessoa };
+}
+
+// Início: o jogo que aí vem (ou ao vivo), o último resultado, a votação e os líderes.
+async function paginaInicio() {
+  titulo('Futebolada');
+  const [estado, { todos, res, games }, vivo] = await Promise.all([DB.getPublic('estado').then((x) => x || {}), dadosPublicos(), DB.getAoVivo().catch(() => null)]);
+  let { html: principal, mostrado, pessoa } = cartoesTopo(todos, res, games, vivo);
+  // Último resultado registado (quando o cartão de cima é de um jogo que ainda não acabou).
+  const r0 = res[0];
+  if (r0 && r0.id !== mostrado) {
+    const eqs = (l) => (l || []).map((x) => pessoa(x.id, x.nome));
+    principal += cartaoJogo({ estado: 'Último resultado', data: dataDe(r0.jogo), j: r0.jogo, B: eqs(r0.jogo.brancos), P: eqs(r0.jogo.pretos),
+      rodape: `<a href="#jogos">Todos os jogos</a><a href="#jogo=${esc(r0.id)}">Ver o jogo →</a>` });
+  }
+  if (!principal) principal = `<div class="cartao">${vazio('📋', 'Ainda não há equipas feitas.<br><small>Aparecem aqui quando o Rui ou um moderador as fizer, antes do jogo.</small>')}</div>`;
+  // Votação (sempre aberta): nos colegas todos e, a quem jogou, ajustar as notas dos colegas do último jogo e avaliar esse jogo.
+  const euId = lsGet('meu-perfil');
+  const ultMeu = euId ? res.find((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === euId)) : null;
+  const votar = `<section class="cartao votacao"><div class="v-cab"><span class="ic">🗳</span><div><b>Votação dos colegas</b><p>Sempre aberta. As notas fazem as equipas saírem equilibradas — só o Rui as vê.</p></div></div>
+    <div class="v-botoes"><a class="btn prim" href="#votar">Votar nos colegas</a>
+      ${ultMeu ? `<a class="btn" href="#votar=${esc(ultMeu.id)}">Ajustar os do último jogo <small>${esc(dataDe(ultMeu.jogo).slice(0, 5))}</small></a>
+        <a class="btn" href="#jogo=${esc(ultMeu.id)}&avaliar">⭐ Avaliar o último jogo</a>` : ''}</div></section>`;
+  // Líderes (só golos e assistências: são públicos) e últimos resultados.
+  const S = estatisticas(res);
+  const nm = (s) => esc(nomeDe(todos.find((p) => p.id === s.id) || { nome: s.nome }));
+  const top = (k) => S.filter((s) => s[k] > 0).sort((a, b) => b[k] - a[k] || a.j - b.j).slice(0, 5);
+  const lideres = (k, t) => { const L = top(k); return L.length ? `<section class="cartao"><div class="cartao-tit">${t}<a href="#tabela">Tabela →</a></div><ol class="lideres">
+    ${L.map((s, i) => `<li><a href="#jogador=${esc(s.id)}"><span class="pos">${i + 1}</span>${av(todos.find((p) => p.id === s.id) || { nome: s.nome })}<span class="nm">${nm(s)}</span><span class="v">${s[k]}</span></a></li>`).join('')}</ol></section>` : ''; };
+  const ultimos = res.length ? `<section class="cartao"><div class="cartao-tit">Últimos resultados<a href="#jogos">Ver todos →</a></div>
+    ${res.slice(0, 5).map((r) => linhaResultado(r, todos.find((p) => p.id === euId))).join('')}</section>` : '';
+  $app.innerHTML = `<div class="grelha2"><div>${votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
+}
+
+const lnkJog = (p) => (p.id ? `<a class="lnk-j" href="#jogador=${esc(p.id)}">${esc(p.nome)}</a>` : esc(p.nome));
+const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const diaSemana = (j) => (j.inicioEpoch ? DIAS[new Date(j.inicioEpoch).getDay()] : '');
+// Resultado numa linha (estilo lista de jogos da FotMob): abre a página do jogo. O vencedor fica a negrito.
+// eu (opcional): o meu jogador — a minha cara aparece ao lado da equipa em que joguei.
+function linhaResultado(r, eu = null) {
+  const j = r.jogo, v = vencedorDe(j);
+  const ladoEu = eu ? ((j.brancos || []).some((x) => x.id === eu.id) ? 'B' : (j.pretos || []).some((x) => x.id === eu.id) ? 'P' : null) : null;
+  const cara = (e) => (ladoEu === e ? `<span class="jr-eu" title="Jogaste nos ${e === 'B' ? 'Brancos' : 'Pretos'}">${foto(eu)}</span>` : '');
+  const meio = j.semGolos ? (v === 'E' ? 'E' : v === 'B' ? 'V – D' : 'D – V') : `${marcaDe(j, 'B')} – ${marcaDe(j, 'P')}`;
+  return `<a class="jrow" href="#jogo=${esc(r.id)}"><span class="jr-dt"><b>${diaSemana(j)}</b>${esc(dataDe(j).slice(0, 5))}</span>
+    <span class="jr-eq ${v === 'B' ? 'ganha' : ''}">${cara('B')}<span>Brancos</span></span>${LOGO.B}<b class="jr-res">${meio}</b>${LOGO.P}<span class="jr-eq dir ${v === 'P' ? 'ganha' : ''}"><span>Pretos</span>${cara('P')}</span><span class="jr-seta" aria-hidden="true">›</span></a>`;
+}
+// Jogos: o próximo / ao vivo no topo e todos os resultados, agrupados por mês.
+async function paginaJogos() {
+  titulo('Jogos');
+  const [{ todos, res, games }, vivo] = await Promise.all([dadosPublicos(), DB.getAoVivo().catch(() => null)]);
+  const topo = cartoesTopo(todos, res, games, vivo);
+  const eu = todos.find((p) => p.id === lsGet('meu-perfil')) || null;
+  // O cartão de cima só interessa aqui se o jogo ainda não acabou (os acabados estão na lista).
+  const cima = topo.mostrado ? topo.html.replace(/<article class="mjogo">[\s\S]*<\/article>/, '') : topo.html;
+  if (!res.length) { $app.innerHTML = cima + vazio('⚽', 'Ainda não há jogos registados.<br><small>Aparecem aqui quando o marcador do telemóvel ou o relógio enviar o primeiro jogo.</small>'); return; }
+  const meses = new Map();
+  for (const r of res) {
+    const k = r.jogo.inicioEpoch ? new Date(r.jogo.inicioEpoch).toLocaleDateString('pt-PT', { month: 'long', year: 'numeric' }) : 'Sem data';
+    if (!meses.has(k)) meses.set(k, []);
+    meses.get(k).push(r);
+  }
+  $app.innerHTML = `${cima ? `<div class="jogos-topo">${cima}</div>` : ''}<div class="lista-jogos">${[...meses].map(([m, L]) => `<section class="cartao mes">
+    <div class="cartao-tit"><span>${esc(m[0].toUpperCase() + m.slice(1))}</span><small class="mute">${L.length} jogo${L.length > 1 ? 's' : ''}</small></div>${L.map((r) => linhaResultado(r, eu)).join('')}</section>`).join('')}</div>`;
+}
+
+// =====================================================================
+// PÁGINA DO JOGO  (#jogo=<id>) — cabeçalho FotMob, gráfico do jogo, resumo, estatísticas e equipas
+// Só o resumo público do jogo; o pé com que se marcou só aparece nos golos do próprio (com PIN).
+// =====================================================================
+async function paginaJogoPub(id) {
+  titulo('Jogo');
+  // "#jogo=<id>&avaliar" (vindo do Início): abre logo a avaliação dos colegas.
+  const avaliarJa = id.endsWith('&avaliar');
+  id = id.replace(/&avaliar$/, '');
+  const [{ todos, res }, euLs, posPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null)]);
+  const eu = euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
+  const i = res.findIndex((r) => r.id === id);
+  if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
+  const j = res[i].jogo, v = vencedorDe(j);
+  const quem = Object.fromEntries([...(j.brancos || []), ...(j.pretos || [])].map((x) => [x.id, { ...x, ...(todos.find((p) => p.id === x.id) || {}), nomeJogo: x.nome }]));
+  const nome = (pid) => esc(quem[pid]?.nomeJogo || '?');
+  const lnk = (pid) => (quem[pid] ? `<a class="lnk-j" href="#jogador=${esc(pid)}">${nome(pid)}</a>` : nome(pid));
+  const ev = [...(j.eventos || [])].sort((a, b) => a.t - b.t);
+  const dur = Math.max(j.fimEpoch && j.inicioEpoch ? j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0) : 0, (ev.at(-1)?.t || 0) + 60000, 60000);
+  const parte = (e) => (e.parte && (!PES.includes(e.parte) || e.marcador === eu) ? PARTE[e.parte] : '');
+  // Navegação para o jogo anterior / seguinte (res vem do mais recente para o mais antigo).
+  const ant = res[i + 1], seg = res[i - 1];
+  const nav = `<div class="jnav">${ant ? `<a href="#jogo=${esc(ant.id)}">‹ ${esc(dataDe(ant.jogo))}</a>` : '<span></span>'}<a href="#jogos">Todos os jogos</a>${seg ? `<a href="#jogo=${esc(seg.id)}">${esc(dataDe(seg.jogo))} ›</a>` : '<span></span>'}</div>`;
+  // Cabeçalho (com o botão para avaliar os colegas, se joguei e entrei com o PIN)
+  const joguei = eu ? ((j.brancos || []).some((x) => x.id === eu) ? 'B' : (j.pretos || []).some((x) => x.id === eu) ? 'P' : null) : null;
+  const n = (e) => `<span class="${v !== 'E' && v !== e ? 'perde' : ''}">${marcaDe(j, e)}</span>`;
+  const meio = j.semGolos ? `<div class="mj-res" style="font-size:22px">${v === 'E' ? 'Empate' : `Ganharam os ${v === 'B' ? 'Brancos' : 'Pretos'}`}<small>sem golos registados</small></div>`
+    : `<div class="mj-res">${n('B')} – ${n('P')}<small>Terminado${j.fimEpoch ? ` · ${Math.round(dur / 60000)} min` : ''}</small></div>`;
+  const cab = `<section class="mjogo jcab"><div class="mj-topo"><div class="mj-estado"><span>${esc(diaSemana(j))} · ${esc(dataDe(j))}</span><span>${j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>
+    <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span>${v === 'B' ? '<small class="jvenc">Vencedor</small>' : ''}</div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span>${v === 'P' ? '<small class="jvenc">Vencedor</small>' : ''}</div></div>
+    ${j.semGolos ? '' : marcadoresHTML(j)}</div>
+    ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></div>`
+      : !eu ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
+  // Painéis
+  const graf = ev.length ? `<section class="cartao"><div class="cartao-tit">Desenrolar do jogo <small class="mute">toca num golo</small></div>${graficoJogo(j, ev, dur, nome)}
+    <div class="gdet mute" id="g-det">Diferença no marcador ao longo do jogo: para cima a favor dos Brancos, para baixo a favor dos Pretos.</div></section>` : '';
+  const resumo = `<section class="cartao"><div class="cartao-tit">Resumo${(j.turnos || []).length ? '<label class="tgr"><input type="checkbox" id="r-gr"> trocas de GR</label>' : ''}</div>${resumoJogoHTML(j, ev, dur, lnk, parte)}</section>`;
+  const stats = `<section class="cartao"><div class="cartao-tit">Estatísticas da equipa</div>${statsJogoHTML(j, ev, dur)}</section>`;
+  const equipas = `<section class="cartao"><div class="cartao-tit">Equipas</div>${campoHTML(j, ev, quem, posPub?.pos || {})}</section>`;
+  $app.innerHTML = `${nav}${cab}
+    <div class="tabs jtabs" role="tablist"><button data-ja="resumo" class="on">Resumo</button><button data-ja="stats">Estatísticas</button><button data-ja="equipas">Equipas</button></div>
+    <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${resumo}</div></div>
+      <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>`;
+  $app.querySelectorAll('[data-ja]').forEach((b) => (b.onclick = () => {
+    $app.querySelectorAll('[data-ja]').forEach((x) => x.classList.toggle('on', x === b));
+    $app.querySelectorAll('[data-jp]').forEach((x) => x.classList.toggle('on', x.dataset.jp === b.dataset.ja));
+  }));
+  document.getElementById('r-gr')?.addEventListener('change', (e) => $app.querySelector('.resumo').classList.toggle('com-gr', e.target.checked));
+  document.getElementById('j-aval')?.addEventListener('click', () => abrirAvaliacao(id, j, eu, quem));
+  if (avaliarJa && joguei) abrirAvaliacao(id, j, eu, quem);
+  // Tocar num golo do gráfico: quem marcou, quem assistiu e o resultado nesse momento.
+  const det = document.getElementById('g-det');
+  $app.querySelectorAll('[data-g]').forEach((g) => {
+    const mostrar = () => {
+      const e = ev[g.dataset.g], k = ev.indexOf(e) + 1, B = ev.slice(0, k).filter((x) => x.equipa === 'B').length, P = k - B;
+      $app.querySelectorAll('[data-g]').forEach((x) => x.classList.toggle('sel', x === g));
+      det.classList.remove('mute');
+      det.innerHTML = `<b>${minuto(e.t)}'</b> ${e.equipa === 'B' ? LOGO.B : LOGO.P} ${e.tipo === 'autogolo' ? `Autogolo de ${lnk(e.marcador)}` : `⚽ ${lnk(e.marcador)}`}${parte(e) ? ` <small class="mute">(${parte(e)})</small>` : ''}${e.assist ? ` · 🅰️ ${lnk(e.assist)}` : ''} <span class="gdet-res">${B} – ${P}</span>`;
+    };
+    g.onclick = mostrar;
+    g.onkeydown = (k) => { if (k.key === 'Enter' || k.key === ' ') { k.preventDefault(); mostrar(); } };
+  });
+}
+
+// Gráfico do jogo (o "ímpeto" possível com os dados que há): a diferença no marcador ao longo do tempo,
+// com cada golo marcado em cima (Brancos) ou em baixo (Pretos).
+function graficoJogo(j, ev, dur, nome) {
+  // No telemóvel o desenho é mais estreito, para os golos não ficarem minúsculos.
+  const W = innerWidth < 600 ? 360 : 640, H = innerWidth < 600 ? 190 : 170, m = 18, mid = H / 2, amp = mid - 34;
+  const x = (t) => m + (t / dur) * (W - 2 * m);
+  let d = 0, maxD = 1;
+  const pts = [[0, 0]];
+  for (const e of ev) { pts.push([e.t, d]); d += e.equipa === 'B' ? 1 : -1; pts.push([e.t, d]); maxD = Math.max(maxD, Math.abs(d)); }
+  pts.push([dur, d]);
+  const y = (v) => mid - (v / maxD) * amp;
+  const linha = pts.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `${x(0)},${mid} ${linha} ${x(dur)},${mid}`;
+  const ticks = [];
+  for (let k = 0; k <= dur / 60000; k += 10) ticks.push(`<line x1="${x(k * 60000)}" x2="${x(k * 60000)}" y1="${m}" y2="${H - m}" class="g-tick"/><text x="${x(k * 60000)}" y="${H - 3}" class="g-min">${k}'</text>`);
+  const golos = ev.map((e, i) => {
+    const cx = x(e.t), cy = e.equipa === 'B' ? 16 : H - 24;
+    return `<g class="g-golo ${e.equipa === 'B' ? 'gb' : 'gp'}" data-g="${i}" tabindex="0" role="button" aria-label="${minuto(e.t)}' ${e.tipo === 'autogolo' ? 'autogolo de ' : 'golo de '}${nome(e.marcador)}">
+      <line x1="${cx}" x2="${cx}" y1="${cy}" y2="${mid}" class="g-haste"/><circle cx="${cx}" cy="${cy}" r="8"/><text x="${cx}" y="${cy + 3.5}">${e.tipo === 'autogolo' ? 'A' : '⚽'}</text></g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="gjogo" role="img" aria-label="Golos ao longo do jogo">
+    <defs><clipPath id="g-cima"><rect x="0" y="0" width="${W}" height="${mid}"/></clipPath><clipPath id="g-baixo"><rect x="0" y="${mid}" width="${W}" height="${mid}"/></clipPath></defs>
+    ${ticks.join('')}<polygon points="${area}" class="g-area-b" clip-path="url(#g-cima)"/><polygon points="${area}" class="g-area-p" clip-path="url(#g-baixo)"/>
+    <line x1="${m}" x2="${W - m}" y1="${mid}" y2="${mid}" class="g-meio"/><polyline points="${linha}" class="g-linha"/>${golos}
+    <text x="${W - m}" y="${mid - 6}" class="g-eq" text-anchor="end">BRANCOS ▲</text><text x="${W - m}" y="${mid + 14}" class="g-eq" text-anchor="end">PRETOS ▼</text></svg>`;
+}
+
+// Resumo minuto a minuto (estilo FotMob): Brancos à esquerda, Pretos à direita, o minuto ao centro.
+function resumoJogoHTML(j, ev, dur, lnk, parte) {
+  const L = [];
+  let B = 0, P = 0;
+  for (const e of ev) {
+    if (e.equipa === 'B') B++; else P++;
+    L.push({ t: e.t, e: e.equipa, html: `<span class="ri">⚽</span><div><b>${lnk(e.marcador)}</b> <span class="rres">${B}-${P}</span>${e.tipo === 'autogolo' ? ' <span class="mute">(autogolo)</span>' : ''}${e.assist ? ` <span class="rassist">(assistência de ${lnk(e.assist)})</span>` : ''}${parte(e) ? `<div class="mute">${parte(e)}</div>` : ''}</div>` });
+  }
+  for (const pn of (j.penaltis || []).filter((x) => x.resultado !== 'golo'))
+    L.push({ t: pn.t, e: pn.equipa, html: `<span class="ri">${pn.resultado === 'defendido' ? '🧤' : '❌'}</span><div><b>Penálti ${pn.resultado === 'defendido' ? 'defendido' : 'falhado'}</b><div class="mute">${lnk(pn.marcador)}${pn.resultado === 'defendido' && pn.gr ? ` · defende ${lnk(pn.gr)}` : ''}</div></div>` });
+  for (const tu of j.turnos || [])
+    L.push({ t: tu.de, e: tu.equipa, gr: true, html: `<span class="ri">🧤</span><div class="mute">${lnk(tu.jogador)} vai à baliza</div>` });
+  L.sort((a, b) => a.t - b.t || (a.gr ? -1 : 1));
+  const linha = (x) => `<div class="rl ${x.e === 'B' ? 'rb' : 'rp'}${x.gr ? ' rgr' : ''}"><div class="rlado">${x.e === 'B' ? x.html : ''}</div><span class="rmin">${minuto(x.t)}'</span><div class="rlado">${x.e === 'P' ? x.html : ''}</div></div>`;
+  return `<div class="resumo"><div class="rmarco">Início</div>${L.map(linha).join('')}<div class="rmarco">Fim${j.fimEpoch ? ` · ${Math.round(dur / 60000)}'` : ''} · ${j.semGolos ? 'sem golos registados' : `${marcaDe(j, 'B')} – ${marcaDe(j, 'P')}`}</div></div>`;
+}
+
+// Estatísticas das duas equipas frente a frente, só com o que o marcador regista.
+function statsJogoHTML(j, ev, dur) {
+  const de = (e) => ev.filter((x) => x.equipa === e);
+  const pens = (e) => (j.penaltis || []).filter((x) => x.equipa === e);
+  // Maior série de golos seguidos e tempo a ganhar.
+  const serie = { B: 0, P: 0 }, ganhar = { B: 0, P: 0 };
+  let cur = null, n = 0, d = 0, tAnt = 0;
+  for (const e of ev) {
+    if (d > 0) ganhar.B += e.t - tAnt; else if (d < 0) ganhar.P += e.t - tAnt;
+    tAnt = e.t; d += e.equipa === 'B' ? 1 : -1;
+    n = e.equipa === cur ? n + 1 : 1; cur = e.equipa; serie[cur] = Math.max(serie[cur], n);
+  }
+  if (d > 0) ganhar.B += dur - tAnt; else if (d < 0) ganhar.P += dur - tAnt;
+  const gr = (e) => (j.turnos || []).filter((x) => x.equipa === e);
+  const linhas = [
+    ['Golos', placarDe(j).B, placarDe(j).P, true],
+    ['Golos com assistência', de('B').filter((x) => x.assist).length, de('P').filter((x) => x.assist).length],
+    ['Marcadores diferentes', new Set(de('B').filter((x) => x.tipo !== 'autogolo').map((x) => x.marcador)).size, new Set(de('P').filter((x) => x.tipo !== 'autogolo').map((x) => x.marcador)).size],
+    ['Golos de cabeça', de('B').filter((x) => x.parte === 'cab').length, de('P').filter((x) => x.parte === 'cab').length],
+    ['Penáltis marcados', `${pens('B').filter((x) => x.resultado === 'golo').length}/${pens('B').length}`, `${pens('P').filter((x) => x.resultado === 'golo').length}/${pens('P').length}`, false, pens('B').length + pens('P').length],
+    ['Penáltis defendidos', pens('P').filter((x) => x.resultado === 'defendido').length, pens('B').filter((x) => x.resultado === 'defendido').length],
+    ['Autogolos a favor', de('B').filter((x) => x.tipo === 'autogolo').length, de('P').filter((x) => x.tipo === 'autogolo').length],
+    ['Maior série de golos seguidos', serie.B, serie.P],
+    ['Minutos a ganhar', Math.round(ganhar.B / 60000), Math.round(ganhar.P / 60000)],
+    ['Guarda-redes usados', new Set(gr('B').map((x) => x.jogador)).size, new Set(gr('P').map((x) => x.jogador)).size],
+  ].filter(([, a, b, sempre, extra]) => sempre || (extra ?? (Number(a) + Number(b))) > 0);
+  if (ev.length === 0 && !j.semGolos) return '<p class="mute">Sem golos registados neste jogo.</p>';
+  return `<div class="hh-cab"><span>${LOGO.B} Brancos</span><span>Pretos ${LOGO.P}</span></div>${linhas.map(([nm, a, b]) => {
+    const na = parseFloat(a) || 0, nb = parseFloat(b) || 0, tot = na + nb || 1;
+    return `<div class="hh"><div class="hh-v"><b class="${na > nb ? 'mais b' : ''}">${a}</b><span>${nm}</span><b class="${nb > na ? 'mais p' : ''}">${b}</b></div>
+      <div class="hh-b"><i class="b" style="width:${(na / tot) * 100}%"></i><i class="p" style="width:${(nb / tot) * 100}%"></i></div></div>`;
+  }).join('')}${j.semGolos ? '<p class="mute">Jogo fechado sem golos registados: só se sabe quem ganhou.</p>' : ''}`;
+}
+
+// As duas equipas desenhadas num campo (Brancos em cima, Pretos em baixo). O 1.º guarda-redes de cada equipa fica na baliza;
+// os outros distribuem-se pela posição indicativa da carta (defesa, médio, avançado — public/posicoes, publicada pelo admin).
+// Quem não tem posição fica no meio-campo. É só para ficar bonito: as posições no jogo não são registadas.
+function campoHTML(j, ev, quem, pos = {}) {
+  const ORD = ['DEF', 'MED', 'AVA'];
+  const meio = (e, ids) => {
+    const tur = (j.turnos || []).filter((x) => x.equipa === e).sort((a, b) => a.de - b.de);
+    const g1 = tur[0]?.jogador;
+    const minGR = (pid) => Math.round(tur.filter((x) => x.jogador === pid).reduce((s, x) => s + x.ate - x.de, 0) / 60000);
+    const resto = ids.filter((pid) => pid !== g1);
+    const temPos = resto.some((pid) => pos[pid]);
+    const linhas = temPos ? ORD.map((k) => resto.filter((pid) => (ORD.includes(pos[pid]) ? pos[pid] : 'MED') === k)).filter((l) => l.length)
+      : resto.length <= 3 ? [resto] : [resto.slice(0, Math.ceil(resto.length / 2)), resto.slice(Math.ceil(resto.length / 2))];
+    const jog = (pid) => {
+      const p = quem[pid] || { nome: '?' }, g = ev.filter((x) => x.marcador === pid && x.tipo !== 'autogolo').length, a = ev.filter((x) => x.assist === pid).length, mg = minGR(pid);
+      return `<a class="cj" href="#jogador=${esc(pid)}"><span class="cj-av">${foto(p)}${g ? `<i class="cj-g" title="${g} golo${g > 1 ? 's' : ''}">⚽${g > 1 ? '×' + g : ''}</i>` : ''}${a ? `<i class="cj-a" title="${a} assistência${a > 1 ? 's' : ''}">🅰️${a > 1 ? '×' + a : ''}</i>` : ''}${mg ? `<i class="cj-gr" title="${mg} min na baliza">🧤 ${mg}'</i>` : ''}</span>
+        <span class="cj-n">${esc(p.nomeJogo || p.nome)}</span>${temPos && pos[pid] ? `<small class="cj-pos">${pos[pid]}</small>` : ''}</a>`;
+    };
+    const rows = [g1 ? `<div class="cl gr">${jog(g1)}</div>` : '', ...linhas.map((l) => `<div class="cl">${l.map(jog).join('')}</div>`)];
+    return `<div class="cmeio ${e === 'B' ? 'cb' : 'cp'}"><div class="ceq">${LOGO[e]} ${e === 'B' ? 'Brancos' : 'Pretos'}</div>${(e === 'B' ? rows : rows.reverse()).join('')}</div>`;
+  };
+  const ids = (l) => (l || []).map((x) => x.id);
+  const algumaPos = [...ids(j.brancos), ...ids(j.pretos)].some((pid) => pos[pid]);
+  return `<div class="campo"><div class="cbaliza cima"></div>${meio('B', ids(j.brancos))}<div class="clinha"></div>${meio('P', ids(j.pretos))}<div class="cbaliza baixo"></div></div>
+    <p class="mute" style="font-size:12px;margin:8px 0 0">⚽ golos · 🅰️ assistências · 🧤 minutos na baliza${(j.turnos || []).length ? ' (o primeiro guarda-redes está na baliza)' : ''}.
+      ${algumaPos ? 'Os outros estão pela posição indicativa da carta (DEF, MED, AVA); no jogo as posições não são registadas.' : 'As posições no campo não são registadas.'}</p>`;
+}
+
+// ⭐ Avaliar os colegas NESTE jogo (Rui, 23/10): um toque por colega — pior (−1), igual (0) ou melhor (+1) do que o normal
+// dele (as áreas que tem na carta). Guarda sozinho em votosJogo/{jogo}_{votante} = { r: { id: { d } } }. À parte: não entra em
+// calcularCartas; por agora só junta dados.
+async function abrirAvaliacao(jogoId, j, euId, quem) {
+  const atual = (await DB.getVotoJogo(jogoId, euId).catch(() => null)) || {};
+  const r = { ...(atual.r || {}) };
+  const { el: f } = abrirFolha(`⭐ Os colegas no jogo de ${dataDe(j)}`, '<div id="av-corpo"></div>');
+  const corpo = f.querySelector('#av-corpo');
+  const OP = [[-1, '▼', 'Pior'], [0, '=', 'Normal'], [1, '▲', 'Melhor']];
+  const outros = [...(j.brancos || []), ...(j.pretos || [])].filter((x) => x.id !== euId);
+  const nm = (pid) => esc(nomeDe(quem[pid] || { nome: '?' }));
+  const desenhar = () => {
+    const n = outros.filter((x) => [-1, 0, 1].includes(r[x.id]?.d)).length;
+    const lado = (e, L) => `<h4 class="av-eq">${LOGO[e]} ${e === 'B' ? 'Brancos' : 'Pretos'}</h4>${L.filter((x) => x.id !== euId).map((x) => `<div class="av-j">${av(quem[x.id] || x)}<span>${nm(x.id)}</span>
+      <div class="av-op" role="group" aria-label="${nm(x.id)}">${OP.map(([d, s, t]) => `<button class="av-${d < 0 ? 'pior' : d > 0 ? 'melhor' : 'igual'} ${r[x.id]?.d === d ? 'on' : ''}" data-p="${esc(x.id)}" data-d="${d}" title="${t} do que o normal">${s}<small>${t}</small></button>`).join('')}</div></div>`).join('')}`;
+    corpo.innerHTML = `<p class="mute" style="margin-top:0">Como jogou cada um <b>comparado com o normal dele</b>? Um toque basta — grava sozinho. Fica à parte e <b>não mexe nas cartas</b>.</p>
+      <div class="prog"><i style="width:${(n / (outros.length || 1)) * 100}%"></i></div><p class="mute" style="font-size:12px;margin:0 0 6px">${n} de ${outros.length} avaliados</p>
+      ${lado('B', j.brancos || [])}${lado('P', j.pretos || [])}`;
+    corpo.querySelectorAll('[data-d]').forEach((b) => (b.onclick = async () => {
+      const pid = b.dataset.p, d = Number(b.dataset.d);
+      if (r[pid]?.d === d) delete r[pid]; else r[pid] = { d };   // tocar outra vez no mesmo desfaz
+      desenhar();
+      try { await DB.saveVotoJogo(jogoId, euId, { r, ts: Date.now() }); }
+      catch (err) { console.error(err); toast(/permission/i.test(err.message || '') ? 'A avaliação dos jogos ainda não está ligada no servidor' : 'Não deu para guardar — tenta outra vez'); }
+    }));
+  };
+  desenhar();
+}
+
+// Jogadores (pedido do Rui, 22/10): as cartas de todos, quando o Rui as publicou; com as cartas escondidas, só a foto e o
+// número de jogos (sem rating). Pesquisa e ordenação sempre; filtro por posição só com cartas (a posição vem da carta).
+async function paginaJogadores() {
+  titulo('Jogadores');
+  const [pub, { todos, res }] = await Promise.all([DB.getPublic('cartas'), dadosPublicos()]);
+  const comCartas = !!pub?.visivel;
+  const S = Object.fromEntries(estatisticas(res).map((s) => [s.id, s]));
+  const lista = todos.filter((p) => p.ativo !== false && !p.convidado).map((p) => ({ p, j: S[p.id]?.j || 0, c: comCartas ? cartaPublica(pub, p) : null }));
+  const posicoes = POSICOES.filter((x) => lista.some((l) => l.c?.posicao === x.k));
+  const ORD = [...(comCartas ? [['ov', 'Overall']] : []), ['nome', 'Nome'], ['j', 'Jogos']];
+  A.jOrd = ORD.some(([k]) => k === A.jOrd) ? A.jOrd : ORD[0][0];
+  A.jPos ||= ''; A.jBusca ??= '';
+  $app.innerHTML = `<div class="jfiltros"><input id="j-busca" type="search" placeholder="🔎 Procurar jogador…" value="${esc(A.jBusca)}" aria-label="Procurar jogador">
+      <label class="jord">Ordenar <select id="j-ord">${ORD.map(([k, n]) => `<option value="${k}" ${k === A.jOrd ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
+    ${posicoes.length ? `<div class="chips jpos"><button class="chip ${!A.jPos ? 'on' : ''}" data-pos="">Todos</button>${posicoes.map((x) => `<button class="chip ${A.jPos === x.k ? 'on' : ''}" data-pos="${x.k}">${x.nome}</button>`).join('')}</div>` : ''}
+    ${comCartas ? '' : '<p class="mute" style="font-size:12px;margin:0 0 10px">As cartas ainda estão escondidas — aparecem aqui quando o Rui as mostrar.</p>'}
+    <div id="j-lista"></div>`;
+  const val = (l, k) => (k === 'ov' ? l.c?.overall ?? -1 : k === 'j' ? l.j : 0);
+  const desenhar = () => {
+    const q = A.jBusca.trim().toLowerCase(), k = A.jOrd;
+    const L = lista.filter((l) => (!q || `${l.p.nome} ${nomeDe(l.p)}`.toLowerCase().includes(q)) && (!A.jPos || l.c?.posicao === A.jPos))
+      .sort((a, b) => (k === 'nome' ? 0 : val(b, k) - val(a, k)) || nomeDe(a.p).localeCompare(nomeDe(b.p), 'pt'));
+    const item = (l) => (l.c
+      ? `<a class="carta-link" href="#jogador=${esc(l.p.id)}">${htmlCarta(l.p, l.c)}<span class="carta-j">${l.j} jogo${l.j === 1 ? '' : 's'}</span></a>`
+      : `<a class="pj" href="#jogador=${esc(l.p.id)}">${av(l.p)}<b>${esc(nomeDe(l.p))}</b><span class="pj-jogos"><b>${l.j}</b> jogo${l.j === 1 ? '' : 's'}</span></a>`);
+    document.getElementById('j-lista').innerHTML = L.length ? `<p class="mute" style="margin:0 0 8px">${L.length} jogador${L.length > 1 ? 'es' : ''}</p>
+      <div class="${comCartas ? 'cartas' : 'plantel'}">${L.map(item).join('')}</div>` : vazio('🔎', 'Nenhum jogador encontrado.');
+  };
+  desenhar();
+  document.getElementById('j-busca').oninput = (e) => { A.jBusca = e.target.value; desenhar(); };
+  document.getElementById('j-ord').onchange = (e) => { A.jOrd = e.target.value; desenhar(); };
+  $app.querySelectorAll('[data-pos]').forEach((b) => (b.onclick = () => { A.jPos = b.dataset.pos; $app.querySelectorAll('[data-pos]').forEach((x) => x.classList.toggle('on', x === b)); desenhar(); }));
+}
+
+// Classificação: filtros por período, os 3 melhores em pódio (o do meio é o 1.º) e a tabela com a forma. Nunca o pé.
+async function paginaTabela() {
+  titulo('Classificação');
+  const { todos, res } = await dadosPublicos();
+  const PER = [['tudo', 'Época toda'], ['10', 'Últimos 10 jogos'], ['30d', 'Últimos 30 dias']];
+  const CAT = [['pts', 'Pontos'], ['g', 'Golos'], ['a', 'Assistências'], ['pv', '% vitórias']];
+  A.cPer ||= 'tudo'; A.cCat ||= 'pts';   // por defeito: Pontos (pedido do Rui, 23/10)
+  const resF = A.cPer === '10' ? res.slice(0, 10) : A.cPer === '30d' ? res.filter((r) => (r.jogo.inicioEpoch || 0) >= Date.now() - 30 * 864e5) : res;
+  // % vitórias só conta a partir de 3 jogos no período (1 jogo ganho não é 100 %).
+  const minJ = A.cCat === 'pv' ? Math.min(3, Math.max(1, ...estatisticas(resF).map((s) => s.j))) : 1;
+  const L = estatisticas(resF).map(comMedias).filter((s) => s.j >= minJ && s[A.cCat] > 0)
+    .sort((a, b) => b[A.cCat] - a[A.cCat] || a.j - b.j).slice(0, 3);
+  const fmtV = (s) => (A.cCat === 'pv' ? Math.round(s.pv * 100) + '%' : s[A.cCat]);
+  const pessoa = (s) => todos.find((p) => p.id === s.id) || { nome: s.nome };
+  const podio = L.length ? `<div class="podio" aria-label="Os 3 melhores em ${esc(CAT.find(([k]) => k === A.cCat)[1])}">${[1, 0, 2].map((i) => (L[i]
+    ? `<a class="pd pd${i + 1}" href="#jogador=${esc(L[i].id)}"><span class="pd-av">${foto(pessoa(L[i]))}${i === 0 ? '<i class="pd-coroa">👑</i>' : ''}</span>
+        <b class="pd-nome">${esc(nomeDe(pessoa(L[i])))}</b><span class="pd-v">${fmtV(L[i])}</span><div class="pd-base"><span>${i + 1}.º</span></div></a>`
+    : '<div class="pd pd-vazio"></div>')).join('')}</div>` : '';
+  const chips = (L2, atual, attr) => `<div class="chips cfiltro">${L2.map(([k, n]) => `<button class="chip ${atual === k ? 'on' : ''}" ${attr}="${k}">${n}</button>`).join('')}</div>`;
+  $app.innerHTML = `<div class="cfiltros">${chips(PER, A.cPer, 'data-per')}${chips(CAT, A.cCat, 'data-cat')}</div>
+    ${resF.length ? `${podio}<div class="cartao" id="pub"></div>` : vazio('📊', 'Sem jogos neste período.')}`;
+  if (resF.length) tabelaStats(document.getElementById('pub'), resF, todos, A.cCat, lsGet('meu-perfil'), 'publico');
+  $app.querySelectorAll('[data-per]').forEach((b) => (b.onclick = () => { A.cPer = b.dataset.per; paginaTabela(); }));
+  $app.querySelectorAll('[data-cat]').forEach((b) => (b.onclick = () => { A.cCat = b.dataset.cat; A.statsInv = false; paginaTabela(); }));
+}
+
+// ⚙ Definições (roda dentada do topo): os meus dados (alcunha, foto, PIN, trocar de perfil), instalar a app e a administração.
+async function paginaDefinicoes() {
+  titulo('Definições');
+  $app.innerHTML = '<div id="pub"></div>';
+  const el = document.getElementById('pub');
+  const [players, perfis] = await Promise.all([DB.listPlayers(), DB.listPerfis()]);
+  const todos = juntarPerfis(players, perfis).filter((p) => p.ativo !== false && !p.convidado);
+  const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
+  if (eu && (await DB.ligacaoOk(eu.id))) editarPerfil(eu, todos, () => { toast('Guardado ✔'); paginaDefinicoes(); });
+  else el.innerHTML = `<div class="cartao">${vazio('🔑', 'Ainda não entraste no teu perfil neste telemóvel.', '<a class="btn prim" href="#eu">Entrar com o meu PIN</a>')}</div>`;
+  el.insertAdjacentHTML('beforeend', `<section class="cartao def-lista" style="margin-top:16px">
+    <button id="def-ticket"><span>🐞</span><div><b>Reportar um problema</b><small>Vai direto para o Rui, com o ecrã onde estavas.</small></div></button>
+    <button id="def-instalar"><span>📲</span><div><b>Instalar a app</b><small>Fica no ecrã do telemóvel como uma app.</small></div></button>
+    <a href="#admin"><span>🔧</span><div><b>Administração</b><small>Só para o Rui (entra com a conta Google do administrador).</small></div></a></section>
+    <p class="mute" style="font-size:12px">Privacidade: as notas que dás só o organizador as vê; a idade, a altura, o peso e o pé com que marcas só tu (e o Rui) os vês.</p>`);
+  document.getElementById('def-ticket').onclick = abrirTicket;
+  document.getElementById('def-instalar').onclick = () => document.getElementById('instalar').click();
+}
+
+// Eu (perfil, com PIN) e Votar (sempre aberta). jogoId: votar só nos colegas desse jogo (ajustar as notas depois de jogar com eles).
+async function paginaEu(modo, jogoId = null) {
+  A.pubTab = modo;
+  A.votarJogo = jogoId;
+  titulo(modo === 'votar' ? 'Votar' : 'O meu perfil');
+  $app.innerHTML = '<div id="pub"></div>';
+  return paginaVotar(document.getElementById('pub'));
 }
 // Separadores que não cabem no ecrã: o ativo fica sempre à vista (sem mexer na página na vertical).
 function tabAtivoVisivel() {
@@ -140,25 +520,6 @@ function linhasEventos(j, euId = null) {
   const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
   return `${(j.eventos || []).map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte && (!PES.includes(ev.parte) || ev.marcador === euId) ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
     ${(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => `<div class="mute">${Math.floor(pn.t / 60000) + 1}' ${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${nome(pn.marcador)} ${pn.resultado === 'defendido' ? `defendido por ${nome(pn.gr)} 🧤` : 'falhado'}</div>`).join('')}`;
-}
-
-// Marcador grande ao centro (⚪ Brancos 4 – 10 Pretos ⚫); o vencedor em destaque.
-function htmlPlacar(j) {
-  const v = vencedorDe(j), c = (e) => (v === e ? 'ganha' : '');
-  const n = (e) => `<span class="${v !== 'E' && v !== e ? 'perde' : ''}">${marcaDe(j, e)}</span>`;
-  // Jogo fechado sem golos registados: só se sabe quem ganhou.
-  const meio = j.semGolos ? `<small class="mute">${v === 'E' ? 'empate' : 'sem golos registados'}</small>` : `${n('B')} – ${n('P')}`;
-  return `<div class="placar"><span class="lado ${c('B')}">${LOGO.B} Brancos</span><span class="golos">${meio}</span><span class="lado ${c('P')}">Pretos ${LOGO.P}</span></div>`;
-}
-function listaResultados(el, res) {
-  el.innerHTML = res.length ? res.map(({ jogo: j }) => {
-    const v = vencedorDe(j), nGol = (j.eventos || []).length;
-    const ev = linhasEventos(j);
-    return `<div class="opcao resultado"><b>${esc(dataDe(j))}</b>${htmlPlacar(j)}
-      <div class="equipas"><div class="eq branco ${v === 'B' ? 'ganha' : ''}">${(j.brancos || []).map((p) => esc(p.nome)).join('<br>')}</div>
-        <div class="eq preto ${v === 'P' ? 'ganha' : ''}">${(j.pretos || []).map((p) => esc(p.nome)).join('<br>')}</div></div>
-      ${ev.trim() ? `<details><summary>⚽ Golos minuto a minuto${nGol ? ` (${nGol})` : ''}</summary>${ev}</details>` : ''}</div>`;
-  }).join('') : '<p class="mute">Ainda não há jogos registados.</p>';
 }
 
 async function paginaVotar(el) {
@@ -218,15 +579,16 @@ function pedirPin(p, todos) {
   inp.oninput = () => { if (/^\d{4}$/.test(inp.value)) entrar(); };
 }
 
-function editarPerfil(eu, todos) {
+// depois: o que fazer depois de guardar (nas ⚙ Definições fica lá; no primeiro acesso segue para o perfil / votação).
+function editarPerfil(eu, todos, depois = null) {
   const $app = document.getElementById('pub') || document.getElementById('app');
   let novaFoto = null;
-  $app.innerHTML = `<h2>O teu perfil</h2>
+  $app.innerHTML = `<h2>${depois ? 'Os meus dados' : 'O teu perfil'}</h2>
     <div class="alvo"><span id="pf-foto">${foto(eu)}</span><div><div class="nome">${esc(nomeDe(eu))}</div><div class="mute">${esc(eu.nome)}</div></div></div>
     <label>Como queres ser tratado? (opcional)</label><input id="pf-alias" maxlength="20" placeholder="${esc(eu.nome)}" value="${esc(eu.alias || '')}">
     <label>Foto melhor do que a do WhatsApp? (opcional)</label><input id="pf-file" type="file" accept="image/*">
     <button id="pf-semfoto" class="peq" style="margin-top:8px">🗑 Apagar a minha foto (fica só a inicial)</button>
-    <button class="prim" id="pf-ok" style="width:100%;margin-top:16px">Guardar e continuar</button>
+    <button class="prim" id="pf-ok" style="width:100%;margin-top:16px">${depois ? 'Guardar' : 'Guardar e continuar'}</button>
     <p class="mute" style="margin-top:12px;font-size:12px">Privacidade: guardamos o teu nome, a foto (se quiseres) e as notas que dás e recebes.
       As notas que dás só o organizador as vê. Para apagares tudo, pede ao organizador do grupo.</p>
     <details style="margin-top:12px"><summary>🔑 Mudar o meu PIN</summary>
@@ -263,7 +625,7 @@ function editarPerfil(eu, todos) {
     eu.alias = alias; eu.fotoPropria = fotoP === '-' ? '' : fotoP;
     if (fotoP === '-') { eu.foto = ''; eu.semFoto = true; }
     lsSet('perfil-ok-' + eu.id, '1');
-    seguir(eu, todos);
+    if (depois) depois(); else seguir(eu, todos);
   };
 }
 
@@ -530,16 +892,256 @@ function htmlElo(elo, ligado) {
     <div class="mute">${txt}${j && !ligado ? ' O ajuste pelo Elo ainda não está ligado.' : ''} Não mexe na carta.</div></div></div>`;
 }
 
-// Perfil do jogador (com PIN): a sua carta com setas do último mês, a evolução, os seus jogos e as estatísticas.
+// =====================================================================
+// PERFIL DO JOGADOR  (#jogador=<id> e 👤 Eu) — cabeçalho ao estilo zerozero/FotMob e separadores
+// Público: só nome, foto, jogos, golos, assistências, resultados e a carta se o Rui as publicou.
+// O próprio (com PIN): também a carta pessoal, a idade/altura/peso, o pé com que marca e os dados físicos.
+// =====================================================================
+async function paginaJogador(id) {
+  titulo('Jogador');
+  $app.innerHTML = '<div id="pub"><p class="mute">A carregar…</p></div>';
+  const [players, perfis] = await Promise.all([DB.listPlayers(), DB.listPerfis()]);
+  const todos = juntarPerfis(players, perfis);
+  const p = todos.find((x) => x.id === id);
+  if (!p) { document.getElementById('pub').innerHTML = vazio('🤷', 'Este jogador não existe.', '<a class="btn" href="#jogadores">Ver os jogadores</a>'); return; }
+  // O meu próprio perfil (PIN válido neste telemóvel) abre como no 👤 Eu.
+  if (lsGet('meu-perfil') === id && lsGet('perfil-ok-' + id) && (await DB.ligacaoOk(id))) {
+    A.pubTab = 'eu';
+    return perfilEu(p, todos.filter((x) => x.ativo !== false && !x.convidado));
+  }
+  const [jogosPub, pub] = await Promise.all([DB.listJogosPub(), DB.getPublic('cartas')]);
+  renderPerfil(document.getElementById('pub'), p, { todos, res: lerRes(jogosPub), pub });
+}
+
+// Carta publicada pelo Rui (Jogadores › Cartas): as cartas públicas não têm id, liga-se pelo nome.
+const cartaPublica = (pub, p) => (pub?.visivel ? pub.cartas?.find((x) => x.p.nome === p.nome)?.c || null : null);
+const NOME_POS = Object.fromEntries(POSICOES.map((x) => [x.k, x.nome]));
+
+// Jogos de um jogador (mais recente primeiro) com o lado, o resultado e o que fez.
+function jogosDe(id, res) {
+  return res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === id)).map((r) => {
+    const j = r.jogo, lado = (j.brancos || []).some((x) => x.id === id) ? 'B' : 'P';
+    const v = vencedorDe(j), ev = j.eventos || [];
+    return { id: r.id, j, lado, r: v === 'E' ? 'E' : v === lado ? 'V' : 'D',
+      g: ev.filter((e) => e.tipo !== 'autogolo' && e.marcador === id).length, a: ev.filter((e) => e.assist === id).length,
+      gr: (j.turnos || []).some((t) => t.jogador === id) };
+  });
+}
+// Percentil de um valor no plantel (0–100): quantos estão abaixo (empates contam metade).
+function percentil(v, todos, maiorMelhor = true) {
+  const L = todos.filter((x) => x != null);
+  if (v == null || L.length < 2 || L.every((x) => x === L[0])) return null;   // sem variação (ex.: ninguém com trocas de GR): não há comparação
+  const abaixo = L.filter((x) => (maiorMelhor ? x < v : x > v)).length, iguais = L.filter((x) => x === v).length - 1;
+  return Math.round(((abaixo + iguais / 2) / (L.length - 1)) * 100);
+}
+
+// d = { todos, res, pub, proprio?, estado?, mc?, saude?, treinos?, pedido?, carta? }
+function renderPerfil(el, p, d) {
+  const proprio = !!d.proprio;
+  titulo(proprio ? 'O meu perfil' : nomeDe(p));
+  const meus = jogosDe(p.id, d.res);
+  const S = estatisticas(d.res).map(comMedias), s = S.find((x) => x.id === p.id);
+  const m = s || comMedias({ j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0 });
+  // Carta visível: a pública (se o Rui publicou as cartas); o próprio vê a pessoal quando o Rui as mostrar.
+  const cartaVis = (proprio && d.estado?.cartasPessoais ? d.mc?.carta : null) || cartaPublica(d.pub, p);
+  const pos = cartaVis?.posicao || null;
+  const nB = meus.filter((x) => x.lado === 'B').length, nP = meus.length - nB;
+  const equipa = meus.length ? (nB >= nP ? 'B' : 'P') : null;
+  const idade = proprio && d.saude ? idadeDe(d.saude.ano) : null;
+  const est = estatuto(p, meus, d.res);
+  const chips = [
+    est ? `<span class="pchip">${est.ic} ${est.nome}</span>` : '',
+    pos ? `<span class="pchip">${esc(pos)} · ${esc(NOME_POS[pos] || '')}</span>` : '',
+    equipa ? `<span class="pchip">${LOGO[equipa]} ${equipa === 'B' ? 'Brancos' : 'Pretos'} <small>${equipa === 'B' ? nB : nP}/${meus.length}</small></span>` : '',
+    p.moderador ? '<span class="pchip">🛡 Moderador</span>' : '', p.convidado ? '<span class="pchip">Convidado</span>' : '',
+    idade ? `<span class="pchip priv" title="Só tu vês">🔒 ${idade} anos</span>` : '',
+  ].join('');
+  const real = nomeDe(p) !== p.nome ? `<div class="pnome-real">${esc(p.nome)}</div>` : '';
+  const acoes = proprio ? `<div class="pacoes"><a class="btn peq prim" href="#votar">🗳 Votar nos colegas</a><a class="btn peq" href="#definicoes">⚙ Definições</a></div>` : '';
+  const cab = `<section class="pcab"><div class="pcab-relva">
+      <div class="pfoto">${foto(p)}</div>
+      <div class="pinfo"><h1>${esc(nomeDe(p))}</h1>${real}<div class="pchips">${chips}</div></div></div>
+    <div class="pnums"><div><b>${m.j}</b><span>Jogos</span></div><div><b>${m.g}</b><span>Golos</span></div><div><b>${m.a}</b><span>Assist.</span></div><div><b>${m.j ? Math.round(m.pv * 100) + '%' : '–'}</b><span>Vitórias</span></div></div>
+    ${acoes}</section>`;
+  const abas = [['geral', 'Resumo'], ['jogos', `Jogos${meus.length ? ` (${meus.length})` : ''}`], ['stats', 'Estatísticas'], ...(proprio ? [['fis', '🔒 Físico']] : [])];
+  if (!abas.some(([k]) => k === A.pAba)) A.pAba = 'geral';
+  el.innerHTML = `${cab}<div class="tabs ptabs" role="tablist">${abas.map(([k, n]) => `<button role="tab" data-pa="${k}" class="${A.pAba === k ? 'on' : ''}" aria-selected="${A.pAba === k}">${n}</button>`).join('')}</div>
+    <div data-painel="geral" ${A.pAba === 'geral' ? '' : 'hidden'}>${painelGeral(p, d, meus, m, proprio, S, cartaVis, est)}</div>
+    <div data-painel="jogos" ${A.pAba === 'jogos' ? '' : 'hidden'}>${painelJogos(p, d, meus, proprio)}</div>
+    <div data-painel="stats" ${A.pAba === 'stats' ? '' : 'hidden'}>${painelStats(p, S, m, proprio)}</div>
+    ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}><div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 só tu e o Rui</span></div><div id="eu-form"></div>
+      ${blocoFisico(d.saude, d.treinos, meus.map((x) => ({ id: x.id, jogo: x.j })), false)}</div></div>` : ''}`;
+  const mostrar = (k) => {
+    A.pAba = k;
+    el.querySelectorAll('[data-pa]').forEach((b) => { b.classList.toggle('on', b.dataset.pa === k); b.setAttribute('aria-selected', b.dataset.pa === k); });
+    el.querySelectorAll('[data-painel]').forEach((x) => (x.hidden = x.dataset.painel !== k));
+  };
+  el.querySelectorAll('[data-pa]').forEach((b) => (b.onclick = () => mostrar(b.dataset.pa)));
+  el.querySelectorAll('[data-ir]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); mostrar(b.dataset.ir); window.scrollTo(0, 0); }));
+  return { mostrar, meus };
+}
+
+// Estatuto pela presença: quantos dos jogos registados desde o 1.º jogo dele é que jogou.
+function estatuto(p, meus, res) {
+  if (!meus.length) return null;
+  const desde = meus.at(-1).j.inicioEpoch || 0;
+  const total = res.filter((r) => (r.jogo.inicioEpoch || 0) >= desde).length || 1;
+  const pc = meus.length / total;
+  const [ic, nome] = pc >= 0.75 ? ['⭐', 'Habitual'] : pc >= 0.4 ? ['🔁', 'Regular'] : ['🕐', 'Ocasional'];
+  return { ic, nome, pc, total, desde };
+}
+
+// Recordes e parcerias, só com os jogos registados (públicos): séries, máximos, com quem joga melhor, quem lhe dá golos.
+function recordes(p, meus) {
+  const cron = [...meus].reverse();
+  const serie = (f) => { let best = 0, cur = 0; for (const x of cron) { cur = f(x) ? cur + 1 : 0; best = Math.max(best, cur); } return best; };
+  const comGolos = cron.filter((x) => (x.j.eventos || []).length && !x.j.semGolos);
+  let serieMarcar = 0, cur = 0;
+  for (const x of comGolos) { cur = x.g > 0 ? cur + 1 : 0; serieMarcar = Math.max(serieMarcar, cur); }
+  const maxG = meus.reduce((b, x) => (x.g > (b?.g || 0) ? x : b), null);
+  // Colegas de equipa (mesmo lado) e adversários, com o resultado.
+  const par = {}, contra = {}, deu = {}, recebeu = {};
+  for (const x of meus) {
+    const meusLado = x.lado === 'B' ? x.j.brancos : x.j.pretos, outros = x.lado === 'B' ? x.j.pretos : x.j.brancos;
+    for (const q of meusLado || []) if (q.id !== p.id) { const o = (par[q.id] ||= { nome: q.nome, j: 0, v: 0 }); o.j++; if (x.r === 'V') o.v++; }
+    for (const q of outros || []) { const o = (contra[q.id] ||= { nome: q.nome, j: 0, v: 0 }); o.j++; if (x.r === 'V') o.v++; }
+    for (const e of x.j.eventos || []) {
+      if (e.assist === p.id && e.marcador) { const o = (deu[e.marcador] ||= { nome: (x.j.brancos || []).concat(x.j.pretos || []).find((y) => y.id === e.marcador)?.nome, n: 0 }); o.n++; }
+      if (e.marcador === p.id && e.assist && e.tipo !== 'autogolo') { const o = (recebeu[e.assist] ||= { nome: (x.j.brancos || []).concat(x.j.pretos || []).find((y) => y.id === e.assist)?.nome, n: 0 }); o.n++; }
+    }
+  }
+  const melhor = (o, f) => Object.entries(o).filter(([, v]) => v.j >= 3).sort((a, b) => f(b[1]) - f(a[1]) || b[1].j - a[1].j)[0];
+  const top = (o) => Object.entries(o).sort((a, b) => b[1].n - a[1].n)[0];
+  return { vit: serie((x) => x.r === 'V'), invicto: serie((x) => x.r !== 'D'), serieMarcar, maxG,
+    parceiro: melhor(par, (v) => v.v / v.j), maisJuntos: Object.entries(par).sort((a, b) => b[1].j - a[1].j)[0],
+    dificil: melhor(contra, (v) => -v.v / v.j), deu: top(deu), recebeu: top(recebeu) };
+}
+
+// Pontos fortes: as melhores áreas da carta (só se a carta estiver visível) e o que os números dizem face ao plantel.
+function pontosFortes(p, m, S, carta, est) {
+  const L = [];
+  if (carta?.stats) {
+    const top = AREAS.filter((a) => carta.stats[a.k] != null).sort((a, b) => carta.stats[b.k] - carta.stats[a.k]).slice(0, 2);
+    for (const a of top) L.push(['🃏', `${a.nome} ${Math.round(carta.stats[a.k] * 10)}`, 'uma das melhores áreas da carta']);
+  }
+  if (m.j >= 3) {
+    const pop = S.filter((x) => x.j >= 3);
+    const pc = (v, arr, maior = true) => percentil(v, arr, maior);
+    const g = pc(m.gj, pop.map((x) => x.gj)), a = pc(m.a / m.j, pop.map((x) => x.a / x.j)), v = pc(m.pv, pop.map((x) => x.pv));
+    const gr = m.jGR >= 2 ? pc(m.sofr10, pop.filter((x) => x.jGR >= 2).map((x) => x.sofr10), false) : null;
+    if (g >= 75) L.push(['⚽', 'Goleador', `${fmtStat('gj', m.gj, m)} golos por jogo — melhor do que ${g}% do plantel`]);
+    if (a >= 75 && m.a) L.push(['🅰️', 'Assistente', `${n1(m.a / m.j, 1)} assistências por jogo — melhor do que ${a}% do plantel`]);
+    if (v >= 75) L.push(['🏆', 'Ganhador', `${Math.round(m.pv * 100)}% de vitórias — melhor do que ${v}% do plantel`]);
+    if (gr >= 75) L.push(['🧤', 'Seguro na baliza', `${fmtStat('sofr10', m.sofr10, m)} golos sofridos por 10 min — melhor do que ${gr}% do plantel`]);
+  }
+  if (est?.pc >= 0.8 && est.total >= 4) L.push(['📅', 'Sempre presente', `jogou ${Math.round(est.pc * 100)}% dos jogos desde que entrou`]);
+  return L;
+}
+
+function painelGeral(p, d, meus, m, proprio, S, cartaVis, est) {
+  // Última partida
+  const u = meus[0];
+  const ultima = u ? (() => {
+    const outro = u.lado === 'B' ? 'P' : 'B';
+    const fez = [u.g && `⚽ ${u.g} golo${u.g > 1 ? 's' : ''}`, u.a && `🅰️ ${u.a} assist.`, u.gr && '🧤 esteve na baliza'].filter(Boolean).join(' · ');
+    return `<section class="cartao ultima"><div class="cartao-tit">Última partida<a href="#jogo=${esc(u.id)}">Ver o jogo →</a></div>
+      <a class="up" href="#jogo=${esc(u.id)}"><span class="res res-${u.r}">${u.r}</span><span class="up-placar">${LOGO[u.lado]}<b>${marcaDe(u.j, u.lado)} – ${marcaDe(u.j, outro)}</b>${LOGO[outro]}</span>
+        <span class="up-data">${esc(diaSemana(u.j))} ${esc(dataDe(u.j))}</span></a>
+      <p class="up-fez">${fez || '<span class="mute">Sem golos nem assistências neste jogo.</span>'}</p></section>`;
+  })() : '';
+  const forma = meus.slice(0, 5).reverse();
+  const formaH = forma.length ? `<section class="cartao"><div class="cartao-tit">Forma <small class="mute">últimos ${forma.length} · mais recente à direita</small></div>
+    <div class="forma">${forma.map((x) => `<a class="fj" href="#jogo=${esc(x.id)}"><span class="res res-${x.r}">${x.r}</span><small>${marcaDe(x.j, x.lado)}–${marcaDe(x.j, x.lado === 'B' ? 'P' : 'B')}</small><small class="mute">${esc(dataDe(x.j).slice(0, 5))}</small></a>`).join('')}</div></section>` : '';
+  // Estatuto
+  const estH = est ? `<section class="cartao estatuto"><div class="cartao-tit">Estatuto</div><div class="est"><span class="est-ic">${est.ic}</span><div><b>${est.nome}</b>
+      <small class="mute">jogou ${meus.length} dos ${est.total} jogos desde o 1.º jogo registado (${esc(new Date(est.desde).toLocaleDateString('pt-PT'))})</small></div>
+      <span class="est-pc">${Math.round(est.pc * 100)}%</span></div><div class="pbar-b"><i class="alto" style="width:${Math.round(est.pc * 100)}%"></i></div></section>` : '';
+  // Pontos fortes
+  const pf = pontosFortes(p, m, S, cartaVis, est);
+  const pfH = meus.length ? `<section class="cartao"><div class="cartao-tit">Pontos fortes</div>${pf.length ? `<ul class="pfortes">${pf.map(([ic, t, sub]) => `<li><span>${ic}</span><div><b>${esc(t)}</b><small class="mute">${esc(sub)}</small></div></li>`).join('')}</ul>`
+    : `<p class="mute" style="margin:0">${m.j < 3 ? 'Precisa de pelo menos 3 jogos para se destacarem pontos fortes.' : 'Nada acima de 75% do plantel por agora.'}${cartaVis ? '' : ' As áreas da carta entram aqui quando as cartas forem mostradas.'}</p>`}</section>` : '';
+  // Recordes e parcerias
+  const R = meus.length ? recordes(p, meus) : null;
+  const lk = (e) => (e ? `<a class="lnk-j" href="#jogador=${esc(e[0])}">${esc(e[1].nome || '?')}</a>` : '–');
+  const recH = R ? `<section class="cartao"><div class="cartao-tit">Recordes e parcerias</div><table class="tficha">
+      ${R.maxG?.g ? `<tr><th>Mais golos num jogo</th><td>${R.maxG.g} <small class="mute">(${esc(dataDe(R.maxG.j))})</small></td></tr>` : ''}
+      <tr><th>Maior série de vitórias</th><td>${R.vit}</td></tr><tr><th>Jogos seguidos sem perder</th><td>${R.invicto}</td></tr>
+      ${R.serieMarcar ? `<tr><th>Jogos seguidos a marcar</th><td>${R.serieMarcar}</td></tr>` : ''}
+      ${R.maisJuntos ? `<tr><th>Mais jogos na mesma equipa com</th><td>${lk(R.maisJuntos)} <small class="mute">(${R.maisJuntos[1].j})</small></td></tr>` : ''}
+      ${R.parceiro ? `<tr><th>Melhor parceiro <small class="mute">(3+ jogos)</small></th><td>${lk(R.parceiro)} <small class="mute">(${Math.round((R.parceiro[1].v / R.parceiro[1].j) * 100)}% vit.)</small></td></tr>` : ''}
+      ${R.dificil ? `<tr><th>Adversário mais difícil</th><td>${lk(R.dificil)} <small class="mute">(${Math.round((R.dificil[1].v / R.dificil[1].j) * 100)}% vit.)</small></td></tr>` : ''}
+      ${R.recebeu ? `<tr><th>Quem mais lhe passou para golo</th><td>${lk(R.recebeu)} <small class="mute">(${R.recebeu[1].n})</small></td></tr>` : ''}
+      ${R.deu ? `<tr><th>A quem mais deu golos</th><td>${lk(R.deu)} <small class="mute">(${R.deu[1].n})</small></td></tr>` : ''}</table></section>` : '';
+  // Ficha de dados: públicos para todos; idade, altura, peso e pé só para o próprio.
+  const ult1 = meus.at(-1);
+  const linhas = [['Nome', esc(p.nome)], nomeDe(p) !== p.nome ? ['Tratado por', esc(nomeDe(p))] : null,
+    ult1 ? ['Primeiro jogo registado', esc(dataDe(ult1.j))] : null, ['Jogos registados', meus.length]];
+  if (proprio) {
+    const sd = d.saude, pk = (sd?.pesos || []).at(-1);
+    if (sd) linhas.push(['Idade', idadeDe(sd.ano) ? idadeDe(sd.ano) + ' anos' : '–', 1], ['Altura', sd.altura ? n1(sd.altura) + ' cm' : '–', 1], ['Peso', pk ? n1(pk.kg, 1) + ' kg' : '–', 1]);
+    if (m.pd || m.pe) linhas.push(['Pé com que marca', `${m.pd >= m.pe ? 'direito' : 'esquerdo'} <small class="mute">(dir. ${m.pd} · esq. ${m.pe}${m.cab ? ` · cabeça ${m.cab}` : ''})</small>`, 1]);
+  }
+  const ficha = `<section class="cartao"><div class="cartao-tit">Dados pessoais</div><table class="tficha">${linhas.filter(Boolean).map(([k, v, priv]) => `<tr><th>${k}${priv ? ' <span title="Só tu vês">🔒</span>' : ''}</th><td>${v}</td></tr>`).join('')}</table>
+    ${proprio ? `<p class="mute" style="font-size:12px;margin:8px 0 0">🔒 = só tu (e o Rui) vês.${d.saude ? '' : ' A idade, a altura e o peso aparecem quando ativares os dados físicos (separador 🔒 Físico).'} Para mudar a alcunha, a foto ou o PIN: <a href="#definicoes">⚙ Definições</a>.</p>` : ''}</section>`;
+  // Carta de jogador
+  let carta = '';
+  if (proprio) carta = `<section class="cartao">${d.carta}</section>`;
+  else if (cartaVis) carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><div class="eu-carta">${htmlCarta(p, cartaVis)}</div></section>`;
+  else carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><p class="mute" style="margin:0">As cartas ainda estão escondidas — aparecem quando o Rui as mostrar.</p></section>`;
+  const sem = !meus.length ? `<div class="cartao">${vazio('⚽', 'Ainda sem jogos registados.')}</div>` : '';
+  return `${proprio ? d.pedido || '' : ''}<div class="grelha2"><div>${sem}${ultima}${formaH}${pfH}${recH}${estH}${ficha}</div><aside>${carta}</aside></div>`;
+}
+
+// Uma linha de jogo (estilo lista de partidas da FotMob); abre para ver os golos e as equipas.
+function linhaJogo(x, id, extra = '', aberto = false, proprio = false) {
+  const j = x.j, outro = x.lado === 'B' ? 'P' : 'B';
+  const fez = [x.g && `⚽${x.g > 1 ? '×' + x.g : ''}`, x.a && `🅰️${x.a > 1 ? '×' + x.a : ''}`, x.gr && '🧤'].filter(Boolean).join(' ');
+  const eq = (e) => (e === 'B' ? j.brancos : j.pretos || []).map((q) => (q.id === id ? `<b class="eu-nome">${esc(q.nome)}</b>` : `<a href="#jogador=${esc(q.id)}">${esc(q.nome)}</a>`)).join('<br>');
+  return `<details class="hj"${aberto ? ' open' : ''}><summary><span class="res res-${x.r}">${x.r}</span><span class="hj-data">${esc(dataDe(j))}</span>
+      <span class="hj-placar">${LOGO[x.lado]}<b>${marcaDe(j, x.lado)} – ${marcaDe(j, outro)}</b>${LOGO[outro]}</span><span class="hj-fez">${fez}</span></summary>
+    <div class="hj-corpo"><a class="hj-ver" href="#jogo=${esc(x.id)}">Ver o jogo completo →</a>${extra}<div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${eq('B')}</div><div class="eq preto"><h4>${LOGO.P} Pretos</h4>${eq('P')}</div></div>
+      ${linhasEventos(j, proprio ? id : null)}</div></details>`;
+}
+function painelJogos(p, d, meus, proprio) {
+  if (!meus.length) return `<div class="cartao">${vazio('⚽', 'Ainda sem jogos registados.')}</div>`;
+  return `<section class="cartao lista-hj">${meus.map((x, i) => linhaJogo(x, p.id, proprio ? extraTreino(x.id, d.treinos, d.saude, false) : '', i === 0, proprio)).join('')}</section>`;
+}
+
+// Estatísticas: números principais, barras de percentil face ao plantel e a tabela completa.
+function painelStats(p, S, m, proprio) {
+  if (!m.j) return `<div class="cartao">${vazio('📊', 'As estatísticas aparecem depois do primeiro jogo registado.')}</div>`;
+  const comJ = S.filter((x) => x.j > 0);
+  const barras = [
+    ['Golos por jogo', m.gj, comJ.map((x) => x.gj), (v) => fmtStat('gj', v, m)],
+    ['Assistências por jogo', m.j ? m.a / m.j : null, comJ.map((x) => x.a / x.j), (v) => n1(v, 1)],
+    ['Vitórias', m.pv, comJ.map((x) => x.pv), (v) => Math.round(v * 100) + '%'],
+    ['Pontos por jogo', m.pts / m.j, comJ.map((x) => x.pts / x.j), (v) => n1(v, 1)],
+    ['Min. na baliza por jogo', m.grJ, comJ.map((x) => x.grJ), (v) => fmtStat('grJ', v, m)],
+    ['Sofridos por 10 min na baliza', m.sofr10, comJ.map((x) => x.sofr10), (v) => fmtStat('sofr10', v, m), false],
+  ].map(([nome, v, todos, f, maior = true]) => {
+    const pc = percentil(v, todos, maior);
+    if (v == null || pc == null) return '';
+    const cor = pc >= 67 ? 'alto' : pc >= 34 ? 'medio' : 'baixo';
+    return `<div class="pbar"><div class="pbar-t"><span>${nome}</span><b>${f(v)}</b></div><div class="pbar-b"><i class="${cor}" style="width:${Math.max(4, pc)}%"></i></div><small class="mute">melhor do que ${pc}% do plantel</small></div>`;
+  }).join('');
+  const TOP = ['j', 'pts', 'pv', 'g', 'a', 'gj'];
+  // O pé com que marca só para o próprio (decisão do Rui, 21/10).
+  const resto = COLS_STATS.filter(([k]) => !TOP.includes(k) && (proprio || !PES.includes(k)));
+  return `<div class="destaques">${TOP.map((k) => `<span><b>${fmtStat(k, m[k], m)}</b>${{ pv: '% vitórias', j: 'Jogos', pts: 'Pontos', gj: 'Golos/jogo' }[k] || COLS_STATS.find(([c]) => c === k)[1]}</span>`).join('')}</div>
+    <div class="grelha2" style="margin-top:12px"><section class="cartao"><div class="cartao-tit">Comparado com o plantel <small class="mute">${comJ.length} jogadores</small></div>${barras}</section>
+    <section class="cartao"><div class="cartao-tit">Tudo</div><table class="tficha">${resto.map(([k, n]) => `<tr><th>${n}${PES.includes(k) ? ' 🔒' : ''}</th><td>${fmtStat(k, m[k], m)}</td></tr>`).join('')}</table>
+      <p class="mute" style="font-size:12px;margin:8px 0 0">G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.${proprio ? ' 🔒 = só tu vês.' : ''}</p></section></div>`;
+}
+
+// Perfil do próprio (com PIN): o mesmo perfil, mais a carta pessoal, a votação, o Elo e os dados físicos.
 // Nunca mostra quem votou nem as notas de cada um — só a carta final, calculada pelo admin.
 async function perfilEu(eu, todos) {
   const $app = document.getElementById('pub') || document.getElementById('app');
+  confirmarModerador();   // acabou de entrar com o PIN: mostra o separador 🛡 se for moderador
   $app.innerHTML = '<p class="mute">A carregar…</p>';
-  const [estado, mc, jogosPub, saude, treinos] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub(),
-    DB.getSaude(eu.id).catch(() => null), DB.listTreinos(eu.id).catch(() => [])]);
-  const res = jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim');
-  const meus = res.filter((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === eu.id))
-    .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
+  const [estado, mc, jogosPub, saude, treinos, pub, players, perfis] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub(),
+    DB.getSaude(eu.id).catch(() => null), DB.listTreinos(eu.id).catch(() => []), DB.getPublic('cartas'), DB.listPlayers(), DB.listPerfis()]);
+  const res = lerRes(jogosPub);
   const d = mc?.ref || null;   // carta antes do último jogo: { ov, st, data }
   // Pedido para votar nos novos / atualizar notas.
   let pedido = '';
@@ -558,26 +1160,22 @@ async function perfilEu(eu, todos) {
   }
   let carta;
   // Cartas escondidas: a mesma carta com tudo a 0 (fictícia) — quando o Rui as mostrar, só mudam os valores.
-  if (!estado?.cartasPessoais) carta = `<div class="eu-carta">${htmlCarta(eu, { ficticia: true, overall: 0, stats: Object.fromEntries(AREAS.map((a) => [a.k, 0])) })}</div>
+  if (!estado?.cartasPessoais) carta = `<div class="cartao-tit">Carta de jogador <span class="tag">🔒 só tu</span></div><div class="eu-carta">${htmlCarta(eu, { ficticia: true, overall: 0, stats: Object.fromEntries(AREAS.map((a) => [a.k, 0])) })}</div>
     <p class="mute" style="text-align:center">Carta fictícia — os valores reais aparecem quando o Rui mostrar as cartas.</p>`;
-  else if (!mc?.carta) carta = '<div class="opcao"><b>A tua carta</b><p class="mute">Ainda não há carta para ti (faltam votos).</p></div>';
-  else carta = `<div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
+  else if (!mc?.carta) carta = '<div class="cartao-tit">Carta de jogador</div><p class="mute">Ainda não há carta para ti (faltam votos).</p>';
+  else carta = `<div class="cartao-tit">Carta de jogador <span class="tag">🔒 só tu</span></div><div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
     ${htmlMudanca(mc)}
     <p class="mute" style="text-align:center">${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
   carta += htmlElo(mc?.elo, !!estado?.usarElo);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
-  $app.innerHTML = `<div class="linha mute" style="justify-content:space-between"><span>Olá, ${esc(nomeDe(eu))}</span>
-      <span><a href="#" id="eu-perfil" style="color:inherit">editar perfil / PIN</a> · <a href="#" id="eu-votar" style="color:inherit">votar</a></span></div>
-    ${pedido}${carta}
-    <h3>Os teus jogos (${meus.length})</h3>
-    ${meus.length ? meus.map((r, i) => resumoJogo(r.jogo, eu.id, i === 0, extraTreino(r.id, treinos, saude, false))).join('') : '<p class="mute">Ainda não tens jogos registados.</p>'}
-    <h3>As tuas estatísticas</h3><div id="eu-stats"></div>
-    <h3>🩺 Dados físicos e relógio</h3><div id="eu-form"></div>${blocoFisico(saude, treinos, meus, false)}`;
-  ligarFisico(eu, todos, saude, treinos, meus);
-  minhasStats(document.getElementById('eu-stats'), res, eu.id);
-  document.getElementById('eu-perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
-  document.getElementById('eu-votar')?.addEventListener('click', (e) => { e.preventDefault(); A.pubTab = 'votar'; paginaInicio(); });
-  document.getElementById('eu-pedido')?.addEventListener('click', () => { A.pubTab = 'votar'; paginaInicio(); });
+  const tudo = juntarPerfis(players, perfis);
+  const { meus } = renderPerfil($app, eu, { todos: tudo, res, pub, proprio: true, estado, mc, saude, treinos, pedido, carta });
+  ligarFisico(eu, todos, saude, treinos, meus.map((x) => ({ id: x.id, jogo: x.j })));
+  // "Juntar treino do relógio" num jogo: o formulário está no separador Físico.
+  $app.querySelectorAll('[data-tr]').forEach((b) => b.addEventListener('click', () => {
+    $app.querySelector('[data-pa="fis"]').click(); document.getElementById('eu-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  document.getElementById('eu-pedido')?.addEventListener('click', () => { location.hash = '#votar'; });
 }
 
 // Todos os jogadores numa lista com todas as áreas. "Não conheço" ou "OK" fecham o jogador numa linha
@@ -590,9 +1188,13 @@ async function votar(eu, todos) {
   const jogos = jogosPub.map((x) => { try { return JSON.parse(x.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
   const juntos = contarConvivio(jogos)[eu.id] || {};
   const atualizar = new Set(paraAtualizar(eu.id, r, meuVoto?.ts, jogos).map((x) => x.id));
+  // Vindo do Início ("ajustar os do último jogo"): só os colegas desse jogo.
+  const jSo = A.votarJogo ? jogosPub.find((x) => x.id === A.votarJogo) : null;
+  const jogoSo = jSo ? JSON.parse(jSo.json || '{}') : null;
+  const so = jogoSo ? new Set([...(jogoSo.brancos || []), ...(jogoSo.pretos || [])].map((x) => x.id)) : null;
   // Os que ainda não têm nota minha (jogadores novos) vêm primeiro; depois por jogos juntos.
   const novos = new Set(porVotar(eu.id, r, todos).map((p) => p.id));
-  const alvos = todos.filter((p) => p.id !== eu.id)
+  const alvos = todos.filter((p) => p.id !== eu.id && (!so || so.has(p.id)))
     .sort((a, b) => novos.has(b.id) - novos.has(a.id) || (juntos[b.id] || 0) - (juntos[a.id] || 0) || nomeDe(a).localeCompare(nomeDe(b), 'pt'));
   let filtro = 'todos';
   const abertos = new Set();          // abertos à mão depois de fechados
@@ -672,7 +1274,7 @@ async function votar(eu, todos) {
     $app.innerHTML = `
       <div class="vcab">
         <div class="linha mute" style="justify-content:space-between"><span id="v-cont"></span>
-          <span>Olá, ${esc(nomeDe(eu))} · <a href="#" id="perfil" style="color:inherit">perfil</a></span></div>
+          <span>${so ? `Colegas do jogo de ${esc(dataDe(jogoSo))} · <a href="#votar" style="color:inherit">votar em todos</a>` : `Olá, ${esc(nomeDe(eu))}`}</span></div>
         <div class="prog"><i id="v-prog"></i></div>
         <div class="atabs"><button class="${filtro === 'todos' ? 'on' : ''}" data-f="todos">Todos</button>
           ${AREAS.map((a) => `<button class="${filtro === a.k ? 'on' : ''}" data-f="${a.k}">${a.nome}</button>`).join('')}</div>
@@ -681,7 +1283,6 @@ async function votar(eu, todos) {
       <div id="lista">${alvos.map(cartao).join('')}</div>
       <button class="prim" id="fim" style="width:100%;margin-top:10px">Terminar</button>`;
     atualizarTopo();
-    document.getElementById('perfil').onclick = (e) => { e.preventDefault(); editarPerfil(eu, todos); };
     $app.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { filtro = b.dataset.f; render(); }));
     $app.querySelectorAll('#lista .vrow').forEach(ligar);
     document.getElementById('fim').onclick = fim;
@@ -713,14 +1314,6 @@ function htmlCarta(p, c, d = null) {
   </div>`;
 }
 
-async function paginaCartas() {
-  const pub = await DB.getPublic('cartas');
-  if (!pub?.visivel) return paginaInicio();
-  document.getElementById('titulo').textContent = 'Cartas';
-  const lista = [...pub.cartas].sort((a, b) => (b.c.overall ?? 0) - (a.c.overall ?? 0));
-  $app.innerHTML = `<h2>Cartas dos jogadores</h2><div class="cartas">${lista.map((x) => htmlCarta(x.p, x.c)).join('')}</div>`;
-}
-
 // =====================================================================
 // ADMIN  (#admin)
 // =====================================================================
@@ -740,6 +1333,7 @@ async function paginaAdmin() {
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
   publicarCartasPessoais().catch((e) => console.error(e));
+  publicarPosicoes().catch((e) => console.error(e));
 }
 async function recarregar() {
   let perfis;
@@ -842,14 +1436,46 @@ async function publicarRetrato() {
   })) });
 }
 
+// Ícones de traço (o mesmo desenho da barra de navegação) para o menu do admin.
+const ICA = {
+  plantel: '<path d="M8.5 3 4 5 2.5 10l3 1V21h13V11l3-1L20 5l-4.5-2a3.5 3.5 0 0 1-7 0z"/>',
+  equipas: '<path d="M12 3v18M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0zM8 21h8"/>',
+  jogos: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
+  elo: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  saude: '<path d="M20.4 5.6a5 5 0 0 0-7.1 0L12 6.9l-1.3-1.3a5 5 0 0 0-7.1 7.1L12 21l8.4-8.3a5 5 0 0 0 0-7.1z"/><path d="M3.5 12h4l1.5-3 3 6 1.5-3h7"/>',
+  tickets: '<path d="M8 7.5V6a4 4 0 0 1 8 0v1.5"/><rect x="6.5" y="7.5" width="11" height="12.5" rx="5.5"/><path d="M12 11v9M3 12h3.5M17.5 12H21"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+};
+const ic = (k) => `<svg class="ica" viewBox="0 0 24 24" aria-hidden="true">${ICA[k]}</svg>`;
+// Menu do admin por grupos: no computador, lista de cima para baixo à esquerda; no telemóvel, os grupos em cima e as secções por baixo.
+const MENU_ADMIN = [
+  ['Plantel', [['jog', 'Plantel e cartas', 'plantel']]],
+  ['Jogo', [['equipas', 'Equipas', 'equipas'], ['jogos', 'Jogos', 'jogos']]],
+  ['Dados', [['stats', 'Elo', 'elo'], ['saude', 'Saúde', 'saude']]],
+  ['Sistema', [['tickets', 'Tickets', 'tickets'], ['part', 'Link de colaborador', 'link']]],
+];
 function renderAdmin() {
-  const tabs = [['jog', 'Jogadores'], ['vot', 'Votação'], ['cartas', 'Cartas'], ['equipas', 'Equipas'], ['jogos', 'Jogos'], ['stats', 'Estatísticas'], ['saude', 'Saúde'], ['tickets', '🐞 Tickets'], ['part', 'Partilhar']];
-  $app.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, n]) => `<button role="tab" aria-selected="${A.tab === k}" data-t="${k}" class="${A.tab === k ? 'on' : ''}">${n}</button>`).join('')}</div><div id="sec"></div>`;
-  $app.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => { A.tab = b.dataset.t; renderAdmin(); }));
+  if (A.tab === 'cartas') A.tab = 'jog';   // as Cartas passaram para o Plantel
+  if (A.tab === 'vot') { A.tab = 'jog'; A.plVista = 'votacao'; }   // e a Votação também
+  const grupo = MENU_ADMIN.find(([, L]) => L.some(([k]) => k === A.tab)) || MENU_ADMIN[0];
+  A.ultimoDoGrupo ||= {};
+  A.ultimoDoGrupo[grupo[0]] = A.tab;
+  const botao = (k, n, i) => `<button role="tab" aria-selected="${A.tab === k}" data-t="${k}" class="${A.tab === k ? 'on' : ''}">${ic(i)}<span>${n}</span></button>`;
+  $app.innerHTML = `<div class="adm">
+    <nav class="amenu-d" aria-label="Secções do admin">${MENU_ADMIN.map(([g, L]) => `<div class="ag"><div class="agt">${g}</div>${L.map(([k, n, i]) => botao(k, n, i)).join('')}</div>`).join('')}</nav>
+    <div class="acorpo">
+      <div class="amenu-m"><div class="seg" role="tablist">${MENU_ADMIN.map(([g]) => `<button data-g="${g}" class="${g === grupo[0] ? 'on' : ''}">${g}</button>`).join('')}</div>
+        ${grupo[1].length > 1 ? `<div class="tabs" role="tablist">${grupo[1].map(([k, n, i]) => botao(k, n, i)).join('')}</div>` : ''}</div>
+      <div id="sec"></div></div></div>`;
+  $app.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { A.tab = b.dataset.t; renderAdmin(); }));
+  $app.querySelectorAll('[data-g]').forEach((b) => (b.onclick = () => {
+    const L = MENU_ADMIN.find(([g]) => g === b.dataset.g)[1];
+    A.tab = A.ultimoDoGrupo[b.dataset.g] || L[0][0]; renderAdmin();
+  }));
   tabAtivoVisivel();
   const sec = document.getElementById('sec');
   if (A.tab === 'equipas') { sec.innerHTML = '<p class="mute">A carregar…</p>'; ctxAdmin().then((X) => { A.ctxEq = X; secEquipas(sec, X); }); return; }
-  ({ jog: secJogadores, vot: secVotacao, cartas: secCartas, jogos: secJogos, stats: secEstatisticas, saude: secSaude, tickets: secTickets, part: secPartilhar })[A.tab](sec);
+  ({ jog: secJogadores, jogos: secJogos, stats: secEstatisticas, saude: secSaude, tickets: secTickets, part: secPartilhar })[A.tab](sec);
 }
 
 // GR que sofreu: o relógio grava-o no golo; jogos antigos deduzem-no pelos turnos.
@@ -891,38 +1517,18 @@ export function estatisticas(resultados) {
   return Object.values(S);
 }
 
-async function secEstatisticas(el) {
-  const res = (await DB.listResultados()).map((r) => JSON.parse(r.json || '{}'));
-  el.innerHTML = '<div id="st-t"></div><div id="st-elo"></div>';
-  tabelaStats(document.getElementById('st-t'), res, A.players);
-  const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
-  const L = Object.values(calcularElo(res.map((r) => r.jogo), cartas)).sort((a, b) => b.elo - a.elo);
-  if (!L.length) return;
-  document.getElementById('st-elo').innerHTML = `<h3>Elo / forma <span class="mute">(só tu vês)</span></h3>
-    <p class="mute">Parte da carta (overall 60 = 1000; 10 pontos de carta = 100 de Elo). "Forma" = quanto os jogos mexeram: ganhar contra o previsto sobe, perder desce.
-      Nas Equipas há a opção "Ajustar pela forma": soma a forma ÷ 10 ao overall, no máximo ±10 % da carta.</p>
-    <div style="overflow-x:auto"><table><tr><th>Jogador</th><th>Elo</th><th>Forma</th><th>J</th><th>Último</th></tr>
-    ${L.map((x) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === x.id) || { nome: x.nome }))}</td><td>${x.elo}</td><td>${x.forma > 0 ? '+' : ''}${Math.round(x.forma)}</td><td>${x.jogos}</td><td>${x.ultimo > 0 ? '▲' : x.ultimo < 0 ? '▼' : '='}</td></tr>`).join('')}</table></div>`;
-}
-
 // Médias e totais de cada jogador a partir das estatísticas dos jogos.
 const comMedias = (s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.jReg ? s.g / s.jReg : null, grJ: s.jGR ? s.grMs / s.jGR : null,
   sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null });
 const fmtStat = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1).replace('.', ',') : k === 'grJ' ? Math.round(v / 60000) : v;
 const COLS_STATS = [['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
 
-// Só as estatísticas do próprio (perfil 👤 Eu) — é o único sítio, além do admin, onde aparece o pé.
-function minhasStats(el, res, id) {
-  const s = estatisticas(res).find((x) => x.id === id);
-  if (!s) { el.innerHTML = '<p class="mute">Ainda não tens jogos registados.</p>'; return; }
-  const m = comMedias(s);
-  // As principais em grande; o resto em mosaicos pequenos.
-  const TOP = ['j', 'pts', 'pv', 'g', 'a', 'gj'];
-  el.innerHTML = `<div class="destaques">${TOP.map((k) => `<span><b>${fmtStat(k, m[k], m)}</b>${COLS_STATS.find(([c]) => c === k)[1]}</span>`).join('')}</div>
-    <div class="fgrid medias">${COLS_STATS.filter(([k]) => !TOP.includes(k)).map(([k, n]) => `<span>${n} <b>${fmtStat(k, m[k], m)}</b></span>`).join('')}</div>
-    <p class="mute" style="font-size:12px">G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</p>`;
+// Últimos 5 resultados de um jogador (do mais antigo para o mais recente), para a coluna Forma da tabela.
+function formaDe(id, res) {
+  return res.map((r) => r.jogo).filter((j) => j?.fase === 'fim' && [...(j.brancos || []), ...(j.pretos || [])].some((x) => x.id === id))
+    .sort((a, b) => (b.inicioEpoch || 0) - (a.inicioEpoch || 0)).slice(0, 5).reverse()
+    .map((j) => { const lado = (j.brancos || []).some((x) => x.id === id) ? 'B' : 'P', v = vencedorDe(j); return v === 'E' ? 'E' : v === lado ? 'V' : 'D'; });
 }
-
 // modo 'publico': nunca o pé; cabeça e penáltis só com "Mais informações" (decisão do Rui, 21/10). 'admin': tudo.
 const MAIS_INFO = ['cab', 'pen', 'penDef'];
 function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'admin') {
@@ -939,14 +1545,14 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
     if (a == null || b == null) return (a == null) - (b == null);
     return (cresce ? a - b : b - a) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
   });
-  const fmt = fmtStat;
+  const fmt = fmtStat, pub = modo === 'publico';
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho (ou usa "Ordenar por") para ordenar; tocar outra vez inverte.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
     <div class="linha" style="margin-bottom:8px"><label style="margin:0">Ordenar por <select id="st-ord" style="width:auto">${cols.map(([k, n]) => `<option value="${k}" ${k === ord ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       <button class="peq" id="st-inv" title="Inverter a ordem">${cresce ? '▲ menor primeiro' : '▼ maior primeiro'}</button>
       ${modo === 'publico' ? `<button class="peq" id="st-mais">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}</div>
-    <div style="overflow-x:auto"><table class="tstats"><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr>
-    ${L.map((s) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td>${k === 'nome' ? esc(nomeAtual(s)) : fmt(k, s[k], s)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+    <div class="tscroll"><table class="tstats${pub ? ' liga' : ''}"><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}${pub ? '<th>Forma</th>' : ''}</tr>
+    ${L.map((s, i) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td${k === ord ? ' class="ord"' : ''}>${k === 'nome' ? (pub ? `<span class="tpos p${i + 1}">${i + 1}</span><a class="lnk-j" href="#jogador=${esc(s.id)}">${esc(nomeAtual(s))}</a>` : esc(nomeAtual(s))) : fmt(k, s[k], s)}</td>`).join('')}${pub ? `<td class="tforma">${formaDe(s.id, res).map((r) => `<i class="res-${r}" title="${r === 'V' ? 'Vitória' : r === 'E' ? 'Empate' : 'Derrota'}">${r}</i>`).join('')}</td>` : ''}</tr>`).join('')}</table></div>`;
   el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => { if (th.dataset.o === ord) A.statsInv = !A.statsInv; else A.statsInv = false; tabelaStats(el, res, players, th.dataset.o, destaque, modo); }));
   el.querySelector('#st-ord').onchange = (e) => { A.statsInv = false; tabelaStats(el, res, players, e.target.value, destaque, modo); };
   el.querySelector('#st-inv').onclick = () => { A.statsInv = !A.statsInv; tabelaStats(el, res, players, ord, destaque, modo); };
@@ -1031,47 +1637,37 @@ function htmlSaude(j, f, P, eu) {
         <tr><td>metros</td>${mov.porBanda.map((x) => `<td>${Math.round(x.m)}</td>`).join('')}</tr></table>` : ''}`;
 }
 
+// ---------- Jogos (admin): lista compacta (data + resultado); tocar abre o editor para corrigir ----------
 async function secJogos(el) {
-  const res = (await DB.listResultados()).map((r) => ({ id: r.id, ...JSON.parse(r.json || '{}') })).sort((a, b) => (b.jogo?.inicioEpoch || 0) - (a.jogo?.inicioEpoch || 0));
+  const [brutos, pubs] = await Promise.all([DB.listResultados(), DB.listJogosPub()]);
+  const res = brutos.map((r) => ({ id: r.id, bruto: r, ...JSON.parse(r.json || '{}') })).filter((r) => r.jogo)
+    .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
   const P = { ...PERFIL0, ...((await DB.getSegredo('perfil')) || {}) };
   const eu = P.eu || A.players.find((p) => p.nome === 'Bessa')?.id || '';
-  el.innerHTML = `
-    <div class="opcao"><div class="linha">
-      <span class="mute">Perfil: ${P.idade} anos · ${P.altura} cm · ${P.peso} kg</span>
-      <label style="margin:0" title="Frequência cardíaca máxima (batimentos por minuto). Estimada: 208 − 0,7 × idade.">❤ FC máx.</label><input id="fcmax" type="number" value="${P.fcMax}" style="width:80px">
-      <label style="margin:0" title="Batimentos em repouso, de manhã ao acordar (o relógio mostra).">FC repouso</label><input id="fcrep" type="number" value="${P.fcRep}" style="width:80px">
-      <label style="margin:0">Eu sou</label><select id="eu" style="width:auto"><option value="">—</option>${A.players.map((p) => `<option value="${p.id}" ${p.id === eu ? 'selected' : ''}>${esc(nomeDe(p))}</option>`).join('')}</select>
-    </div>
-    <details style="margin-top:8px"><summary class="mute">Chave do relógio</summary>
-      <div class="linha" style="margin-top:6px"><input id="chave" placeholder="cola a chave do relógio"><button id="gchave" class="peq">Guardar</button></div></details></div>
-    <p class="mute">Cada cartão é um jogo enviado pelo relógio ou pelo marcador do telemóvel: resultado, golos (com quem estava na baliza a sofrer), tempo de cada um na baliza e o teu esforço físico (batimentos, zonas, km). As contas por jogador estão em Estatísticas.</p>
-    ${res.length ? '' : '<p class="mute">Ainda não chegou nenhum jogo do relógio.</p>'}
-    ${res.map((r) => {
-      const j = r.jogo, f = r.fit || {};
-      const nome = (id) => [...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?';
-      const golos = (e) => marcaDe(j, e);
-      const gr = {};
-      for (const t of j.turnos || []) gr[t.jogador] = (gr[t.jogador] || 0) + (t.ate - t.de);
-      const sofridos = {};
-      for (const ev of j.eventos) { const q = grSofreu(j, ev); if (q) sofridos[q] = (sofridos[q] || 0) + 1; }
-      return `<div class="opcao">
-        <div class="linha" style="justify-content:space-between"><span><b>${esc(dataDe(j))}</b> · ${mmss(j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0))} de jogo${f.tipo ? ` · <span class="mute">${esc(f.tipo)}</span>` : ''}</span>
-          <button class="peq perigo" data-del="${r.id}">Apagar</button></div>
-        <div class="equipas"><div class="eq branco"><h4>${LOGO.B} ${golos('B')}</h4>${(j.brancos || []).map((p) => esc(p.nome)).join('<br>')}</div>
-          <div class="eq preto"><h4>${LOGO.P} ${golos('P')}</h4>${(j.pretos || []).map((p) => esc(p.nome)).join('<br>')}</div></div>
-        <table><tr><th>Min</th><th>Golo</th><th>Assist.</th><th>GR sofreu</th></tr>${j.eventos.map((ev) => `<tr><td>${mmss(ev.t)}</td><td>${ev.equipa === 'B' ? '⚪' : '⚫'} ${esc(nome(ev.marcador))}${ev.tipo === 'autogolo' ? ' (AG)' : ''}${ev.parte ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</td><td>${esc(ev.assist ? nome(ev.assist) : '')}</td><td>${esc(grSofreu(j, ev) ? nome(grSofreu(j, ev)) : '')}</td></tr>`).join('')}</table>
-        <h3>Baliza</h3><table><tr><th>Jogador</th><th>Tempo</th><th>Sofridos</th></tr>${Object.entries(gr).map(([id, ms]) => `<tr><td>${esc(nome(id))}</td><td>${mmss(ms)}</td><td>${sofridos[id] || 0}</td></tr>`).join('')}</table>
-        ${htmlSaude(j, f, P, eu)}
-      </div>`;
-    }).join('')}`;
+  const ORIG = { telemovel: '📱 telemóvel', relogio: '⌚ relógio', manual: '✍️ à mão', simulado: '🧪 simulado' };
+  const linha = (r) => {
+    const j = r.jogo, nG = (j.eventos || []).length;
+    const meio = j.semGolos ? (vencedorDe(j) === 'E' ? 'E' : vencedorDe(j) === 'B' ? 'V – D' : 'D – V') : `${marcaDe(j, 'B')} – ${marcaDe(j, 'P')}`;
+    return `<button class="jadm" data-j="${esc(r.id)}"><span class="jr-dt"><b>${diaSemana(j)}</b>${esc(dataDe(j))}</span>${LOGO.B}<b class="jr-res">${meio}</b>${LOGO.P}
+      <span class="mute jadm-info">${ORIG[j.origem || r.origem] || esc(j.origem || r.origem || '')}${nG ? ` · ${nG} golo${nG > 1 ? 's' : ''}` : ''}</span><span class="jr-seta">›</span></button>`;
+  };
+  el.innerHTML = `<div class="secbar"><div><h2>Jogos</h2><p class="mute">${res.length} registados · toca num jogo para corrigir o resultado, um minuto, um golo, uma assistência ou o guarda-redes.</p></div></div>
+    <div id="j-abertos"></div>
+    <section class="cartao lista-adm">${res.length ? res.map(linha).join('') : '<p class="mute" style="margin:0">Ainda não chegou nenhum jogo do relógio nem do marcador do telemóvel.</p>'}</section>
+    <details class="cartao"><summary><b>⌚ Relógio e o meu perfil físico</b> <span class="mute">(para a análise de esforço dos teus jogos)</span></summary>
+      <div class="linha" style="margin-top:10px">
+        <span class="mute">Perfil: ${P.idade} anos · ${P.altura} cm · ${P.peso} kg</span>
+        <label style="margin:0" title="Frequência cardíaca máxima (batimentos por minuto). Estimada: 208 − 0,7 × idade.">❤ FC máx.</label><input id="fcmax" type="number" value="${P.fcMax}" style="width:80px">
+        <label style="margin:0" title="Batimentos em repouso, de manhã ao acordar (o relógio mostra).">FC repouso</label><input id="fcrep" type="number" value="${P.fcRep}" style="width:80px">
+        <label style="margin:0">Eu sou</label><select id="eu" style="width:auto"><option value="">—</option>${A.players.map((p) => `<option value="${p.id}" ${p.id === eu ? 'selected' : ''}>${esc(nomeDe(p))}</option>`).join('')}</select></div>
+      <div class="linha" style="margin-top:8px"><input id="chave" placeholder="cola a chave do relógio" style="flex:1"><button id="gchave" class="peq">Guardar chave do relógio</button></div></details>`;
+  el.querySelectorAll('[data-j]').forEach((b) => (b.onclick = () => editarJogo(res.find((r) => r.id === b.dataset.j), pubs.find((x) => x.id === b.dataset.j), P, eu, () => secJogos(el))));
   // ---- Jogos em aberto: equipas escolhidas sem resultado. Fechar = entra nas estatísticas, Elo e peso dos votos.
   const fechados = new Set(res.map((r) => r.jogo?.gameId).filter(Boolean));
   const abertos = [...A.games].filter((g) => !fechados.has(g.id)).sort((a, b) => (b.criado || 0) - (a.criado || 0));
   const nmG = (g, id) => esc(g.nomes?.[id] || nomeDe(A.players.find((p) => p.id === id) || { nome: '?' }));
-  el.insertAdjacentHTML('afterbegin', `<h3 style="margin-top:0">Jogos em aberto (${abertos.length})</h3>
-    ${abertos.length ? '' : '<p class="mute">Nenhum. Quando se escolhem equipas, o jogo fica aqui até ser marcado no relógio/telemóvel ou fechado à mão.</p>'}
-    ${abertos.map((g) => `<div class="opcao" data-aberto="${g.id}">
-      <div class="linha" style="justify-content:space-between"><b>${esc(g.data || '')}</b><span class="tag">em aberto</span></div>
+  document.getElementById('j-abertos').innerHTML = abertos.length ? `<h3 style="margin-top:0">Em aberto (${abertos.length}) <span class="mute" style="text-transform:none;letter-spacing:0;font-weight:500">— equipas feitas, sem resultado</span></h3>
+    ${abertos.map((g) => `<details class="cartao" data-aberto="${g.id}"><summary><b>${esc(diaPT(g.data || ''))}</b> <span class="tag">em aberto</span></summary>
       <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${(g.brancos || []).map((id) => nmG(g, id)).join('<br>')}</div>
         <div class="eq preto"><h4>${LOGO.P} Pretos</h4>${(g.pretos || []).map((id) => nmG(g, id)).join('<br>')}</div></div>
       <label>Dia em que se jogou</label><input type="date" class="pD" value="${esc(g.data || hojeLocal())}" style="width:auto">
@@ -1081,8 +1677,7 @@ async function secJogos(el) {
         <button class="prim peq" data-fechar="B">Fechar: ganhou ⚪</button>
         <button class="peq" data-fechar="E">Fechar: empate</button>
         <button class="prim peq" data-fechar="P">Fechar: ganhou ⚫</button>
-        <button class="peq perigo" data-apagar-g>Apagar (não se jogou)</button></div></div>`).join('')}
-    <h3>Jogos fechados</h3>`);
+        <button class="peq perigo" data-apagar-g>Apagar (não se jogou)</button></div></details>`).join('')}` : '';
   el.querySelectorAll('[data-aberto]').forEach((box) => {
     const g = abertos.find((x) => x.id === box.dataset.aberto);
     box.querySelectorAll('[data-fechar]').forEach((b) => (b.onclick = async () => {
@@ -1096,10 +1691,6 @@ async function secJogos(el) {
       await DB.deleteGame(g.id); await recarregar(); secJogos(el);
     };
   });
-  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    if (!confirm('Apagar este jogo? Sai também das estatísticas.')) return;
-    await DB.deleteResultado(b.dataset.del); await DB.deleteJogoPub(b.dataset.del).catch(() => {}); secJogos(el);
-  }));
   const gravarPerfil = async (d) => { await DB.setSegredo('perfil', { ...P, ...d }); secJogos(el); };
   document.getElementById('fcmax').onchange = (e) => gravarPerfil({ fcMax: Number(e.target.value) });
   document.getElementById('fcrep').onchange = (e) => gravarPerfil({ fcRep: Number(e.target.value) });
@@ -1109,6 +1700,114 @@ async function secJogos(el) {
     if (c.length < 16) return toast('Chave demasiado curta');
     await DB.setChaveRelogio(c); toast('Chave guardada');
   };
+}
+
+// Editor de um jogo registado: data, resultado (jogos sem golos), golos (minuto, equipa, marcador, assistência, parte do corpo)
+// e quem esteve na baliza (de/até ao minuto). Grava em resultados/ e na cópia pública jogos/ (mantém a prova e o resto).
+async function editarJogo(r, pub, P, euFisico, depois) {
+  const j0 = r.jogo;
+  const j = JSON.parse(JSON.stringify(j0));
+  const todosJ = [...(j.brancos || []), ...(j.pretos || [])];
+  const op = (sel, vazio = '') => `${vazio ? `<option value="">${vazio}</option>` : ''}${todosJ.map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}`;
+  const minDe = (t) => Math.floor((t || 0) / 60000) + 1;
+  const tDe = (min, tAnt) => (Math.max(1, Number(min) || 1) - 1) * 60000 + ((tAnt || 0) % 60000);
+  const avs = (await DB.listVotosJogo().catch(() => [])).filter((x) => x.jogo === r.id);
+  const { el: f, fechar } = abrirFolha(`Jogo de ${dataDe(j0)}`, '<div id="ej"></div>');
+  const box = f.querySelector('#ej');
+  const desenhar = () => {
+    const semEv = !(j.eventos || []).length;
+    box.innerHTML = `
+      <label>Dia do jogo</label><input type="date" id="ej-data" value="${esc(j.data || (j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleDateString('sv-SE') : ''))}" style="width:auto">
+      <h3>Resultado</h3>
+      ${semEv ? `<p class="mute" style="margin:0 0 6px">Sem golos registados: escreve o resultado (ou só quem ganhou).</p>
+        <div class="linha"><input type="number" min="0" id="ej-pB" value="${j.placar?.B ?? ''}" placeholder="⚪" style="width:70px"> – <input type="number" min="0" id="ej-pP" value="${j.placar?.P ?? ''}" placeholder="⚫" style="width:70px">
+          <select id="ej-venc" style="width:auto"><option value="B" ${vencedorDe(j) === 'B' ? 'selected' : ''}>ganhou ⚪</option><option value="E" ${vencedorDe(j) === 'E' ? 'selected' : ''}>empate</option><option value="P" ${vencedorDe(j) === 'P' ? 'selected' : ''}>ganhou ⚫</option></select></div>`
+        : `<p style="margin:0"><b class="ej-res">${LOGO.B} ${(j.eventos || []).filter((e) => e.equipa === 'B').length} – ${(j.eventos || []).filter((e) => e.equipa === 'P').length} ${LOGO.P}</b> <span class="mute">— vem dos golos em baixo</span></p>`}
+      <h3>Golos</h3>
+      <div class="ej-lista">${(j.eventos || []).map((e, i) => `<div class="ej-golo" data-i="${i}">
+        <label>Min.<input type="number" min="1" data-c="min" value="${minDe(e.t)}"></label>
+        <label>Equipa<select data-c="equipa"><option value="B" ${e.equipa === 'B' ? 'selected' : ''}>⚪ Brancos</option><option value="P" ${e.equipa === 'P' ? 'selected' : ''}>⚫ Pretos</option></select></label>
+        <label>Marcador<select data-c="marcador">${op(e.marcador)}</select></label>
+        <label>Tipo<select data-c="tipo"><option value="golo" ${e.tipo !== 'autogolo' ? 'selected' : ''}>golo</option><option value="autogolo" ${e.tipo === 'autogolo' ? 'selected' : ''}>autogolo</option></select></label>
+        <label>Assistência<select data-c="assist">${op(e.assist, '—')}</select></label>
+        <label>Como<select data-c="parte"><option value="">—</option>${Object.entries(PARTE).map(([k, n]) => `<option value="${k}" ${e.parte === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <button class="peq perigo" data-del="${i}" aria-label="Apagar este golo">✕</button></div>`).join('') || '<p class="mute">Nenhum golo registado.</p>'}</div>
+      <button class="peq" id="ej-mais">＋ Golo</button>
+      <h3>Guarda-redes</h3>
+      <div class="ej-lista">${(j.turnos || []).map((t, i) => `<div class="ej-gr" data-t="${i}">
+        <label>Equipa<select data-c="equipa"><option value="B" ${t.equipa === 'B' ? 'selected' : ''}>⚪</option><option value="P" ${t.equipa === 'P' ? 'selected' : ''}>⚫</option></select></label>
+        <label>Na baliza<select data-c="jogador">${op(t.jogador)}</select></label>
+        <label>Do min.<input type="number" min="1" data-c="de" value="${minDe(t.de)}"></label>
+        <label>ao min.<input type="number" min="1" data-c="ate" value="${Math.round((t.ate || 0) / 60000)}"></label>
+        <button class="peq perigo" data-delt="${i}" aria-label="Apagar">✕</button></div>`).join('') || '<p class="mute">Sem trocas de guarda-redes registadas.</p>'}</div>
+      <button class="peq" id="ej-maisgr">＋ Guarda-redes</button>
+      ${avs.length ? `<h3>⭐ Avaliações deste jogo <span class="mute" style="text-transform:none;letter-spacing:0">(${avs.length} colega${avs.length > 1 ? 's' : ''} — melhor/igual/pior do que o normal; à parte, não mexem nas cartas)</span></h3>${avaliacoesHTML(avs, todosJ)}` : ''}
+      ${euFisico ? `<details style="margin-top:12px"><summary class="mute">❤ Esforço físico (relógio)</summary>${htmlSaude(j, r.fit || {}, P, euFisico)}</details>` : ''}
+      <div class="linha" style="margin-top:16px;justify-content:space-between"><span class="linha"><button class="prim" id="ej-ok">Guardar</button><button id="ej-cancel">Cancelar</button></span>
+        <button class="perigo peq" id="ej-apagar">Apagar o jogo</button></div>`;
+    // Ler o que está nos campos antes de redesenhar (para não perder o que se escreveu).
+    const ler = () => {
+      box.querySelectorAll('.ej-golo').forEach((row) => {
+        const e = j.eventos[row.dataset.i], v = (c) => row.querySelector(`[data-c="${c}"]`).value;
+        e.t = tDe(v('min'), e.t); e.equipa = v('equipa'); e.marcador = v('marcador'); e.tipo = v('tipo'); e.assist = v('assist') || null; e.parte = v('parte') || null;
+      });
+      box.querySelectorAll('.ej-gr').forEach((row) => {
+        const t = j.turnos[row.dataset.t], v = (c) => row.querySelector(`[data-c="${c}"]`).value;
+        t.equipa = v('equipa'); t.jogador = v('jogador'); t.de = tDe(v('de'), 0); t.ate = Math.max(t.de + 60000, Number(v('ate')) * 60000);
+      });
+      j.data = box.querySelector('#ej-data').value || j.data;
+    };
+    box.querySelector('#ej-mais').onclick = () => { ler(); const ult = j.eventos?.at(-1); (j.eventos ||= []).push({ t: (ult?.t || 0) + 60000, tipo: 'golo', equipa: 'B', marcador: (j.brancos || [])[0]?.id, assist: null, gr: null, parte: null }); desenhar(); };
+    box.querySelector('#ej-maisgr').onclick = () => { ler(); (j.turnos ||= []).push({ equipa: 'B', jogador: (j.brancos || [])[0]?.id, de: 0, ate: 6 * 60000 }); desenhar(); };
+    box.querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => { ler(); j.eventos.splice(Number(b.dataset.del), 1); desenhar(); }));
+    box.querySelectorAll('[data-delt]').forEach((b) => (b.onclick = () => { ler(); j.turnos.splice(Number(b.dataset.delt), 1); desenhar(); }));
+    box.querySelector('#ej-cancel').onclick = fechar;
+    box.querySelector('#ej-apagar').onclick = async () => {
+      if (!confirm('Apagar este jogo? Sai também das estatísticas.')) return;
+      await DB.deleteResultado(r.id); await DB.deleteJogoPub(r.id).catch(() => {}); fechar(); toast('Jogo apagado'); depois();
+    };
+    box.querySelector('#ej-ok').onclick = async (ev) => {
+      ler();
+      ev.target.disabled = true;
+      // O dia mudou: muda também o início/fim (mantém a hora).
+      const diaAntes = j0.inicioEpoch ? new Date(j0.inicioEpoch).toLocaleDateString('sv-SE') : j0.data;
+      if (j.data && diaAntes && j.data !== diaAntes && j.inicioEpoch) {
+        const d = new Date(`${j.data}T12:00`).getTime() - new Date(`${diaAntes}T12:00`).getTime();
+        j.inicioEpoch += d; if (j.fimEpoch) j.fimEpoch += d;
+      }
+      j.eventos = (j.eventos || []).sort((a, b) => a.t - b.t);
+      j.turnos = (j.turnos || []).sort((a, b) => a.de - b.de);
+      // Quem estava na baliza a sofrer cada golo, pelas trocas de GR corrigidas.
+      if (j.turnos.length) for (const e of j.eventos) e.gr = j.turnos.find((x) => x.equipa !== e.equipa && e.t >= x.de && e.t < x.ate)?.jogador || e.gr || null;
+      // Penáltis marcados que já não têm golo: saem.
+      j.penaltis = (j.penaltis || []).filter((pn) => pn.resultado !== 'golo' || j.eventos.some((e) => e.parte === 'pen' && e.marcador === pn.marcador));
+      if (j.eventos.length) { delete j.placar; delete j.semGolos; delete j.vencedor; }
+      else {
+        const sB = box.querySelector('#ej-pB').value, sP = box.querySelector('#ej-pP').value;
+        if (sB !== '' && sP !== '') { j.placar = { B: Number(sB), P: Number(sP) }; delete j.semGolos; delete j.vencedor; }
+        else { delete j.placar; j.semGolos = true; j.vencedor = box.querySelector('#ej-venc').value; }
+      }
+      const { id: _i, bruto: _b, ...resto } = r;
+      const { id: _bid, ...brutoSem } = r.bruto;
+      try {
+        await DB.saveResultado(r.id, { ...brutoSem, json: JSON.stringify({ ...resto, jogo: j }) });
+        const { id: _p, ...pubDoc } = pub || {};
+        await DB.saveJogoPub(r.id, { ...pubDoc, ts: Date.now(), json: JSON.stringify(j) });
+      } catch (err) { console.error(err); ev.target.disabled = false; return toast('Erro a guardar: ' + err.message); }
+      fechar(); toast('Jogo corrigido ✔'); depois();
+    };
+  };
+  desenhar();
+}
+
+// Avaliações de um jogo (votosJogo): para cada jogador, quantos o acharam pior / igual / melhor do que o normal. Só o admin vê.
+function avaliacoesHTML(avs, jogadores) {
+  const c = {};
+  for (const v of avs) for (const [pid, x] of Object.entries(v.r || {})) if ([-1, 0, 1].includes(x?.d)) { const o = (c[pid] ||= { '-1': 0, 0: 0, 1: 0 }); o[x.d]++; }
+  const ids = Object.keys(c).sort((a, b) => (c[b][1] - c[b][-1]) - (c[a][1] - c[a][-1]));
+  if (!ids.length) return '<p class="mute">Ainda sem avaliações.</p>';
+  return `<table><tr><th>Jogador</th><th title="melhor do que o normal">▲</th><th title="normal">=</th><th title="pior do que o normal">▼</th><th>Saldo</th></tr>
+    ${ids.map((pid) => { const o = c[pid], sd = o[1] - o[-1]; return `<tr><td>${esc(jogadores.find((p) => p.id === pid)?.nome || '?')}</td><td>${o[1]}</td><td>${o[0]}</td><td>${o[-1]}</td><td class="${sd > 0 ? 'sobe' : sd < 0 ? 'desce' : ''}">${sd > 0 ? '+' : ''}${sd}</td></tr>`; }).join('')}</table>`;
 }
 
 // Fechar um jogo à mão (ninguém marcou): só o vencedor ou o resultado. Conta nas estatísticas, Elo e peso dos votos.
@@ -1136,43 +1835,100 @@ async function fecharManual(box, g, venc, K, nomeP) {
 }
 
 // ---------- Jogadores ----------
-function secJogadores(el, edit = null) {
-  const p = edit || {};
+// Folha por cima da página (telemóvel: sobe de baixo; computador: janela ao centro). Fecha com ✕, Esc ou tocando fora.
+function abrirFolha(tit, html) {
+  const f = document.createElement('div');
+  f.className = 'folha-fundo';
+  f.innerHTML = `<div class="folha" role="dialog" aria-modal="true" aria-label="${esc(tit)}"><div class="folha-cab"><h3>${esc(tit)}</h3><button class="fechar" aria-label="Fechar">✕</button></div>${html}</div>`;
+  document.body.appendChild(f);
+  const tecla = (e) => { if (e.key === 'Escape') fechar(); };
+  const fechar = () => { f.remove(); document.removeEventListener('keydown', tecla); };
+  document.addEventListener('keydown', tecla);
+  f.onclick = (e) => { if (e.target === f) fechar(); };
+  f.querySelector('.fechar').onclick = fechar;
+  return { el: f.querySelector('.folha'), fechar };
+}
+
+// ---------- Plantel: jogadores e cartas num só sítio ----------
+// Lista (mini-carta + nome) ou cartas; "＋ Adicionar jogador"; tocar num jogador abre a ficha (editar, carta, votos recebidos).
+function secJogadores(el) {
+  const ativos = A.players.filter((p) => p.ativo !== false);
+  const cartas = calcularCartas(ativos, A.votes, A.conv);
+  const porOvr = [...ativos].sort((a, b) => (cartas[b.id]?.overall ?? 0) - (cartas[a.id]?.overall ?? 0));
+  A.plVista ||= 'lista';
+  A.plBusca ??= '';
+  const vista = A.plVista;
+  const mini = (c) => `<span class="ovr ${tier(c?.overall)}" title="Overall${c?.posicao ? ' · posição indicativa' : ''}">${c?.overall ?? '–'}${c?.posicao ? `<small>${c.posicao}</small>` : ''}</span>`;
+  const linha = (x) => `<div class="jog clic ${x.ativo === false ? 'inativo' : ''}" data-ed="${x.id}">${mini(cartas[x.id])}${foto(x)}<div class="info"><b>${esc(nomeDe(x))}</b><small>${esc(x.alcunha ? x.nome : '')}
+      ${x.convidado ? '<span class="tag">convidado</span>' : ''}${x.ativo === false ? '<span class="tag">inativo</span>' : ''}${x.nivel ? `<span class="tag">${NIVEIS.find((n) => n.v === Number(x.nivel))?.nome}</span>` : ''}${x.moderador ? '<span class="tag">🛡 moderador</span>' : ''}${cartas[x.id]?.provisoria ? '<span class="tag">provisória</span>' : cartas[x.id]?.estimada ? '<span class="tag">estimada</span>' : ''}</small></div>
+      ${x.convidado ? '' : `<button class="peq ${x.moderador ? 'on' : ''}" data-mod="${x.id}" title="Moderador: faz equipas e marca o jogo" aria-label="Moderador">🛡</button>`}
+      <button class="peq" data-ed="${x.id}">Editar</button></div>`;
   el.innerHTML = `
-    <div class="opcao">
-      <h3 style="margin-top:0">${edit ? 'Editar' : 'Novo'} jogador</h3>
-      <label>Nome</label><input id="f-nome" value="${esc(p.nome)}">
-      <label>Alcunha (como aparece)</label><input id="f-alc" value="${esc(p.alcunha)}">
-      <label>Foto (guarda a do WhatsApp e escolhe-a aqui)</label><input id="f-foto" type="file" accept="image/*">
-      <div class="linha" style="margin-top:10px"><label style="margin:0"><input type="checkbox" id="f-conv" ${p.convidado ? 'checked' : ''} style="width:auto"> Convidado (não vota nem é votado)</label></div>
-      <label>Nível estimado (convidados ou quem tiver poucos votos)</label>
-      <select id="f-nivel"><option value="">—</option>${NIVEIS.map((n) => `<option value="${n.v}" ${Number(p.nivel) === n.v ? 'selected' : ''}>${n.nome}</option>`).join('')}</select>
-      <div class="linha" style="margin-top:12px">
-        <button class="prim" id="f-gravar">${edit ? 'Guardar' : 'Adicionar'}</button>
-        ${edit ? `<button id="f-cancel">Cancelar</button><label style="margin:0"><input type="checkbox" id="f-ativo" ${p.ativo !== false ? 'checked' : ''} style="width:auto"> Ativo</label>` : ''}
-      </div>
-    </div>
-    ${DB.demo ? '<div class="linha"><button id="demo-seed" class="peq">🧪 Criar 14 jogadores + votos de teste</button><button id="demo-jogos" class="peq">🧪 Simular 10 jogos</button><button id="demo-reset" class="peq perigo">Apagar demo</button></div>' : ''}
-    <div class="linha" style="margin-top:8px"><label style="margin:0">Importar ficheiro (jogadores-iniciais.json)</label><input id="imp" type="file" accept=".json" style="width:auto"></div>
-    <h3>${A.players.length} jogadores</h3>
-    ${A.players.map((x) => `<div class="jog">${foto(x)}<div class="info"><b>${esc(nomeDe(x))}</b><small>${esc(x.alcunha ? x.nome : '')}
-      ${x.convidado ? '<span class="tag">convidado</span>' : ''}${x.ativo === false ? '<span class="tag">inativo</span>' : ''}${x.nivel ? `<span class="tag">${NIVEIS.find((n) => n.v === Number(x.nivel))?.nome}</span>` : ''}${x.moderador ? '<span class="tag">🛡 moderador</span>' : ''}</small></div>
-      ${x.convidado ? '' : `<button class="peq ${x.moderador ? 'on' : ''}" data-mod="${x.id}" title="Moderador: faz equipas, abre a votação e marca o jogo">🛡</button>`}
-      <button class="peq" data-ed="${x.id}">Editar</button></div>`).join('')}`;
+    <div class="secbar"><div><h2>Plantel e cartas</h2><p class="mute">${ativos.length} ativos · ${A.players.length} no total</p></div>
+      <button class="prim" id="pl-add">＋ Adicionar jogador</button></div>
+    <div class="secbar"><div class="seg" role="tablist"><button data-v="lista" class="${vista === 'lista' ? 'on' : ''}">Jogadores</button><button data-v="cartas" class="${vista === 'cartas' ? 'on' : ''}">Cartas</button><button data-v="votacao" class="${vista === 'votacao' ? 'on' : ''}">Votação e PINs</button></div>
+      ${vista === 'votacao' ? '' : `<input id="pl-busca" type="search" placeholder="Procurar jogador…" value="${esc(A.plBusca)}" style="max-width:240px;flex:1">`}</div>
+    ${vista === 'cartas' ? `<div class="cartao"><div class="cartao-tit">🃏 Mostrar as cartas</div>
+      <div class="linha"><span>Cartas pessoais <span class="mute">(cada um vê só a sua, no 👤 Eu)</span>:</span><span id="cp-estado" class="mute">…</span><button class="peq" id="cp-toggle">…</button></div>
+      <div class="linha" style="margin-top:8px"><span>Cartas de todos <span class="mute">(página Jogadores)</span>:</span><button class="prim peq" id="cp-pub">Publicar</button><button class="peq" id="cp-esconder">Esconder</button></div>
+      <p class="mute" style="font-size:12px;margin:8px 0 0">Só tu vês isto. Ninguém sabe das cartas até carregares em Publicar.<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p></div>` : ''}
+    <div id="pl-corpo"></div>
+    ${vista === 'votacao' ? `<details class="cartao"><summary><b>Votos por votante</b> <span class="mute">(só tu vês)</span></summary>
+      <select id="vsel" style="margin-top:10px"><option value="">— escolhe —</option>${A.votes.map((v) => `<option value="${v.id}">${esc(nomeDe(A.players.find((p) => p.id === v.voter) || { nome: '?' }))}</option>`).join('')}</select>
+      <div id="vdet" style="overflow-x:auto"></div></details>` : ''}
+    ${vista === 'lista' ? `<details class="cartao"><summary><b>📥 Importar jogadores de um ficheiro</b></summary>
+      <p class="mute" style="font-size:13px">Para carregar de uma vez a lista do grupo do WhatsApp (ficheiro <code>jogadores-iniciais.json</code>). Junta só os que ainda não existem e completa fotos que faltem; não apaga nem muda notas.</p>
+      <input id="imp" type="file" accept=".json" style="width:auto"></details>
+      ${DB.demo ? `<section class="cartao demo-box"><div class="cartao-tit">🧪 Dados de teste <span class="tag">só nesta demonstração</span></div>
+        <p class="mute" style="font-size:13px;margin:0 0 8px">Na app real isto não aparece. Aqui serve para encher a app de jogadores, votos e jogos a fingir.</p>
+        <div class="linha"><button id="demo-seed" class="peq">Criar 14 jogadores + votos de teste</button><button id="demo-jogos" class="peq">Simular 10 jogos</button><button id="demo-reset" class="peq perigo">Apagar tudo</button></div></section>` : ''}` : ''}`;
   const g = (id) => document.getElementById(id);
-  g('f-gravar').onclick = async () => {
-    const nome = g('f-nome').value.trim();
-    if (!nome) return toast('Falta o nome');
-    const { alias: _a, fotoPropria: _f, ...base } = p;
-    const d = { ...base, nome, alcunha: g('f-alc').value.trim(), convidado: g('f-conv').checked, nivel: g('f-nivel').value ? Number(g('f-nivel').value) : null };
-    if (edit) d.ativo = g('f-ativo').checked; else d.ativo = true;
-    const f = g('f-foto').files[0];
-    if (f) d.foto = await fotoParaDataURL(f);
-    await DB.savePlayer(d);
-    await recarregar(); toast('Guardado'); secJogadores(el);
+  const corpo = () => {
+    const c = g('pl-corpo');
+    if (vista === 'votacao') return secVotacao(c);
+    const q = A.plBusca.trim().toLowerCase();
+    const bate = (p) => !q || `${p.nome} ${p.alcunha || ''} ${p.alias || ''}`.toLowerCase().includes(q);
+    if (vista === 'cartas') c.innerHTML = `<div class="cartas clic">${porOvr.filter(bate).map((p) => `<div data-ed="${p.id}" role="button" tabindex="0">${htmlCarta(p, cartas[p.id])}</div>`).join('')}</div>`;
+    else c.innerHTML = `<div class="plant-lista">${A.players.filter(bate).map(linha).join('')}</div>`;
+    if (!c.firstElementChild?.children.length) c.innerHTML = vazio('🔎', A.players.length ? 'Nenhum jogador com esse nome.' : 'Ainda não há jogadores — carrega em "＋ Adicionar jogador".');
+    c.querySelectorAll('[data-ed]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); fichaJogador(el, A.players.find((x) => x.id === b.dataset.ed), cartas); }));
+    c.querySelectorAll('[data-ed][tabindex]').forEach((b) => (b.onkeydown = (e) => { if (e.key === 'Enter') b.click(); }));
+    // 🛡 Moderador (decisão do Rui, 21/10): faz equipas e marca o jogo, no separador 🛡 Moderador (com o PIN).
+    c.querySelectorAll('[data-mod]').forEach((b) => (b.onclick = async (e) => {
+      e.stopPropagation();
+      const x = A.players.find((y) => y.id === b.dataset.mod); if (!x) return;
+      const { alias: _a, fotoPropria: _f, ...base } = x;
+      if (!x.moderador && !confirm(`${nomeDe(x)} passa a moderador: faz equipas e marca o jogo. Continuar?`)) return;
+      await DB.savePlayer({ ...base, moderador: !x.moderador });
+      await recarregar(); toast(x.moderador ? 'Já não é moderador' : '🛡 Moderador'); secJogadores(el);
+    }));
   };
-  if (edit) g('f-cancel').onclick = () => secJogadores(el);
-  g('imp').onchange = async (e) => {
+  corpo();
+  g('pl-add').onclick = () => fichaJogador(el, null, cartas);
+  el.querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { A.plVista = b.dataset.v; secJogadores(el); }));
+  if (g('pl-busca')) g('pl-busca').oninput = (e) => { A.plBusca = e.target.value; corpo(); };
+  if (g('cp-pub')) {
+    g('cp-pub').onclick = async () => {
+      await DB.setPublic('cartas', { visivel: true, ts: Date.now(), cartas: porOvr.filter((p) => !p.convidado).map((p) => ({ p: { nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '' }, c: cartas[p.id] })) });
+      toast('Cartas publicadas');
+    };
+    g('cp-esconder').onclick = async () => { await DB.setPublic('cartas', { visivel: false }); toast('Cartas escondidas'); };
+    (async () => {
+      const estado = (await DB.getPublic('estado')) || {}, on = !!estado.cartasPessoais;
+      if (!g('cp-estado')) return;
+      g('cp-estado').textContent = on ? '🟢 Visíveis' : '🔴 Escondidas';
+      const b = g('cp-toggle');
+      b.textContent = on ? 'Esconder' : 'Mostrar a cada um a sua';
+      b.className = 'peq ' + (on ? 'perigo' : 'prim');
+      b.onclick = async () => { await DB.setPublic('estado', { ...estado, cartasPessoais: !on }); await publicarCartasPessoais(); secJogadores(el); };
+    })();
+  }
+  if (g('vsel')) g('vsel').onchange = (e) => {
+    const v = A.votes.find((x) => x.id === e.target.value);
+    g('vdet').innerHTML = !v ? '' : `<table><tr><th>Jogador</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}</tr>
+      ${Object.entries(v.r || {}).map(([id, r]) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === id) || { nome: '?' }))}</td>${r.skip ? `<td colspan="${AREAS.length}" class="mute">não conhece</td>` : AREAS.map((a) => `<td>${r[a.k] ?? ''}</td>`).join('')}</tr>`).join('')}</table>`;
+  };
+  if (g('imp')) g('imp').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const lista = JSON.parse(await f.text());
     let n = 0, m = 0;
@@ -1190,20 +1946,59 @@ function secJogadores(el, edit = null) {
     }
     await recarregar(); toast(`${n} novos, ${m} atualizados`); secJogadores(el);
   };
-  el.querySelectorAll('[data-ed]').forEach((b) => (b.onclick = () => { secJogadores(el, A.players.find((x) => x.id === b.dataset.ed)); window.scrollTo(0, 0); }));
-  // 🛡 Moderador (decisão do Rui, 21/10): faz equipas e marca o jogo, no próprio perfil (com o PIN).
-  el.querySelectorAll('[data-mod]').forEach((b) => (b.onclick = async () => {
-    const x = A.players.find((y) => y.id === b.dataset.mod); if (!x) return;
-    const { alias: _a, fotoPropria: _f, ...base } = x;
-    if (!x.moderador && !confirm(`${nomeDe(x)} passa a moderador: faz equipas e marca o jogo. Continuar?`)) return;
-    await DB.savePlayer({ ...base, moderador: !x.moderador });
-    await recarregar(); toast(x.moderador ? 'Já não é moderador' : '🛡 Moderador'); secJogadores(el);
-  }));
-  if (DB.demo) {
+  if (g('demo-seed')) {
     g('demo-seed').onclick = async () => { await semearDemo(); await recarregar(); renderAdmin(); };
-    g('demo-reset').onclick = async () => { DB.resetDemo(); await recarregar(); renderAdmin(); };
+    g('demo-reset').onclick = async () => { if (!confirm('Apagar todos os dados de teste?')) return; DB.resetDemo(); await recarregar(); renderAdmin(); };
     g('demo-jogos').onclick = async () => { await simularJogos(); toast('10 jogos simulados'); };
   }
+}
+
+// Quem votou num jogador e que notas lhe deu (mais a média aparada que entra na carta). Só o admin vê.
+function votosRecebidosHTML(id, cartas) {
+  const nmv = (v) => esc(nomeDe(A.players.find((p) => p.id === v.voter) || { nome: '?' }));
+  const deram = A.votes.filter((v) => v.voter !== id && v.r?.[id] && !v.r[id].skip).sort((x, y) => nmv(x).localeCompare(nmv(y), 'pt'));
+  const nc = A.votes.filter((v) => v.voter !== id && v.r?.[id]?.skip);
+  const media = (v) => { const n = AREAS.map((a) => v.r[id][a.k]).filter((x) => typeof x === 'number'); return n.length ? (n.reduce((a, b) => a + b, 0) / n.length).toFixed(1) : '–'; };
+  const c = cartas[id];
+  return `<p class="mute">${deram.length} votaram · ${nc.length} não conhecem${nc.length ? ` (${nc.map(nmv).join(', ')})` : ''}</p>
+    <div style="overflow-x:auto"><table><tr><th>Votante</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}<th>Média</th><th title="Jogos em que o votante e este jogador estiveram juntos (mesma equipa ou contra)">Jogos juntos</th><th>Peso</th></tr>
+    ${deram.map((v) => { const n = A.juntos?.[v.voter]?.[id] || 0, pts = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>${Math.round(pesoVoto(pts) * 100)}%</td></tr>`; }).join('')}
+    ${c ? `<tr><td><b>Carta</b> <small class="mute">(média aparada e pesada)</small></td>${AREAS.map((a) => `<td><b>${c.stats[a.k] != null ? c.stats[a.k].toFixed(1) : '–'}</b></td>`).join('')}<td><b>${c.overall ?? '–'}</b></td></tr>` : ''}</table></div>`;
+}
+
+// Ficha de um jogador (ou novo jogador): dados, foto, convidado/nível, ativo; a carta e os votos recebidos.
+function fichaJogador(sec, edit, cartas) {
+  const p = edit || {};
+  const c = edit ? cartas[edit.id] : null;
+  const { el: f, fechar } = abrirFolha(edit ? nomeDe(edit) : 'Novo jogador', `
+    ${c ? `<div class="eu-carta" style="margin:4px 0 8px">${htmlCarta(edit, c)}</div>` : ''}
+    <label>Nome</label><input id="f-nome" value="${esc(p.nome)}">
+    <label>Alcunha (como aparece)</label><input id="f-alc" value="${esc(p.alcunha)}">
+    <label>Foto (guarda a do WhatsApp e escolhe-a aqui)</label><input id="f-foto" type="file" accept="image/*">
+    <div class="linha" style="margin-top:10px"><label style="margin:0"><input type="checkbox" id="f-conv" ${p.convidado ? 'checked' : ''} style="width:auto"> Convidado (não vota nem é votado)</label></div>
+    <label>Nível estimado (convidados ou quem tiver poucos votos)</label>
+    <select id="f-nivel"><option value="">—</option>${NIVEIS.map((n) => `<option value="${n.v}" ${Number(p.nivel) === n.v ? 'selected' : ''}>${n.nome}</option>`).join('')}</select>
+    <div class="linha" style="margin-top:14px">
+      <button class="prim" id="f-gravar">${edit ? 'Guardar' : '＋ Adicionar'}</button><button id="f-cancel">Cancelar</button>
+      ${edit ? `<label style="margin:0"><input type="checkbox" id="f-ativo" ${p.ativo !== false ? 'checked' : ''} style="width:auto"> Ativo</label>` : ''}
+    </div>
+    ${edit && !edit.convidado ? `<h3>Votos recebidos <span class="mute">(só tu vês)</span></h3>${votosRecebidosHTML(edit.id, cartas)}` : ''}`);
+  const g = (id) => f.querySelector('#' + id);
+  if (!edit) g('f-nome').focus();
+  g('f-cancel').onclick = fechar;
+  g('f-gravar').onclick = async (e) => {
+    const nome = g('f-nome').value.trim();
+    if (!nome) return toast('Falta o nome');
+    e.target.disabled = true;
+    const { alias: _a, fotoPropria: _f, ...base } = p;
+    const d = { ...base, nome, alcunha: g('f-alc').value.trim(), convidado: g('f-conv').checked, nivel: g('f-nivel').value ? Number(g('f-nivel').value) : null };
+    if (edit) d.ativo = g('f-ativo').checked; else d.ativo = true;
+    const fl = g('f-foto').files[0];
+    if (fl) d.foto = await fotoParaDataURL(fl);
+    await DB.savePlayer(d);
+    fechar();
+    await recarregar(); toast(edit ? 'Guardado' : `${nome} adicionado ✔`); secJogadores(sec);
+  };
 }
 
 async function semearDemo() {
@@ -1304,27 +2099,63 @@ async function secSaude(el) {
 }
 
 // ---------- Partilhar (link de colaborador) ----------
+// Elo (só o admin vê): a forma de cada um pelos resultados. É o que só existe aqui; a tabela completa (com o pé de todos)
+// fica fechada por baixo — o resto das estatísticas já está na Classificação pública.
+async function secEstatisticas(el) {
+  const res = (await DB.listResultados()).map((r) => JSON.parse(r.json || '{}'));
+  const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
+  const L = Object.values(calcularElo(res.map((r) => r.jogo), cartas)).sort((a, b) => b.elo - a.elo);
+  el.innerHTML = `<div class="secbar"><div><h2>Elo</h2><p class="mute">Só tu vês. A forma de cada um pelos resultados — parte da carta e mexe com os jogos.</p></div></div>
+    ${L.length ? `<section class="cartao"><p class="mute" style="margin-top:0;font-size:13px">Overall 60 = 1000; 10 pontos de carta = 100 de Elo. "Forma" = quanto os jogos mexeram: ganhar contra o previsto sobe, perder desce.
+      Nas Equipas há a opção "Ajustar pela forma": soma a forma ÷ 10 ao overall, no máximo ±10 % da carta. Cada jogador vê só a sua seta no perfil.</p>
+    <div class="tscroll"><table class="liga"><tr><th>Jogador</th><th>Elo</th><th>Forma</th><th>J</th><th>Último</th></tr>
+    ${L.map((x, i) => `<tr><td><span class="tpos p${i + 1}">${i + 1}</span>${esc(nomeDe(A.players.find((p) => p.id === x.id) || { nome: x.nome }))}</td><td><b>${x.elo}</b></td><td class="${x.forma > 0 ? 'sobe' : x.forma < 0 ? 'desce' : ''}">${x.forma > 0 ? '+' : ''}${Math.round(x.forma)}</td><td>${x.jogos}</td><td>${x.ultimo > 0 ? '▲' : x.ultimo < 0 ? '▼' : '='}</td></tr>`).join('')}</table></div></section>`
+      : `<div class="cartao">${vazio('📈', 'O Elo aparece depois do primeiro jogo registado.')}</div>`}
+    <details class="cartao"><summary><b>Tabela completa com o pé de todos</b> <span class="mute">(só aqui se vê o pé de cada um)</span></summary><div id="st-t" style="margin-top:10px"></div></details>`;
+  tabelaStats(document.getElementById('st-t'), res, A.players);
+}
+
+// Link de colaborador (antigo "Partilhar"). Serve para alguém SEM PIN de moderador fazer as equipas e marcar o jogo
+// (ex.: o Rui não vai e nenhum moderador vai). A mesma chave é a que os moderadores usam por trás (moderacao/chave):
+// gerar uma nova corta o link antigo E o acesso de quem deixou de ser moderador.
 async function secPartilhar(el) {
   const K = (await DB.getSegredo('partilha'))?.chave;
   const url = K ? `${BASE}#c=${K}` : '';
-  el.innerHTML = `
-    <div class="opcao">
-      <b>Link de colaborador</b>
-      <p class="mute">Quem tiver este link pode, sem login: fazer equipas e marcar o jogo no telemóvel (golos, assistências, GR).
-        Não vê votos nem cartas. Gera um novo quando quiseres — o antigo deixa de funcionar.</p>
+  const mods = A.players.filter((p) => p.moderador && p.ativo !== false);
+  el.innerHTML = `<div class="secbar"><div><h2>Link de colaborador</h2><p class="mute">Para fazer equipas e marcar o jogo sem ser moderador.</p></div></div>
+    <section class="cartao"><div class="cartao-tit">Para que serve</div>
+      <ul class="explica">
+        <li><b>Moderadores (🛡) não precisam dele:</b> entram com o PIN e têm o separador 🛡 Moderador.</li>
+        <li><b>É para quem não é moderador</b> marcar um jogo (ex.: não vais tu nem nenhum moderador). Quem tiver o link faz equipas e marca golos, assistências e GR — sem login. Não vê votos, cartas nem saúde.</li>
+        <li><b>Gerar um link novo</b> anula o antigo e corta também o acesso de quem deixou de ser moderador (é a mesma chave por trás). Faz isto quando tirares o 🛡 a alguém.</li>
+      </ul></section>
+    <section class="cartao"><div class="cartao-tit">Link atual</div>
       ${K ? `<input readonly value="${url}" id="p-url" style="margin-bottom:8px">
         <div class="linha"><button class="prim" id="p-cp">Copiar link</button>
-          <a class="btn" target="_blank" href="https://wa.me/?text=${encodeURIComponent('⚽ Link para fazer as equipas e marcar o jogo:\n' + url)}">Enviar no WhatsApp</a>
-          <a class="btn" target="_blank" href="${url}">Abrir</a></div>` : '<p>Ainda não há link.</p>'}
-      <button id="p-novo" class="${K ? 'perigo' : 'prim'}" style="margin-top:10px">${K ? 'Gerar link novo (anula o antigo)' : 'Criar link'}</button>
-    </div>`;
+          <a class="btn" target="_blank" href="https://wa.me/?text=${encodeURIComponent('⚽ Link para fazer as equipas e marcar o jogo de hoje:\n' + url)}">Enviar no WhatsApp</a>
+          <a class="btn" target="_blank" href="${url}">Abrir</a></div>` : '<p class="mute">Ainda não há link — sem ele os moderadores também não conseguem abrir o jogo.</p>'}
+      <button id="p-novo" class="${K ? 'perigo' : 'prim'}" style="margin-top:10px">${K ? 'Gerar link novo (anula o antigo)' : 'Criar link'}</button></section>
+    <section class="cartao"><div class="cartao-tit">🛡 Moderadores (${mods.length})</div>
+      ${mods.length ? `<div class="chips">${mods.map((p) => `<span class="chip">${foto(p)}${esc(nomeDe(p))}</span>`).join('')}</div>` : '<p class="mute" style="margin:0">Nenhum.</p>'}
+      <p class="mute" style="font-size:12px;margin:8px 0 0">Marcam-se em Plantel e cartas → Jogadores, com o botão 🛡.</p></section>`;
   document.getElementById('p-cp')?.addEventListener('click', () => copiar(url));
   document.getElementById('p-novo').onclick = async () => {
-    if (K && !confirm('O link atual deixa de funcionar. Continuar?')) return;
+    if (K && !confirm('O link atual deixa de funcionar (e quem deixou de ser moderador perde o acesso). Continuar?')) return;
     await DB.setSegredo('partilha', { chave: novoToken(24) });
     await publicarRetrato();
     secPartilhar(el);
   };
+}
+
+// Posição indicativa de cada um (DEF/MED/AVA, sem notas) para desenhar as equipas no campo da página do jogo.
+// Fica em public/posicoes (só a letra da posição; o rating continua escondido). Corre quando o admin abre a app.
+async function publicarPosicoes() {
+  const ativos = A.players.filter((p) => p.ativo !== false);
+  const cartas = calcularCartas(ativos, A.votes, A.conv);
+  const pos = Object.fromEntries(ativos.filter((p) => !p.convidado && cartas[p.id]?.posicao).map((p) => [p.id, cartas[p.id].posicao]));
+  const antes = (await DB.getPublic('posicoes').catch(() => null))?.pos || {};
+  if (JSON.stringify(antes) === JSON.stringify(pos)) return;
+  await DB.setPublic('posicoes', { ts: Date.now(), pos });
 }
 
 // ---------- Votação ----------
@@ -1378,56 +2209,6 @@ async function secVotacao(el) {
 }
 
 // ---------- Cartas ----------
-function secCartas(el) {
-  const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
-  const lista = A.players.filter((p) => p.ativo !== false).sort((a, b) => (cartas[b.id].overall ?? 0) - (cartas[a.id].overall ?? 0));
-  el.innerHTML = `
-    <div class="opcao"><b>Cartas pessoais (cada um vê só a sua, no separador 👤 Eu)</b>
-      <div class="linha" style="margin-top:6px"><span id="cp-estado" class="mute">…</span><button class="peq" id="cp-toggle">…</button></div></div>
-    <div class="linha"><button class="prim" id="pub">Publicar cartas de todos</button><button id="esconder">Esconder</button>
-      </div>
-    <p class="mute">Só tu vês isto. Ninguém sabe das cartas até carregares em Publicar (ficam em ${BASE}#cartas).<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p>
-    <div class="cartas">${lista.map((p) => htmlCarta(p, cartas[p.id])).join('')}</div>
-    <h3>Votos por votante (só tu vês)</h3>
-    <select id="vsel"><option value="">— escolhe —</option>${A.votes.map((v) => `<option value="${v.id}">${esc(nomeDe(A.players.find((p) => p.id === v.voter) || { nome: '?' }))}</option>`).join('')}</select>
-    <div id="vdet"></div>
-    <h3>Votos recebidos por jogador (só tu vês)</h3>
-    <select id="rsel"><option value="">— escolhe o jogador —</option>${[...A.players].filter((p) => !p.convidado).map((p) => `<option value="${p.id}">${esc(nomeDe(p))}</option>`).join('')}</select>
-    <div id="rdet"></div>`;
-  document.getElementById('pub').onclick = async () => {
-    await DB.setPublic('cartas', { visivel: true, ts: Date.now(), cartas: lista.filter((p) => !p.convidado).map((p) => ({ p: { nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '' }, c: cartas[p.id] })) });
-    toast('Cartas publicadas');
-  };
-  document.getElementById('esconder').onclick = async () => { await DB.setPublic('cartas', { visivel: false }); toast('Cartas escondidas'); };
-  (async () => {
-    const estado = (await DB.getPublic('estado')) || {}, on = !!estado.cartasPessoais;
-    document.getElementById('cp-estado').textContent = on ? '🟢 Visíveis' : '🔴 Escondidas';
-    const b = document.getElementById('cp-toggle');
-    b.textContent = on ? 'Esconder' : 'Mostrar a cada um a sua';
-    b.className = 'peq ' + (on ? 'perigo' : 'prim');
-    b.onclick = async () => { await DB.setPublic('estado', { ...estado, cartasPessoais: !on }); await publicarCartasPessoais(); secCartas(el); };
-  })();
-  // Quem votou num jogador e que notas lhe deu (mais a média aparada que entra na carta).
-  document.getElementById('rsel').onchange = (e) => {
-    const id = e.target.value, el2 = document.getElementById('rdet');
-    if (!id) return (el2.innerHTML = '');
-    const nmv = (v) => esc(nomeDe(A.players.find((p) => p.id === v.voter) || { nome: '?' }));
-    const deram = A.votes.filter((v) => v.voter !== id && v.r?.[id] && !v.r[id].skip).sort((x, y) => nmv(x).localeCompare(nmv(y), 'pt'));
-    const nc = A.votes.filter((v) => v.voter !== id && v.r?.[id]?.skip);
-    const media = (v) => { const n = AREAS.map((a) => v.r[id][a.k]).filter((x) => typeof x === 'number'); return n.length ? (n.reduce((a, b) => a + b, 0) / n.length).toFixed(1) : '–'; };
-    const c = cartas[id];
-    el2.innerHTML = `<p class="mute">${deram.length} votaram · ${nc.length} não conhecem${nc.length ? ` (${nc.map(nmv).join(', ')})` : ''}</p>
-      <div style="overflow-x:auto"><table><tr><th>Votante</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}<th>Média</th><th title="Jogos em que o votante e este jogador estiveram juntos (mesma equipa ou contra)">Jogos juntos</th><th>Peso</th></tr>
-      ${deram.map((v) => { const n = A.juntos?.[v.voter]?.[id] || 0, pts = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>${Math.round(pesoVoto(pts) * 100)}%</td></tr>`; }).join('')}
-      ${c ? `<tr><td><b>Carta</b> <small class="mute">(média aparada e pesada)</small></td>${AREAS.map((a) => `<td><b>${c.stats[a.k] != null ? c.stats[a.k].toFixed(1) : '–'}</b></td>`).join('')}<td><b>${c.overall ?? '–'}</b></td></tr>` : ''}</table></div>`;
-  };
-  document.getElementById('vsel').onchange = (e) => {
-    const v = A.votes.find((x) => x.id === e.target.value);
-    document.getElementById('vdet').innerHTML = !v ? '' : `<table><tr><th>Jogador</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}</tr>
-      ${Object.entries(v.r || {}).map(([id, r]) => `<tr><td>${esc(nomeDe(A.players.find((p) => p.id === id) || { nome: '?' }))}</td>${r.skip ? `<td colspan="${AREAS.length}" class="mute">não conhece</td>` : AREAS.map((a) => `<td>${r[a.k] ?? ''}</td>`).join('')}</tr>`).join('')}</table>`;
-  };
-}
-
 // ---------- Equipas ----------
 // A.restr guarda as opções desta sessão: separar [[a,b]], juntar [[a,b,c?]], cor {id:'B'|'P'}.
 // X = { players, cartas, games, addConvidado(d) → id, saveGame(g) } — vem do admin ou do link de colaborador.
@@ -1810,8 +2591,11 @@ async function confirmarModerador() {
   const id = lsGet('meu-perfil'); const antes = lsGet('sou-moderador') === '1';
   let agora = false;
   try { agora = !!id && !!(await DB.listPlayers()).find((p) => p.id === id)?.moderador; } catch { return; }
-  if (agora !== antes) { lsSet('sou-moderador', agora ? '1' : ''); if (!agora && A.pubTab === 'mod') A.pubTab = 'eu'; paginaInicio(); }
+  if (agora !== antes) lsSet('sou-moderador', agora ? '1' : '');
+  document.querySelector('#nav a[data-r="mod"]').hidden = !agora;
 }
+// À entrada, mostra logo o separador 🛡 a quem já se sabe que é moderador (confirmarModerador confirma depois).
+document.querySelector('#nav a[data-r="mod"]').hidden = lsGet('sou-moderador') !== '1';
 const MOD_DISP = (() => { let d = lsGet('futebol-disp'); if (!d) { d = novoToken(10); lsSet('futebol-disp', d); } return d; })();
 
 // Mudou no telemóvel de outro moderador: redesenha a barra e, se não houver nada a meio aqui, a secção aberta.
@@ -1901,7 +2685,7 @@ async function paginaJogo(el) {
   const todos = juntarPerfis(players, perfis);
   const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
   const sair = (t) => { $app.innerHTML = `<div class="fim"><p>${t}</p><button class="prim" id="ir-eu">👤 Ir para o meu perfil</button></div>`;
-    document.getElementById('ir-eu').onclick = () => { A.pubTab = 'eu'; paginaInicio(); }; };
+    document.getElementById('ir-eu').onclick = () => { location.hash = '#eu'; }; };
   if (!eu || !(await DB.ligacaoOk(eu.id))) return sair('Entra primeiro no teu perfil com o PIN.');
   if (!eu.moderador) return sair('Este separador é só para os moderadores. Fala com o Rui.');
   const K = (await DB.getModeracao('chave').catch(() => null))?.chave;
@@ -1910,28 +2694,52 @@ async function paginaJogo(el) {
 }
 
 // =====================================================================
+// Destino da barra de navegação de cada rota; as outras são subpáginas (com ← no topo).
+const NAV = { '': 'inicio', '#': 'inicio', '#jogos': 'jogos', '#jogadores': 'jogadores', '#cartas': 'jogadores', '#tabela': 'tabela', '#eu': 'eu', '#admin': 'admin',
+  '#votar': 'eu', '#jogo': 'mod' };
+const PRINCIPAIS = ['', '#', '#jogos', '#jogadores', '#cartas', '#tabela', '#eu', '#admin', '#jogo'];
+const PAI = { '#votar': '#eu', '#definicoes': '#eu' };
+const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.startsWith('#jogo=') ? '#jogos' : h.startsWith('#votar=') ? '#' : '#');
+// Profundidade dentro da app, guardada no histórico: o ← só volta atrás se viemos de uma página da app.
+if (history.state?.n == null) history.replaceState({ n: 0 }, '');
+let profundidade = history.state.n;
+document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(location.hash); };
 async function rota() {
   const h = location.hash;
-  // No admin, o botão do topo leva ao próprio perfil (👤); fora dele, ao admin (⚙).
-  const lnk = document.getElementById('lnk-admin');
-  if (h === '#admin') { lnk.textContent = '👤'; lnk.href = '#eu'; lnk.title = 'O meu perfil'; }
-  else { lnk.textContent = '⚙'; lnk.href = '#admin'; lnk.title = 'Administração'; }
-  lnk.setAttribute('aria-label', lnk.title);
-  if (h === '#eu') A.pubTab = 'eu';
+  const destino = NAV[h] || (h.startsWith('#jogador=') ? 'jogadores' : h.startsWith('#jogo=') ? 'jogos' : h.startsWith('#votar=') ? 'inicio' : null);
+  document.querySelectorAll('#nav a[data-r]').forEach((a) => (a.dataset.r === destino ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+  document.getElementById('voltar').hidden = PRINCIPAIS.includes(h);
+  document.getElementById('lnk-def').classList.toggle('on', h === '#definicoes');
+  $app.className = ['#votar', '#jogo', '#definicoes'].includes(h) || h.startsWith('#votar=') || h.startsWith('#c=') ? 'estreito' : '';
   document.body.classList.remove('modo-jogo');
+  document.querySelectorAll('.folha-fundo').forEach((f) => f.remove());   // uma folha aberta não passa para a página seguinte
+  // Esqueleto enquanto os dados chegam (páginas públicas), em vez de ficar a página anterior.
+  if (['', '#', '#jogos', '#jogadores', '#cartas', '#tabela'].includes(h) || h.startsWith('#jogador=') || h.startsWith('#jogo=')) $app.innerHTML = esqueleto();
   pararAoVivo();
-  if (h === '#jogo') A.pubTab = 'mod';
+  confirmarModerador();
   try {
+    if (h === '#jogo') { A.pubTab = 'mod'; titulo('🛡 Moderador'); $app.innerHTML = '<div id="pub"></div>'; return await paginaJogo(document.getElementById('pub')); }
     if (h === '#admin') return await paginaAdmin();
-    if (h === '#cartas') return await paginaCartas();
     if (h.startsWith('#c=')) return await paginaColab(h.slice(3));
+    if (h === '#jogos') return await paginaJogos();
+    if (h === '#jogadores' || h === '#cartas') return await paginaJogadores();
+    if (h === '#tabela') return await paginaTabela();
+    if (h === '#definicoes') return await paginaDefinicoes();
+    if (h.startsWith('#jogador=')) return await paginaJogador(decodeURIComponent(h.slice(9)));
+    if (h.startsWith('#jogo=')) return await paginaJogoPub(decodeURIComponent(h.slice(6)));
+    if (h === '#eu' || h === '#votar' || h.startsWith('#votar=')) return await paginaEu(h === '#eu' ? 'eu' : 'votar', h.startsWith('#votar=') ? decodeURIComponent(h.slice(7)) : null);
     return await paginaInicio();
   } catch (e) {
     console.error(e);
     $app.innerHTML = `<p class="centro">Erro: ${esc(e.message)}</p>`;
   }
 }
-window.addEventListener('hashchange', rota);
+window.addEventListener('hashchange', () => {
+  if (history.state?.n == null) history.replaceState({ n: profundidade + 1 }, '');
+  profundidade = history.state.n;
+  window.scrollTo(0, 0);
+  rota();
+});
 rota();
 
 // ---------- Reportar um problema (ticket) ----------
@@ -1993,7 +2801,8 @@ document.getElementById('ticket').onclick = abrirTicket;
 
 // ---------- App instalável (PWA) ----------
 // Android/Chrome/Edge: botão "Instalar app" quando o browser deixa. iPhone: o Safari não tem botão — explica-se o caminho.
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch((e) => console.error(e));
+// App instalável: o service worker só existe no site real (na cópia de demonstração não há sw.js).
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !DB.demo) navigator.serviceWorker.register('sw.js').catch((e) => console.error(e));
 const instalada = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 const $inst = document.getElementById('instalar');
 let pedidoInstalar = null;
