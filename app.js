@@ -1547,12 +1547,24 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
   });
   const fmt = fmtStat, pub = modo === 'publico';
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
+  // Telemóvel (pedido do Rui, 23/10: nada de arrastar para o lado): a tabela pública mostra só as colunas que cabem,
+  // com a forma por baixo do nome. "Mais informações" troca para as outras colunas; tudo o resto está no perfil de cada um.
+  const estreito = pub && innerWidth < 600;
+  const CURTO = { j: 'J', v: 'V', e: 'E', d: 'D', pts: 'Pts', pv: '%V', g: 'G', gj: 'G/J', a: 'A', ag: 'AG', cab: 'Cab', pen: 'Pen', grJ: 'GR', sofr10: 'Sofr', penDef: 'PD' };
+  let vis = cols;
+  if (estreito) {
+    const base = A.statsMais ? ['nome', 'v', 'e', 'd', 'gj', 'ag', 'cab', 'pen'] : ['nome', 'j', 'pts', 'g', 'a', 'pv'];
+    if (!base.includes(ord)) base[base.length - 1] = ord;   // a coluna por que se ordena fica sempre à vista
+    vis = base.map((k) => cols.find(([c]) => c === k)).filter(Boolean).map(([k, n]) => [k, k === 'nome' ? n : CURTO[k] || n]);
+  }
+  const forma = (id) => formaDe(id, res).map((r) => `<i class="res-${r}" title="${r === 'V' ? 'Vitória' : r === 'E' ? 'Empate' : 'Derrota'}">${r}</i>`).join('');
   el.innerHTML = `<p class="mute">${jogos} jogos registados. Toca num cabeçalho (ou usa "Ordenar por") para ordenar; tocar outra vez inverte.<br><small>G/J só conta jogos com golos registados; Min GR/J e Sofr./10min só jogos com as trocas de GR registadas.</small></p>
     <div class="linha" style="margin-bottom:8px"><label style="margin:0">Ordenar por <select id="st-ord" style="width:auto">${cols.map(([k, n]) => `<option value="${k}" ${k === ord ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
       <button class="peq" id="st-inv" title="Inverter a ordem">${cresce ? '▲ menor primeiro' : '▼ maior primeiro'}</button>
       ${modo === 'publico' ? `<button class="peq" id="st-mais">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}</div>
-    <div class="tscroll"><table class="tstats${pub ? ' liga' : ''}"><tr>${cols.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}${pub ? '<th>Forma</th>' : ''}</tr>
-    ${L.map((s, i) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${cols.map(([k]) => `<td${k === ord ? ' class="ord"' : ''}>${k === 'nome' ? (pub ? `<span class="tpos p${i + 1}">${i + 1}</span><a class="lnk-j" href="#jogador=${esc(s.id)}">${esc(nomeAtual(s))}</a>` : esc(nomeAtual(s))) : fmt(k, s[k], s)}</td>`).join('')}${pub ? `<td class="tforma">${formaDe(s.id, res).map((r) => `<i class="res-${r}" title="${r === 'V' ? 'Vitória' : r === 'E' ? 'Empate' : 'Derrota'}">${r}</i>`).join('')}</td>` : ''}</tr>`).join('')}</table></div>`;
+    <div class="tscroll"><table class="tstats${pub ? ' liga' : ''}${estreito ? ' estreita' : ''}"><tr>${vis.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}${pub && !estreito ? '<th>Forma</th>' : ''}</tr>
+    ${L.map((s, i) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${vis.map(([k]) => `<td${k === ord ? ' class="ord"' : ''}>${k === 'nome' ? (pub ? `<span class="tpos p${i + 1}">${i + 1}</span><a class="lnk-j" href="#jogador=${esc(s.id)}">${esc(nomeAtual(s))}</a>${estreito ? `<span class="tforma mini">${forma(s.id)}</span>` : ''}` : esc(nomeAtual(s))) : fmt(k, s[k], s)}</td>`).join('')}${pub && !estreito ? `<td class="tforma">${forma(s.id)}</td>` : ''}</tr>`).join('')}</table></div>
+    ${estreito ? `<p class="mute" style="font-size:12px;margin:8px 0 0">${A.statsMais ? 'V/E/D = vitórias, empates, derrotas · AG = autogolos · Cab = golos de cabeça · Pen = penáltis marcados.' : 'J = jogos · Pts = pontos (3 por vitória, 1 por empate) · G = golos · A = assistências.'} Toca num nome para ver tudo.</p>` : ''}`;
   el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => { if (th.dataset.o === ord) A.statsInv = !A.statsInv; else A.statsInv = false; tabelaStats(el, res, players, th.dataset.o, destaque, modo); }));
   el.querySelector('#st-ord').onchange = (e) => { A.statsInv = false; tabelaStats(el, res, players, e.target.value, destaque, modo); };
   el.querySelector('#st-inv').onclick = () => { A.statsInv = !A.statsInv; tabelaStats(el, res, players, ord, destaque, modo); };

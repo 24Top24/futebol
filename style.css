@@ -810,3 +810,17 @@ td.sobe { color: var(--vitoria); font-weight: 800; } td.desce { color: var(--der
 .av-op .av-igual.on { background: var(--empate); }
 .av-op .av-melhor.on { background: var(--vitoria); }
 @media (max-width: 400px) { .av-op button { min-width: 48px; } .av-j { padding: 8px; gap: 8px; } }
+
+/* Telemóvel (Rui, 23/10): nada que obrigue a arrastar para o lado */
+.cfiltro { flex-wrap: wrap; overflow-x: visible; }
+.atabs { flex-wrap: wrap; overflow-x: visible; }
+.atabs button { flex: 1 0 auto; padding: 7px 8px; font-size: 13px; }
+table.liga.estreita { table-layout: fixed; width: 100%; font-size: 13px; }
+table.liga.estreita th:first-child, table.liga.estreita td:first-child { width: auto; max-width: none; position: static; box-shadow: none; }
+table.liga.estreita th:not(:first-child), table.liga.estreita td:not(:first-child) { width: 36px; padding: 8px 2px; }
+table.liga.estreita td:first-child { white-space: normal; padding: 7px 4px; }
+table.liga.estreita td:first-child .lnk-j { display: inline-block; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.tforma.mini { display: block; margin: 3px 0 0 30px; line-height: 1; }
+.tforma.mini i { width: 13px; height: 13px; font-size: 7.5px; margin: 0 1px 0 0; }
+table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
+@media (max-width: 599px) { .tscroll:has(table.estreita) { overflow-x: visible; margin: 0; padding: 0; } }
