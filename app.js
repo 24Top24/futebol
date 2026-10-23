@@ -101,7 +101,22 @@ async function dadosPublicos() {
 const minuto = (t) => Math.floor(t / 60000) + 1;
 // Posições com empates (Rui, 23/10): quem tem o mesmo valor fica com o mesmo lugar (1, 1, 1, 4…) e ninguém fica de fora.
 // L já vem ordenada; v(x) = o valor que conta (maior = melhor). Devolve o lugar de cada um, pela mesma ordem.
-const lugares = (L, v) => L.map((x) => 1 + L.filter((y) => v(y) > v(x)).length);
+// v2 (opcional) = desempate: só ficam no mesmo lugar se também empatarem nele.
+const lugares = (L, v, v2 = () => 0) => L.map((x) => 1 + L.filter((y) => v(y) > v(x) || (v(y) === v(x) && v2(y) > v2(x))).length);
+// Minutos que cada um jogou em jogos com os golos registados (os fechados só com o vencedor não contam).
+// Desempate de golos e assistências (Rui, 23/10): quem marcou/assistiu mais por minuto jogado fica à frente.
+function minutosJogados(res) {
+  const M = {};
+  for (const { jogo: j } of res) {
+    if (!j || j.fase !== 'fim' || j.semGolos || !(j.eventos || []).length) continue;
+    const ult = Math.max(0, ...(j.eventos || []).map((e) => e.t || 0));
+    const dur = Math.max(j.fimEpoch && j.inicioEpoch ? j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0) : 0, ult) / 60000;
+    for (const x of [...(j.brancos || []), ...(j.pretos || [])]) M[x.id] = (M[x.id] || 0) + dur;
+  }
+  return M;
+}
+// Por minuto (golos ou assistências), para desempatar; sem minutos registados = 0.
+const porMin = (M, s, k) => (M[s.id] ? s[k] / M[s.id] : 0);
 const esqueleto = () => `<div class="esq" aria-busy="true" aria-label="A carregar"><i class="e-cab"></i><i></i><i></i><i class="e-curta"></i><i></i></div>`;
 
 // Marcadores de cada lado por baixo do resultado (como na FotMob): nome e minutos. Nunca o pé; penálti sim.
@@ -182,14 +197,16 @@ async function paginaInicio() {
   // Líderes (só golos e assistências: são públicos) e últimos resultados.
   const S = estatisticas(res);
   const nm = (s) => esc(nomeDe(todos.find((p) => p.id === s.id) || { nome: s.nome }));
+  // Só os 5 primeiros; em empate fica à frente quem tem mais por minuto jogado (G/min ou A/min).
+  const M = minutosJogados(res);
   const lideres = (k, t) => {
-    const T = S.filter((s) => s[k] > 0).sort((a, b) => b[k] - a[k] || nm(a).localeCompare(nm(b), 'pt'));
-    const pos = lugares(T, (x) => x[k]);
-    const dentro = T.filter((_, i) => pos[i] <= 5);   // os 5 primeiros lugares, com todos os empatados
-    const L = dentro.slice(0, 8), resto = dentro.slice(8);
+    const T = S.filter((s) => s[k] > 0).sort((a, b) => b[k] - a[k] || porMin(M, b, k) - porMin(M, a, k) || nm(a).localeCompare(nm(b), 'pt'));
+    const pos = lugares(T, (x) => x[k], (x) => porMin(M, x, k));
+    const L = T.slice(0, 5);
+    const dica = (s) => (M[s.id] ? `${n1(porMin(M, s, k) * 90, 2)} por 90 min (${Math.round(M[s.id])} min jogados)` : '');
     return L.length ? `<section class="cartao"><div class="cartao-tit">${t}<a href="#tabela">Tabela →</a></div><ol class="lideres">
-    ${L.map((s, i) => `<li><a href="#jogador=${esc(s.id)}"><span class="pos">${i && pos[i] === pos[i - 1] ? '=' : pos[i]}</span>${av(todos.find((p) => p.id === s.id) || { nome: s.nome })}<span class="nm">${nm(s)}</span><span class="v">${s[k]}</span></a></li>`).join('')}</ol>
-    ${resto.length ? `<p class="mute" style="font-size:12px;margin:6px 0 0">Também com ${resto[0][k]}: ${resto.map(nm).join(', ')}.</p>` : ''}</section>` : '';
+    ${L.map((s, i) => `<li><a href="#jogador=${esc(s.id)}" title="${dica(s)}"><span class="pos">${pos[i]}</span>${av(todos.find((p) => p.id === s.id) || { nome: s.nome })}<span class="nm">${nm(s)}</span><span class="v">${s[k]}</span></a></li>`).join('')}</ol>
+    <p class="mute" style="font-size:11px;margin:6px 0 0">Em empate, fica à frente quem ${k === 'g' ? 'marcou' : 'assistiu'} mais por minuto jogado.</p></section>` : '';
   };
   const ultimos = res.length ? `<section class="cartao"><div class="cartao-tit">Últimos resultados<a href="#jogos">Ver todos →</a></div>
     ${res.slice(0, 5).map((r) => linhaResultado(r, todos.find((p) => p.id === euId))).join('')}</section>` : '';
@@ -473,9 +490,11 @@ async function paginaTabela() {
   const minJ = A.cCat === 'pv' ? Math.min(3, Math.max(1, ...estatisticas(resF).map((s) => s.j))) : 1;
   const pessoa = (s) => todos.find((p) => p.id === s.id) || { nome: s.nome };
   const nomeP = (s) => nomeDe(pessoa(s));
+  const M = minutosJogados(resF);
+  const desemp = (x) => (A.cCat === 'g' || A.cCat === 'a' ? porMin(M, x, A.cCat) : 0);   // golos/assist.: por minuto jogado
   const T = estatisticas(resF).map(comMedias).filter((s) => s.j >= minJ && s[A.cCat] > 0)
-    .sort((a, b) => b[A.cCat] - a[A.cCat] || nomeP(a).localeCompare(nomeP(b), 'pt'));
-  const pos = lugares(T, (x) => x[A.cCat]);
+    .sort((a, b) => b[A.cCat] - a[A.cCat] || desemp(b) - desemp(a) || nomeP(a).localeCompare(nomeP(b), 'pt'));
+  const pos = lugares(T, (x) => x[A.cCat], desemp);
   const L = T.slice(0, 3);
   const fmtV = (s) => (A.cCat === 'pv' ? Math.round(s.pv * 100) + '%' : s[A.cCat]);
   // Também empatados com o último do pódio, mas que não cabem nele.
@@ -1557,15 +1576,17 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
   // Ordem: por defeito Pontos (maior primeiro); tocar de novo na mesma coluna inverte. Desempate: %V, golos, nome.
   // Nome e Sofr./10min começam do menor para o maior. Sem valor (–) fica sempre no fim.
   const cresce = (ord === 'nome' || ord === 'sofr10') !== !!A.statsInv;
+  const Mmin = minutosJogados(res);
+  const desemp = (x) => (ord === 'g' || ord === 'a' ? porMin(Mmin, x, ord) : 0);   // golos/assist.: por minuto jogado
   const val = (s) => (ord === 'nome' ? null : s[ord]);
   L.sort((x, y) => {
     if (ord === 'nome') return (cresce ? 1 : -1) * nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
     const a = val(x), b = val(y);
     if (a == null || b == null) return (a == null) - (b == null);
-    return (cresce ? a - b : b - a) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
+    return (cresce ? a - b : b - a) || (cresce ? desemp(x) - desemp(y) : desemp(y) - desemp(x)) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
   });
   const fmt = fmtStat, pub = modo === 'publico';
-  const lugar = ord === 'nome' ? L.map((_, i) => i + 1) : lugares(L, (x) => (x[ord] == null ? -Infinity : cresce ? -x[ord] : x[ord]));
+  const lugar = ord === 'nome' ? L.map((_, i) => i + 1) : lugares(L, (x) => (x[ord] == null ? -Infinity : cresce ? -x[ord] : x[ord]), (x) => (cresce ? -desemp(x) : desemp(x)));
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   // Telemóvel (pedido do Rui, 23/10: nada de arrastar para o lado): a tabela pública mostra só as colunas que cabem,
   // com a forma por baixo do nome. "Mais informações" troca para as outras colunas; tudo o resto está no perfil de cada um.
