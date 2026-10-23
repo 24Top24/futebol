@@ -1583,7 +1583,9 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
     if (ord === 'nome') return (cresce ? 1 : -1) * nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
     const a = val(x), b = val(y);
     if (a == null || b == null) return (a == null) - (b == null);
-    return (cresce ? a - b : b - a) || (cresce ? desemp(x) - desemp(y) : desemp(y) - desemp(x)) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
+    // Golos/assist.: depois por minuto jogado e por fim o nome (Rui, 23/10). O resto: %V, golos e nome.
+    if (ord === 'g' || ord === 'a') return (cresce ? a - b : b - a) || (cresce ? desemp(x) - desemp(y) : desemp(y) - desemp(x)) || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
+    return (cresce ? a - b : b - a) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
   });
   const fmt = fmtStat, pub = modo === 'publico';
   const lugar = ord === 'nome' ? L.map((_, i) => i + 1) : lugares(L, (x) => (x[ord] == null ? -Infinity : cresce ? -x[ord] : x[ord]), (x) => (cresce ? -desemp(x) : desemp(x)));
