@@ -830,3 +830,4 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .v-acoes .ok { flex: 2; }
 .v-acoes .nc { flex: 1; background: var(--amarelo-sub); font-weight: 700; }
 .vrow:not(.aberto) .v-acoes .nc { flex: 0 0 auto; margin-left: auto; }
+.pd-nota { text-align: center; font-size: 12px; margin: -10px 0 14px; }

@@ -99,6 +99,9 @@ async function dadosPublicos() {
   return { todos: juntarPerfis(players, perfis), res: lerRes(jogosPub), games };
 }
 const minuto = (t) => Math.floor(t / 60000) + 1;
+// Posições com empates (Rui, 23/10): quem tem o mesmo valor fica com o mesmo lugar (1, 1, 1, 4…) e ninguém fica de fora.
+// L já vem ordenada; v(x) = o valor que conta (maior = melhor). Devolve o lugar de cada um, pela mesma ordem.
+const lugares = (L, v) => L.map((x) => 1 + L.filter((y) => v(y) > v(x)).length);
 const esqueleto = () => `<div class="esq" aria-busy="true" aria-label="A carregar"><i class="e-cab"></i><i></i><i></i><i class="e-curta"></i><i></i></div>`;
 
 // Marcadores de cada lado por baixo do resultado (como na FotMob): nome e minutos. Nunca o pé; penálti sim.
@@ -179,9 +182,15 @@ async function paginaInicio() {
   // Líderes (só golos e assistências: são públicos) e últimos resultados.
   const S = estatisticas(res);
   const nm = (s) => esc(nomeDe(todos.find((p) => p.id === s.id) || { nome: s.nome }));
-  const top = (k) => S.filter((s) => s[k] > 0).sort((a, b) => b[k] - a[k] || a.j - b.j).slice(0, 5);
-  const lideres = (k, t) => { const L = top(k); return L.length ? `<section class="cartao"><div class="cartao-tit">${t}<a href="#tabela">Tabela →</a></div><ol class="lideres">
-    ${L.map((s, i) => `<li><a href="#jogador=${esc(s.id)}"><span class="pos">${i + 1}</span>${av(todos.find((p) => p.id === s.id) || { nome: s.nome })}<span class="nm">${nm(s)}</span><span class="v">${s[k]}</span></a></li>`).join('')}</ol></section>` : ''; };
+  const lideres = (k, t) => {
+    const T = S.filter((s) => s[k] > 0).sort((a, b) => b[k] - a[k] || nm(a).localeCompare(nm(b), 'pt'));
+    const pos = lugares(T, (x) => x[k]);
+    const dentro = T.filter((_, i) => pos[i] <= 5);   // os 5 primeiros lugares, com todos os empatados
+    const L = dentro.slice(0, 8), resto = dentro.slice(8);
+    return L.length ? `<section class="cartao"><div class="cartao-tit">${t}<a href="#tabela">Tabela →</a></div><ol class="lideres">
+    ${L.map((s, i) => `<li><a href="#jogador=${esc(s.id)}"><span class="pos">${i && pos[i] === pos[i - 1] ? '=' : pos[i]}</span>${av(todos.find((p) => p.id === s.id) || { nome: s.nome })}<span class="nm">${nm(s)}</span><span class="v">${s[k]}</span></a></li>`).join('')}</ol>
+    ${resto.length ? `<p class="mute" style="font-size:12px;margin:6px 0 0">Também com ${resto[0][k]}: ${resto.map(nm).join(', ')}.</p>` : ''}</section>` : '';
+  };
   const ultimos = res.length ? `<section class="cartao"><div class="cartao-tit">Últimos resultados<a href="#jogos">Ver todos →</a></div>
     ${res.slice(0, 5).map((r) => linhaResultado(r, todos.find((p) => p.id === euId))).join('')}</section>` : '';
   $app.innerHTML = `<div class="grelha2"><div>${votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
@@ -462,14 +471,20 @@ async function paginaTabela() {
   const resF = A.cPer === '10' ? res.slice(0, 10) : A.cPer === '30d' ? res.filter((r) => (r.jogo.inicioEpoch || 0) >= Date.now() - 30 * 864e5) : res;
   // % vitórias só conta a partir de 3 jogos no período (1 jogo ganho não é 100 %).
   const minJ = A.cCat === 'pv' ? Math.min(3, Math.max(1, ...estatisticas(resF).map((s) => s.j))) : 1;
-  const L = estatisticas(resF).map(comMedias).filter((s) => s.j >= minJ && s[A.cCat] > 0)
-    .sort((a, b) => b[A.cCat] - a[A.cCat] || a.j - b.j).slice(0, 3);
-  const fmtV = (s) => (A.cCat === 'pv' ? Math.round(s.pv * 100) + '%' : s[A.cCat]);
   const pessoa = (s) => todos.find((p) => p.id === s.id) || { nome: s.nome };
+  const nomeP = (s) => nomeDe(pessoa(s));
+  const T = estatisticas(resF).map(comMedias).filter((s) => s.j >= minJ && s[A.cCat] > 0)
+    .sort((a, b) => b[A.cCat] - a[A.cCat] || nomeP(a).localeCompare(nomeP(b), 'pt'));
+  const pos = lugares(T, (x) => x[A.cCat]);
+  const L = T.slice(0, 3);
+  const fmtV = (s) => (A.cCat === 'pv' ? Math.round(s.pv * 100) + '%' : s[A.cCat]);
+  // Também empatados com o último do pódio, mas que não cabem nele.
+  const fora = L.length === 3 ? T.slice(3).filter((s) => s[A.cCat] === L[2][A.cCat]) : [];
   const podio = L.length ? `<div class="podio" aria-label="Os 3 melhores em ${esc(CAT.find(([k]) => k === A.cCat)[1])}">${[1, 0, 2].map((i) => (L[i]
-    ? `<a class="pd pd${i + 1}" href="#jogador=${esc(L[i].id)}"><span class="pd-av">${foto(pessoa(L[i]))}${i === 0 ? '<i class="pd-coroa">👑</i>' : ''}</span>
-        <b class="pd-nome">${esc(nomeDe(pessoa(L[i])))}</b><span class="pd-v">${fmtV(L[i])}</span><div class="pd-base"><span>${i + 1}.º</span></div></a>`
-    : '<div class="pd pd-vazio"></div>')).join('')}</div>` : '';
+    ? `<a class="pd pd${Math.min(pos[i], 3)}" href="#jogador=${esc(L[i].id)}"><span class="pd-av">${foto(pessoa(L[i]))}${pos[i] === 1 ? '<i class="pd-coroa">👑</i>' : ''}</span>
+        <b class="pd-nome">${esc(nomeP(L[i]))}</b><span class="pd-v">${fmtV(L[i])}</span><div class="pd-base"><span>${pos[i]}.º</span></div></a>`
+    : '<div class="pd pd-vazio"></div>')).join('')}</div>
+    ${fora.length ? `<p class="mute pd-nota">Também ${pos[2]}.º, com ${fmtV(L[2])}: ${fora.map((x) => esc(nomeP(x))).join(', ')}.</p>` : ''}` : '';
   const chips = (L2, atual, attr) => `<div class="chips cfiltro">${L2.map(([k, n]) => `<button class="chip ${atual === k ? 'on' : ''}" ${attr}="${k}">${n}</button>`).join('')}</div>`;
   $app.innerHTML = `<div class="cfiltros">${chips(PER, A.cPer, 'data-per')}${chips(CAT, A.cCat, 'data-cat')}</div>
     ${resF.length ? `${podio}<div class="cartao" id="pub"></div>` : vazio('📊', 'Sem jogos neste período.')}`;
@@ -1550,6 +1565,7 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
     return (cresce ? a - b : b - a) || y.pv - x.pv || y.g - x.g || nomeAtual(x).localeCompare(nomeAtual(y), 'pt');
   });
   const fmt = fmtStat, pub = modo === 'publico';
+  const lugar = ord === 'nome' ? L.map((_, i) => i + 1) : lugares(L, (x) => (x[ord] == null ? -Infinity : cresce ? -x[ord] : x[ord]));
   const jogos = res.filter((r) => r.jogo?.fase === 'fim').length;
   // Telemóvel (pedido do Rui, 23/10: nada de arrastar para o lado): a tabela pública mostra só as colunas que cabem,
   // com a forma por baixo do nome. "Mais informações" troca para as outras colunas; tudo o resto está no perfil de cada um.
@@ -1567,7 +1583,7 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
       <button class="peq" id="st-inv" title="Inverter a ordem">${cresce ? '▲ menor primeiro' : '▼ maior primeiro'}</button>
       ${modo === 'publico' ? `<button class="peq" id="st-mais">${A.statsMais ? '▾ Menos informações' : '▸ Mais informações'}</button>` : ''}</div>
     <div class="tscroll"><table class="tstats${pub ? ' liga' : ''}${estreito ? ' estreita' : ''}"><tr>${vis.map(([k, n]) => `<th data-o="${k}" style="cursor:pointer;${k === ord ? 'color:var(--verde)' : ''}">${n}${k === ord ? (cresce ? ' ▲' : ' ▼') : ''}</th>`).join('')}${pub && !estreito ? '<th>Forma</th>' : ''}</tr>
-    ${L.map((s, i) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${vis.map(([k]) => `<td${k === ord ? ' class="ord"' : ''}>${k === 'nome' ? (pub ? `<span class="tpos p${i + 1}">${i + 1}</span><a class="lnk-j" href="#jogador=${esc(s.id)}">${esc(nomeAtual(s))}</a>${estreito ? `<span class="tforma mini">${forma(s.id)}</span>` : ''}` : esc(nomeAtual(s))) : fmt(k, s[k], s)}</td>`).join('')}${pub && !estreito ? `<td class="tforma">${forma(s.id)}</td>` : ''}</tr>`).join('')}</table></div>
+    ${L.map((s, i) => `<tr${s.id === destaque ? ' class="eu"' : ''}>${vis.map(([k]) => `<td${k === ord ? ' class="ord"' : ''}>${k === 'nome' ? (pub ? `<span class="tpos p${lugar[i]}">${lugar[i]}</span><a class="lnk-j" href="#jogador=${esc(s.id)}">${esc(nomeAtual(s))}</a>${estreito ? `<span class="tforma mini">${forma(s.id)}</span>` : ''}` : esc(nomeAtual(s))) : fmt(k, s[k], s)}</td>`).join('')}${pub && !estreito ? `<td class="tforma">${forma(s.id)}</td>` : ''}</tr>`).join('')}</table></div>
     ${estreito ? `<p class="mute" style="font-size:12px;margin:8px 0 0">${A.statsMais ? 'V/E/D = vitórias, empates, derrotas · AG = autogolos · Cab = golos de cabeça · Pen = penáltis marcados.' : 'J = jogos · Pts = pontos (3 por vitória, 1 por empate) · G = golos · A = assistências.'} Toca num nome para ver tudo.</p>` : ''}`;
   el.querySelectorAll('[data-o]').forEach((th) => (th.onclick = () => { if (th.dataset.o === ord) A.statsInv = !A.statsInv; else A.statsInv = false; tabelaStats(el, res, players, th.dataset.o, destaque, modo); }));
   el.querySelector('#st-ord').onchange = (e) => { A.statsInv = false; tabelaStats(el, res, players, e.target.value, destaque, modo); };
