@@ -1200,7 +1200,7 @@ async function perfilEu(eu, todos) {
   else carta = `<div class="cartao-tit">Carta de jogador <span class="tag">🔒 só tu</span></div><div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
     ${htmlMudanca(mc)}
     <p class="mute" style="text-align:center">${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
-  carta += htmlElo(mc?.elo, !!estado?.usarElo);
+  carta += htmlElo(mc?.elo, estado?.usarElo !== false);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   const tudo = juntarPerfis(players, perfis);
   const { meus } = renderPerfil($app, eu, { todos: tudo, res, pub, proprio: true, estado, mc, saude, treinos, pedido, carta });
@@ -1367,7 +1367,7 @@ async function paginaAdmin() {
     return;
   }
   await recarregar();
-  A.usarElo ??= !!(await DB.getPublic('estado'))?.usarElo;
+  A.usarElo ??= (await DB.getPublic('estado'))?.usarElo !== false;   // por defeito: ligado (Rui, 28/10)
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
   publicarCartasPessoais().catch((e) => console.error(e));
@@ -2346,8 +2346,10 @@ function secEquipas(el, X = A.ctxEq) {
 
   g('usar-elo')?.addEventListener('change', async (e) => {
     A.usarElo = e.target.checked;
-    const estado = (await DB.getPublic('estado')) || {};
-    await DB.setPublic('estado', { ...estado, usarElo: A.usarElo });   // o perfil de cada um diz se o Elo está a contar
+    try {
+      const estado = (await DB.getPublic('estado')) || {};
+      await DB.setPublic('estado', { ...estado, usarElo: A.usarElo });   // o perfil de cada um diz se o Elo está a contar
+    } catch { /* moderador/colaborador: sem permissão, vale só para estas equipas */ }
   });
   g('gerar').onclick = () => {
     const ids = [...A.sel];
@@ -2608,8 +2610,13 @@ async function paginaColab(K, mod = null) {
     const players = [...base, ...conv.filter((c) => !base.some((b) => b.id === c.id))];
     const cartas = Object.fromEntries(retrato.jogadores.map((p) => [p.id, { overall: p.overall, stats: p.stats || {} }]));
     for (const c of conv) { const n = notaDe(c) ?? 6; cartas[c.id] = { overall: Math.round(n * 10), stats: Object.fromEntries(AREAS.map((a) => [a.k, n])), estimada: true }; }
+    // Elo também para quem faz equipas sem ser admin: a partir dos jogos fechados (públicos, sem saúde).
+    const [jogosPub, estado] = await Promise.all([DB.listJogosPub().catch(() => []), DB.getPublic('estado').catch(() => null)]);
+    const fechados = jogosPub.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
+    A.usarElo ??= estado?.usarElo !== false;
     return {
       players, cartas, games: await DB.listPart(K, 'games'),
+      elo: calcularElo(fechados, cartas),
       irMarcador() { A.colabTab = 'marc'; A.carregarJa = true; paginaColab(K, mod); window.scrollTo(0, 0); },
       async addConvidado(d) {
         const id = novoToken(10);
