@@ -280,6 +280,14 @@ tbody tr:hover td, table tr:hover td { background: color-mix(in srgb, var(--bg3)
 .carta .nm { font-weight: 900; text-transform: uppercase; font-size: 15px; border-bottom: 1px solid #0003; padding-bottom: 4px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .carta .st { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; font-size: 13px; text-align: left; }
 .carta .st b { display: inline-block; min-width: 22px; }
+/* Cada stat numa só linha: valor · seta · valor antigo riscado · sigla (antes a seta partia a stat em 2–3 linhas
+   e as cartas ficavam com alturas diferentes). */
+.carta .st span { display: flex; align-items: baseline; white-space: nowrap; min-width: 0; overflow: hidden; }
+.carta .st span b { min-width: 20px; }
+.carta .st span em { font-style: normal; margin-left: 4px; }
+.carta .st span:has(.seta) em { font-size: 11px; margin-left: 3px; }
+.carta .st .seta { vertical-align: baseline; font-size: 9px; margin: 0 0 0 1px; }
+.carta .st .antigo { vertical-align: baseline; font-size: 10px; margin: 0; }
 
 /* ---------- Votação por área ---------- */
 .vcab { position: sticky; top: var(--topo); z-index: 4; background: var(--bg); padding: 8px 0 6px; }

@@ -1357,7 +1357,7 @@ function htmlCarta(p, c, d = null) {
   return `<div class="carta ${tier(ov)}">
     <div class="ov">${ov ?? '–'}${d ? seta(ov, d.ov) : ''}${c?.posicao ? `<small title="Posição indicativa: ${POSICOES.find((x) => x.k === c.posicao)?.nome}">${c.posicao}</small>` : ''}</div>${c?.ficticia ? '<div class="prov">fictícia</div>' : c?.provisoria || c?.estimada ? `<div class="prov">${c.estimada ? 'estimada' : 'provisória'}</div>` : ''}
     ${foto(p)}<div class="nm">${esc(nomeDe(p))}</div>
-    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b> ${a.ab}${d ? seta(st[a.k] != null ? Math.round(st[a.k] * 10) : null, d.st?.[a.k]) : ''}</span>`).join('')}</div>
+    <div class="st">${AREAS.map((a) => `<span><b>${st[a.k] != null ? Math.round(st[a.k] * 10) : '–'}</b>${d ? seta(st[a.k] != null ? Math.round(st[a.k] * 10) : null, d.st?.[a.k]) : ''}<em>${a.ab}</em></span>`).join('')}</div>
   </div>`;
 }
 
