@@ -911,6 +911,13 @@ function htmlMudanca(mc) {
   return `<p class="mute mudanca">Desde o jogo de ${esc(quando)}: <b>${sg(tot)}</b> no global — ${partes.join(' e ')}.</p>`;
 }
 
+function eloMini(elo) {
+  const j = elo?.jogos || 0, pct = elo?.pct ?? 0, max = ELO.maxPct * 100;
+  const n = !j || Math.abs(pct) < 1 ? 0 : Math.abs(pct) < max / 3 ? 1 : Math.abs(pct) < (2 * max) / 3 ? 2 : 3;
+  const s = !j ? '–' : !n ? '=' : (pct > 0 ? '▲' : '▼').repeat(n);
+  return `<div class="elo-mini ${!n ? 'igual' : pct > 0 ? 'sobe' : 'desce'}" title="Elo: ${j} jogo(s)">Elo ${s}${n ? ` <small>${pct > 0 ? '+' : ''}${n1(elo.ajuste, 1)}</small>` : ''}</div>`;
+}
+
 // Seta do Elo: a "forma" pelos resultados — ▲ conta acima da carta a fazer as equipas no próximo jogo, ▼ abaixo.
 // Nunca mexe na carta. 10 pontos de Elo = 1 ponto de overall.
 // Setas pelo peso do ajuste face ao máximo permitido (10 % do overall): ▲ até 1/3, ▲▲ até 2/3, ▲▲▲ perto do máximo.
@@ -1372,13 +1379,19 @@ async function paginaAdmin() {
   A.usarElo ??= (await DB.getPublic('estado'))?.usarElo !== false;   // por defeito: ligado (Rui, 28/10)
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
-  publicarCartasPessoais().catch((e) => console.error(e));
+  publicarCartasPessoais().then(async () => {
+    A.minhas = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
+    if (A.tab === 'jog' && A.plVista === 'cartas') renderAdmin();
+  }).catch((e) => console.error(e));
   publicarPosicoes().catch((e) => console.error(e));
 }
 async function recarregar() {
   let perfis;
   let jogos;
-  [A.players, perfis, A.votes, A.games, jogos] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listVotes(), DB.listGames(), DB.listJogosPub()]);
+  let minhas;
+  [A.players, perfis, A.votes, A.games, jogos, minhas] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listVotes(), DB.listGames(), DB.listJogosPub(),
+    DB.listMinhasCartas().catch(() => [])]);
+  A.minhas = Object.fromEntries(minhas.map((x) => [x.id, x]));   // setas (ref. antes do último jogo) e Elo de cada um
   // Quem jogou com quem: só jogos terminados e registados (relógio/telemóvel) — equipas escolhidas não contam (Rui, 14/10).
   const reg = jogos.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
   A.conv = pontosConvivio(reg);      // pontos para o peso dos votos (sobem e descem)
@@ -1945,7 +1958,8 @@ function secJogadores(el) {
     if (vista === 'votacao') return secVotacao(c);
     const q = A.plBusca.trim().toLowerCase();
     const bate = (p) => !q || `${p.nome} ${p.alcunha || ''} ${p.alias || ''}`.toLowerCase().includes(q);
-    if (vista === 'cartas') c.innerHTML = `<div class="cartas clic">${porOvr.filter(bate).map((p) => `<div data-ed="${p.id}" role="button" tabindex="0">${htmlCarta(p, cartas[p.id])}</div>`).join('')}</div>`;
+    if (vista === 'cartas') c.innerHTML = `<div class="cartas clic">${porOvr.filter(bate).map((p) => `<div data-ed="${p.id}" role="button" tabindex="0">${htmlCarta(p, cartas[p.id], A.minhas?.[p.id]?.ref || null)}${eloMini(A.minhas?.[p.id]?.elo)}</div>`).join('')}</div>
+      <p class="mute" style="font-size:12px;margin:8px 0 0">▲▼ nas notas = comparado com a carta antes do último jogo. Por baixo de cada carta, a seta do Elo (forma pelos resultados, conta a fazer equipas).</p>`;
     else c.innerHTML = `<div class="plant-lista">${A.players.filter(bate).map(linha).join('')}</div>`;
     if (!c.firstElementChild?.children.length) c.innerHTML = vazio('🔎', A.players.length ? 'Nenhum jogador com esse nome.' : 'Ainda não há jogadores — carrega em "＋ Adicionar jogador".');
     c.querySelectorAll('[data-ed]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); fichaJogador(el, A.players.find((x) => x.id === b.dataset.ed), cartas); }));

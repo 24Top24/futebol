@@ -851,3 +851,6 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .v-acoes .nc { flex: 1; background: var(--amarelo-sub); font-weight: 700; }
 .vrow:not(.aberto) .v-acoes .nc { flex: 0 0 auto; margin-left: auto; }
 .pd-nota { text-align: center; font-size: 12px; margin: -10px 0 14px; }
+
+.elo-mini { text-align: center; font-size: 13px; font-weight: 700; margin-top: 4px; }
+.elo-mini.sobe { color: var(--verde); } .elo-mini.desce { color: var(--vermelho); } .elo-mini.igual { color: var(--mute); }
