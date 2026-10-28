@@ -387,15 +387,17 @@ function statsJogoHTML(j, ev, dur) {
   }).join('')}${j.semGolos ? '<p class="mute">Jogo fechado sem golos registados: só se sabe quem ganhou.</p>' : ''}`;
 }
 
-// As duas equipas desenhadas num campo (Brancos em cima, Pretos em baixo). O 1.º guarda-redes de cada equipa fica na baliza;
+// As duas equipas desenhadas num campo (Brancos em cima, Pretos em baixo). Na baliza fica quem mais minutos lá esteve
+// (todos rodam; empate → quem entrou primeiro);
 // os outros distribuem-se pela posição indicativa da carta (defesa, médio, avançado — public/posicoes, publicada pelo admin).
 // Quem não tem posição fica no meio-campo. É só para ficar bonito: as posições no jogo não são registadas.
 function campoHTML(j, ev, quem, pos = {}) {
   const ORD = ['DEF', 'MED', 'AVA'];
   const meio = (e, ids) => {
     const tur = (j.turnos || []).filter((x) => x.equipa === e).sort((a, b) => a.de - b.de);
-    const g1 = tur[0]?.jogador;
     const minGR = (pid) => Math.round(tur.filter((x) => x.jogador === pid).reduce((s, x) => s + x.ate - x.de, 0) / 60000);
+    const g1 = [...new Set(tur.map((x) => x.jogador))].filter((pid) => ids.includes(pid))
+      .reduce((m, pid) => (m == null || minGR(pid) > minGR(m) ? pid : m), null);
     const resto = ids.filter((pid) => pid !== g1);
     const temPos = resto.some((pid) => pos[pid]);
     const linhas = temPos ? ORD.map((k) => resto.filter((pid) => (ORD.includes(pos[pid]) ? pos[pid] : 'MED') === k)).filter((l) => l.length)
@@ -411,7 +413,7 @@ function campoHTML(j, ev, quem, pos = {}) {
   const ids = (l) => (l || []).map((x) => x.id);
   const algumaPos = [...ids(j.brancos), ...ids(j.pretos)].some((pid) => pos[pid]);
   return `<div class="campo"><div class="cbaliza cima"></div>${meio('B', ids(j.brancos))}<div class="clinha"></div>${meio('P', ids(j.pretos))}<div class="cbaliza baixo"></div></div>
-    <p class="mute" style="font-size:12px;margin:8px 0 0">⚽ golos · 🅰️ assistências · 🧤 minutos na baliza${(j.turnos || []).length ? ' (o primeiro guarda-redes está na baliza)' : ''}.
+    <p class="mute" style="font-size:12px;margin:8px 0 0">⚽ golos · 🅰️ assistências · 🧤 minutos na baliza${(j.turnos || []).length ? ' (na baliza está quem lá esteve mais tempo)' : ''}.
       ${algumaPos ? 'Os outros estão pela posição indicativa da carta (DEF, MED, AVA); no jogo as posições não são registadas.' : 'As posições no campo não são registadas.'}</p>`;
 }
 
