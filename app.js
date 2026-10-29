@@ -1,4 +1,6 @@
-import { DB, novoToken, novoPin } from './db.js?v=33';
+import { DB, novoToken, novoPin } from './db.js?v=34';
+import { paginaLigas, paginaEntrar, ligaGuardada } from './ligas-ui.js?v=1';
+import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual } from './ligas.js?v=1';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
@@ -92,7 +94,9 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 // =====================================================================
 // PÁGINAS PÚBLICAS  (Início · Jogos · Jogadores · Tabela · Eu) — barra de navegação em baixo / ao lado
 // =====================================================================
-const titulo = (t) => (document.getElementById('titulo').textContent = t);
+// Numa liga extra, o título leva o nome da liga por baixo (para nunca se confundir com a principal).
+let NOME_LIGA = null;
+const titulo = (t) => { const el = document.getElementById('titulo'); el.textContent = t; if (NOME_LIGA) el.insertAdjacentHTML('beforeend', ` <small style="font-size:11px;opacity:.7">🏆 ${esc(NOME_LIGA)}</small>`); };
 const av = (p) => `<span class="av">${foto(p)}</span>`;
 const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}</span>${t}${extra ? `<div style="margin-top:12px">${extra}</div>` : ''}</div>`;
 // Jogos terminados (resumo público), do mais recente para o mais antigo.
@@ -543,10 +547,11 @@ async function paginaJogadores() {
 async function paginaTabela() {
   titulo('Classificação');
   const { todos, res } = await dadosPublicos();
-  const PER = [['tudo', 'Época toda'], ['10', 'Últimos 10 jogos'], ['30d', 'Últimos 30 dias']];
+  // Épocas de setembro a agosto (decisão do Rui, 29/10): por defeito a época atual; "Sempre" junta todas.
+  const PER = [...epocasDe(res).map((e) => ['ep:' + e, 'Época ' + nomeEpoca(e)]), ['tudo', 'Sempre'], ['10', 'Últimos 10 jogos'], ['30d', 'Últimos 30 dias']];
   const CAT = [['pts', 'Pontos'], ['g', 'Golos'], ['a', 'Assistências'], ['pv', '% vitórias']];
-  A.cPer ||= 'tudo'; A.cCat ||= 'pts';   // por defeito: Pontos (pedido do Rui, 23/10)
-  const resF = A.cPer === '10' ? res.slice(0, 10) : A.cPer === '30d' ? res.filter((r) => (r.jogo.inicioEpoch || 0) >= Date.now() - 30 * 864e5) : res;
+  A.cPer ||= 'ep:' + epocaAtual(); A.cCat ||= 'pts';   // por defeito: Pontos (pedido do Rui, 23/10)
+  const resF = A.cPer.startsWith('ep:') ? filtrarEpoca(res, A.cPer.slice(3)) : A.cPer === '10' ? res.slice(0, 10) : A.cPer === '30d' ? res.filter((r) => (r.jogo.inicioEpoch || 0) >= Date.now() - 30 * 864e5) : res;
   // % vitórias só conta a partir de 3 jogos no período (1 jogo ganho não é 100 %).
   const minJ = A.cCat === 'pv' ? Math.min(3, Math.max(1, ...estatisticas(resF).map((s) => s.j))) : 1;
   const pessoa = (s) => todos.find((p) => p.id === s.id) || { nome: s.nome };
@@ -586,6 +591,7 @@ async function paginaDefinicoes() {
   el.insertAdjacentHTML('beforeend', `<section class="cartao def-lista" style="margin-top:16px">
     <button id="def-ticket"><span>🐞</span><div><b>Reportar um problema</b><small>Vai direto para o Rui, com o ecrã onde estavas.</small></div></button>
     <button id="def-instalar"><span>📲</span><div><b>Instalar a app</b><small>Fica no ecrã do telemóvel como uma app.</small></div></button>
+    <a href="#ligas"><span>🏆</span><div><b>Ligas e épocas</b><small>As tuas ligas, criar uma liga e as tuas estatísticas por liga e época.</small></div></a>
     <a href="#admin"><span>🔧</span><div><b>Administração</b><small>Só para o Rui (entra com a conta Google do administrador).</small></div></a></section>
     <p class="mute" style="font-size:12px">Privacidade: as notas que dás só o organizador as vê; a idade, a altura, o peso e o pé com que marcas só tu (e o Rui) os vês.</p>`);
   document.getElementById('def-ticket').onclick = abrirTicket;
@@ -2965,11 +2971,13 @@ async function paginaJogo(el) {
 const NAV = { '': 'inicio', '#': 'inicio', '#jogos': 'jogos', '#jogadores': 'jogadores', '#cartas': 'jogadores', '#tabela': 'tabela', '#eu': 'eu', '#admin': 'admin',
   '#votar': 'eu', '#jogo': 'mod' };
 const PRINCIPAIS = ['', '#', '#jogos', '#jogadores', '#cartas', '#tabela', '#eu', '#admin', '#jogo'];
-const PAI = { '#votar': '#eu', '#definicoes': '#eu' };
+const PAI = { '#votar': '#eu', '#definicoes': '#eu', '#ligas': '#definicoes' };
 const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.startsWith('#jogo=') ? '#jogos' : h.startsWith('#votar=') ? '#' : '#');
 // Profundidade dentro da app, guardada no histórico: o ← só volta atrás se viemos de uma página da app.
 // Veio de "Partilhar → Futebolada": tira o ?partilha=1 do endereço (o ficheiro espera na cache até o perfil o ler).
 if (new URLSearchParams(location.search).has('partilha')) history.replaceState(null, '', location.pathname + (location.hash || '#eu'));
+// Liga ativa (escolhida em ⚙️ → Ligas): tudo o que se lê e grava passa a ser dessa liga.
+{ const lg = ligaGuardada(); if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } } }
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
@@ -2995,6 +3003,8 @@ async function rota() {
     if (h === '#jogadores' || h === '#cartas') return await paginaJogadores();
     if (h === '#tabela') return await paginaTabela();
     if (h === '#definicoes') return await paginaDefinicoes();
+    if (h === '#ligas') return await paginaLigas($app, { esc, toast, titulo });
+    if (h.startsWith('#entrar=')) return await paginaEntrar($app, decodeURIComponent(h.slice(8)), { esc, toast, titulo });
     if (h.startsWith('#jogador=')) return await paginaJogador(decodeURIComponent(h.slice(9)));
     if (h.startsWith('#jogo=')) return await paginaJogoPub(decodeURIComponent(h.slice(6)));
     if (h === '#eu' || h === '#votar' || h.startsWith('#votar=')) return await paginaEu(h === '#eu' ? 'eu' : 'votar', h.startsWith('#votar=') ? decodeURIComponent(h.slice(7)) : null);
