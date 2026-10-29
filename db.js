@@ -126,6 +126,7 @@ function demoDb() {
 }
 
 // ---------- FIRESTORE ----------
+const desembrulharFis = (d) => { if (!d?.fisicoJson) return d; const { fisicoJson, ...r } = d; try { return { ...r, fisico: JSON.parse(fisicoJson) }; } catch { return r; } };
 async function fireDb() {
   const [{ initializeApp }, fs, au] = await Promise.all([
     import(SDK + 'firebase-app.js'),
@@ -216,7 +217,8 @@ async function fireDb() {
       if (!u || u.isAnonymous) return [];
       const [adm, mem, conta] = await Promise.all([
         getDocs(fs.query(collection(db, 'ligas'), fs.where('admins', 'array-contains', u.uid))).then((q) => q.docs.map((d) => ({ id: d.id, ...d.data() }))).catch(() => []),
-        getDocs(fs.query(fs.collectionGroup(db, 'membros'), fs.where('uid', '==', u.uid))).then((q) => q.docs.map((d) => ({ id: d.ref.parent.parent.id, player: d.data().player }))).catch(() => []),
+        // filiacoes/{liga}_{uid} = { uid, liga, player }: a lista das ligas de cada pessoa (sem precisar de índices).
+        getDocs(fs.query(collection(db, 'filiacoes'), fs.where('uid', '==', u.uid))).then((q) => q.docs.map((d) => ({ id: d.data().liga, player: d.data().player }))).catch(() => []),
         getRaiz('contas', u.uid).catch(() => null),
       ]);
       const out = new Map();
@@ -244,6 +246,7 @@ async function fireDb() {
       b.update(doc(db, 'autorizados', u.uid), { criadas: (a.criadas || 0) + 1 });
       b.set(doc(db, 'ligas', id, 'players', pid), { nome: meuNome || u.displayName || 'Eu', ativo: true });
       b.set(doc(db, 'ligas', id, 'membros', u.uid), { uid: u.uid, player: pid, ts: agora });
+      b.set(doc(db, 'filiacoes', `${id}_${u.uid}`), { uid: u.uid, liga: id, player: pid, ts: agora });
       await b.commit();
       return { id, player: pid };
     },
@@ -257,12 +260,13 @@ async function fireDb() {
     async aprovarPedido(liga, uid, player) {
       const b = writeBatch(db);
       b.set(doc(db, 'ligas', liga, 'membros', uid), { uid, player, ts: Date.now() });
+      b.set(doc(db, 'filiacoes', `${liga}_${uid}`), { uid, liga, player, ts: Date.now() });
       b.delete(doc(db, 'ligas', liga, 'pedidos', uid));
       await b.commit();
     },
     recusarPedido: (liga, uid) => deleteDoc(doc(db, 'ligas', liga, 'pedidos', uid)),
     listMembros: (liga) => listRaiz('ligas', liga, 'membros'),
-    tirarMembro: (liga, uid) => deleteDoc(doc(db, 'ligas', liga, 'membros', uid)),
+    async tirarMembro(liga, uid) { const b = writeBatch(db); b.delete(doc(db, 'ligas', liga, 'membros', uid)); b.delete(doc(db, 'filiacoes', `${liga}_${uid}`)); await b.commit(); },
     setLiga: (id, d) => setDoc(doc(db, 'ligas', id), d, { merge: true }),
     apagarConta: (uid) => deleteDoc(doc(db, 'contas', uid)),
     // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
@@ -296,9 +300,10 @@ async function fireDb() {
       for (const d of (await getDocs(Cl('saude', id, 'treinos'))).docs) await deleteDoc(d.ref);
       await deleteDoc(D('saude', id));
     },
-    getMinhaCarta: (id) => get('minhacarta', id),
-    listMinhasCartas: () => list('minhacarta'),
-    setMinhaCarta: (id, d) => setDoc(D('minhacarta', id), d),
+    // O resumo físico tem listas dentro de listas (zonas, grelha), que o Firestore não aceita: guarda-se em texto (fisicoJson).
+    getMinhaCarta: async (id) => desembrulharFis(await get('minhacarta', id)),
+    listMinhasCartas: async () => (await list('minhacarta')).map(desembrulharFis),
+    setMinhaCarta: (id, d) => { const { fisico, ...r } = d || {}; return setDoc(D('minhacarta', id), fisico ? { ...r, fisicoJson: JSON.stringify(fisico) } : r); },
     getVotes: (id) => get('votes', id),
     listVotes: () => list('votes'),
     saveVote: (voter, target, rating) =>

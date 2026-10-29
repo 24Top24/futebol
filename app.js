@@ -1,4 +1,4 @@
-import { DB, novoToken, novoPin } from './db.js?v=34';
+import { DB, novoToken, novoPin } from './db.js?v=35';
 import { paginaLigas, paginaEntrar, ligaGuardada } from './ligas-ui.js?v=1';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual } from './ligas.js?v=1';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';

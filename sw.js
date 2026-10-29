@@ -1,6 +1,6 @@
 // Service worker da app instalável (PWA). Rede primeiro: abre sempre a versão mais recente quando há rede;
 // sem rede mostra a última que viu. Os dados (Firestore) precisam sempre de rede — não são guardados aqui.
-const CACHE = 'futebolada-v72';
+const CACHE = 'futebolada-v73';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {

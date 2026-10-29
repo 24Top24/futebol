@@ -3,7 +3,7 @@
 //                  gestão da liga (admin: convite, pedidos, jogadores) e, para o Rui, quem pode criar ligas.
 //  #entrar=<id>  — link de convite: pedir para entrar numa liga (com a conta Google).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'); null = a principal.
-import { DB, novoToken } from './db.js?v=34';
+import { DB, novoToken } from './db.js?v=35';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, tituloLiga, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=1';
 
