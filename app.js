@@ -644,7 +644,10 @@ function escolherPerfil(todos) {
     <p class="mute" style="margin-top:14px">O teu nome não aparece? Fala com o Rui.</p>`;
   document.getElementById('g-entrar')?.addEventListener('click', async () => {
     try {
-      const c = await DB.entrarGoogle(), p = c && lista.find((x) => x.id === c.player);
+      let c = await DB.entrarGoogle();
+      // O Rui (admin) ainda sem conta ligada: liga-se já ao seu perfil.
+      if (!c && (await DB.isAdmin(await DB.user()))) { const pf = await DB.getSegredo('perfil').catch(() => null); if (pf?.eu) { await DB.contaAdmin(pf.eu); c = await DB.minhaConta(); } }
+      const p = c && lista.find((x) => x.id === c.player);
       if (!p) return toast('Esta conta Google ainda não está ligada a nenhum jogador. Entra com o PIN e liga-a nos teus dados.');
       lsSet('meu-perfil', p.id); lsSet('perfil-ok-' + p.id, '1'); seguir(p, todos);
     } catch (e) { console.error(e); toast('Não deu para entrar com o Google'); }
