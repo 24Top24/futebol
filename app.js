@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=36';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto } from './ligas-ui.js?v=3';
+import { DB, novoToken, novoPin } from './db.js?v=37';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto } from './ligas-ui.js?v=4';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
@@ -526,7 +526,7 @@ async function paginaJogadores() {
   $app.innerHTML = `<div class="jfiltros"><input id="j-busca" type="search" placeholder="🔎 Procurar jogador…" value="${esc(A.jBusca)}" aria-label="Procurar jogador">
       <label class="jord">Ordenar <select id="j-ord">${ORD.map(([k, n]) => `<option value="${k}" ${k === A.jOrd ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
     ${posicoes.length ? `<div class="chips jpos"><button class="chip ${!A.jPos ? 'on' : ''}" data-pos="">Todos</button>${posicoes.map((x) => `<button class="chip ${A.jPos === x.k ? 'on' : ''}" data-pos="${x.k}">${x.nome}</button>`).join('')}</div>` : ''}
-    ${comCartas ? '' : '<p class="mute" style="font-size:12px;margin:0 0 10px">As cartas ainda estão escondidas — aparecem aqui quando o Rui as mostrar.</p>'}
+    ${comCartas ? '' : '<p class="mute" style="font-size:12px;margin:0 0 10px">🔒 As cartas são privadas: cada um vê a sua no seu perfil.</p>'}
     <div id="j-lista"></div>`;
   const val = (l, k) => (k === 'ov' ? l.c?.overall ?? -1 : k === 'j' ? l.j : 0);
   const desenhar = () => {
@@ -1270,7 +1270,7 @@ function painelGeral(p, d, meus, m, proprio, S, cartaVis, est) {
   let carta = '';
   if (proprio) carta = `<section class="cartao">${d.carta}</section>`;
   else if (cartaVis) carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><div class="eu-carta">${htmlCarta(p, cartaVis)}</div></section>`;
-  else carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><p class="mute" style="margin:0">As cartas ainda estão escondidas — aparecem quando o Rui as mostrar.</p></section>`;
+  else carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><p class="mute" style="margin:0">🔒 As cartas são privadas: cada um vê a sua no seu perfil.</p></section>`;
   const sem = !meus.length ? `<div class="cartao">${vazio('⚽', 'Ainda sem jogos registados.')}</div>` : '';
   return `${proprio ? d.pedido || '' : ''}<div class="grelha2"><div>${sem}${ultima}${formaH}${pfH}${recH}${estH}${ficha}</div><aside>${carta}</aside></div>`;
 }
@@ -2118,8 +2118,7 @@ function secJogadores(el) {
       ${vista === 'votacao' ? '' : `<input id="pl-busca" type="search" placeholder="Procurar jogador…" value="${esc(A.plBusca)}" style="max-width:240px;flex:1">`}</div>
     ${vista === 'cartas' ? `<div class="cartao"><div class="cartao-tit">🃏 Mostrar as cartas</div>
       <div class="linha"><span>Cartas pessoais <span class="mute">(cada um vê só a sua, no 👤 Eu)</span>:</span><span id="cp-estado" class="mute">…</span><button class="peq" id="cp-toggle">…</button></div>
-      <div class="linha" style="margin-top:8px"><span>Cartas de todos <span class="mute">(página Jogadores)</span>:</span><button class="prim peq" id="cp-pub">Publicar</button><button class="peq" id="cp-esconder">Esconder</button></div>
-      <p class="mute" style="font-size:12px;margin:8px 0 0">Só tu vês isto. Ninguém sabe das cartas até carregares em Publicar.<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p></div>` : ''}
+      <p class="mute" style="font-size:12px;margin:8px 0 0">As cartas de todos nunca são públicas: cada um só vê a sua.<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p></div>` : ''}
     <div id="pl-corpo"></div>
     ${vista === 'votacao' ? `<details class="cartao"><summary><b>Votos por votante</b> <span class="mute">(só tu vês)</span></summary>
       <select id="vsel" style="margin-top:10px"><option value="">— escolhe —</option>${A.votes.map((v) => `<option value="${v.id}">${esc(nomeDe(A.players.find((p) => p.id === v.voter) || { nome: '?' }))}</option>`).join('')}</select>
@@ -2156,12 +2155,7 @@ function secJogadores(el) {
   g('pl-add').onclick = () => fichaJogador(el, null, cartas);
   el.querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { A.plVista = b.dataset.v; secJogadores(el); }));
   if (g('pl-busca')) g('pl-busca').oninput = (e) => { A.plBusca = e.target.value; corpo(); };
-  if (g('cp-pub')) {
-    g('cp-pub').onclick = async () => {
-      await DB.setPublic('cartas', { visivel: true, ts: Date.now(), cartas: porOvr.filter((p) => !p.convidado).map((p) => ({ p: { nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '' }, c: cartas[p.id] })) });
-      toast('Cartas publicadas');
-    };
-    g('cp-esconder').onclick = async () => { await DB.setPublic('cartas', { visivel: false }); toast('Cartas escondidas'); };
+  if (g('cp-toggle')) {
     (async () => {
       const estado = (await DB.getPublic('estado')) || {}, on = !!estado.cartasPessoais;
       if (!g('cp-estado')) return;

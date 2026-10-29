@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=36';
+import { DB } from './db.js?v=37';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -196,6 +196,7 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
         <button class="prim" id="lg-criar" style="margin-top:8px">Criar liga</button>`
         : `<p class="mute">${limite ? `Já criaste ${limite.criadas} liga(s), o máximo (${MAX_LIGAS_EXTRA}).` : 'Só o Rui autoriza quem pode criar ligas. Pede-lhe.'}</p>`}
     </section>
+    <section class="cartao"><h3>⌚ O meu relógio</h3><div id="lg-rel"><p class="mute">A carregar…</p></div></section>
     <div id="lg-rui"></div>`;
 
   $app.querySelectorAll('[data-liga]').forEach((b) => (b.onclick = () => mudarLiga(b.dataset.liga || null)));
@@ -207,6 +208,7 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
     try { const r = await naLiga(null, () => DB.criarLiga(idLiga(nome), { nome, meuNome })); await DB.setLiga(r.id, { cor }); toast('Liga criada ✔'); mudarLiga(r.id); }
     catch (err) { console.error(err); e.target.disabled = false; toast(err.message || 'Não deu para criar a liga'); }
   });
+  relogios(document.getElementById('lg-rel'), { esc, toast });
   if (souAdmin) definicoesLiga(document.getElementById('lg-def'), cfg, atual, { esc, toast, refazer });
   if (souRui) naLiga(null, () => autorizacoes(document.getElementById('lg-rui'), { esc, toast, refazer }));
 }
@@ -253,6 +255,23 @@ async function autorizacoes(el, { esc, toast, refazer }) {
       : '<p class="mute">Ainda ninguém ligou a conta Google.</p>'}</section>`;
   el.querySelectorAll('[data-aut]').forEach((b) => (b.onclick = async () => { const c = contas.find((x) => x.id === b.dataset.aut); await naLiga(null, () => DB.autorizar(c.id, nome(c), MAX_LIGAS_EXTRA)); toast('Autorizado ✔'); refazer(); }));
   el.querySelectorAll('[data-desaut]').forEach((b) => (b.onclick = async () => { await naLiga(null, () => DB.desautorizar(b.dataset.desaut)); refazer(); }));
+}
+
+// ⌚ Emparelhar o relógio com a conta Google: o relógio mostra um código; depois confirma no ecrã do relógio.
+// Com ele ligado, o relógio vê as tuas ligas, importa o próximo jogo de qualquer uma e grava lá o jogo (o admin da liga importa-o).
+async function relogios(el, { esc, toast }) {
+  const L = await naLiga(null, () => DB.listRelogios()).catch(() => []);
+  el.innerHTML = `${L.length ? L.map((r) => `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div>⌚ Relógio ${esc(r.id.slice(0, 6))}…
+      <small class="mute">${r.confirmado ? '✔ ligado' : '⏳ falta confirmar no relógio'}</small></div><button class="peq perigo" data-desrel="${esc(r.id)}">Desligar</button></div>`).join('')
+      : '<p class="mute">No relógio: Definições → "Ligar ao telemóvel". Aparece um código de 6 algarismos; escreve-o aqui e confirma no relógio.</p>'}
+    <div class="linha"><input id="rel-cod" inputmode="numeric" maxlength="6" placeholder="código do relógio" style="max-width:170px"><button class="peq prim" id="rel-ok">Ligar relógio</button></div>`;
+  document.getElementById('rel-ok').onclick = async () => {
+    const c = document.getElementById('rel-cod').value.trim();
+    if (!/^\d{6}$/.test(c)) return toast('São 6 algarismos');
+    try { await naLiga(null, () => DB.ligarRelogio(c)); toast('Ligado ✔ — confirma no relógio'); relogios(el, { esc, toast }); }
+    catch (e) { console.error(e); toast(e.message || 'Não deu para ligar o relógio'); }
+  };
+  el.querySelectorAll('[data-desrel]').forEach((b) => (b.onclick = async () => { if (!confirm('Desligar este relógio da tua conta?')) return; await naLiga(null, () => DB.desligarRelogio(b.dataset.desrel)); relogios(el, { esc, toast }); }));
 }
 
 // Link de convite #liga=<id>: abre essa liga e vai para o "Quem és tu?" (a Futebolada semanal é 'futebolada-semanal').

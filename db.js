@@ -55,7 +55,7 @@ function demoDb() {
     async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
     async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     // Ligas: no demo só existe a principal.
-    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {},
+    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
     async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
@@ -290,6 +290,21 @@ async function fireDb() {
     listMembros: (liga) => (liga ? listRaiz('ligas', liga, 'membros') : listRaiz('membros')),
     async tirarMembro(liga, uid) { const b = writeBatch(db); b.delete(doc(db, 'ligas', liga, 'membros', uid)); b.delete(doc(db, 'filiacoes', `${liga}_${uid}`)); await b.commit(); },
     setLiga: (id, d) => setDoc(doc(db, 'ligas', id), d, { merge: true }),
+    // ⌚ Relógios emparelhados com a minha conta Google (o relógio mostra um código de 6 algarismos; ele confirma no ecrã).
+    async ligarRelogio(codigo) {
+      const u = await atual();
+      if (!u || u.isAnonymous) throw new Error('Precisas de entrar com o Google');
+      const e = await getRaiz('emparelhar', codigo).catch(() => null);
+      if (!e?.uid) throw new Error('Código errado ou expirado — vê o código no relógio');
+      await setDoc(doc(db, 'relogios', e.uid), { dono: u.uid, codigo, nome: u.displayName || u.email || 'Eu', ts: Date.now(), confirmado: false });
+      await deleteDoc(doc(db, 'emparelhar', codigo)).catch(() => {});
+      return e.uid;
+    },
+    async listRelogios() {
+      const u = await atual(); if (!u || u.isAnonymous) return [];
+      return (await getDocs(fs.query(collection(db, 'relogios'), fs.where('dono', '==', u.uid)))).docs.map((d) => ({ id: d.id, ...d.data() }));
+    },
+    desligarRelogio: (id) => deleteDoc(doc(db, 'relogios', id)),
     // Definições da liga ativa (nome, cor, pública): a Futebolada semanal guarda-as em public/liga; as outras no próprio documento.
     async getConfigLiga() {
       if (LIGA) { const l = (await getRaiz('ligas', LIGA).catch(() => null)) || {}; return { nome: l.nome || LIGA, cor: l.cor || 'azul', publico: !!l.publico, criador: l.criador, admins: l.admins || [] }; }
