@@ -4,7 +4,7 @@ import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq } from './conquistas-ui.js?v=1';
 import { dnaJogo } from './conquistas.js?v=2';
-import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
+import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -852,10 +852,31 @@ function ligarFisico(eu, todos, saude, treinos, meus) {
   g('fs-novo')?.addEventListener('click', () => formTreino(eu, saude, treinos, meus, null, refrescar));
   document.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => formTreino(eu, saude, treinos, meus, b.dataset.tr, refrescar)));
   document.querySelectorAll('[data-tr-id]').forEach((b) => (b.onclick = () => formTreino(eu, saude, treinos, meus, null, refrescar, treinos.find((t) => t.id === b.dataset.trId))));
+  // Ficheiro que chegou por "Partilhar → Futebolada": abre o formulário já preenchido (o jogo escolhe-se pela hora).
+  if (saude) ficheiroPartilhado().then((f) => {
+    if (!f) return;
+    document.querySelector('[data-pa="fis"]')?.click();
+    formTreino(eu, saude, treinos, meus, null, refrescar, null, f);
+  });
+  else temPartilhado().then((sim) => sim && toast('Para juntar o treino partilhado, ativa primeiro os dados físicos (separador Físico).'));
+}
+
+// "Partilhar → Futebolada" (Android): o service worker guarda o ficheiro na cache 'partilha'; lê-se uma vez e apaga-se.
+const PARTILHA = './ficheiro-partilhado';
+async function temPartilhado() {
+  try { return !!(await (await caches.open('partilha')).match(PARTILHA)); } catch { return false; }
+}
+async function ficheiroPartilhado() {
+  try {
+    const c = await caches.open('partilha'), r = await c.match(PARTILHA);
+    if (!r) return null;
+    await c.delete(PARTILHA);
+    return new File([await r.blob()], decodeURIComponent(r.headers.get('X-Nome') || 'treino'));
+  } catch (e) { console.error(e); return null; }
 }
 
 // Formulário de um treino: ficheiro do relógio (preenche tudo) ou à mão, mais o pré/pós jogo.
-function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) {
+function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null, partilhado = null) {
   const el = document.getElementById('eu-form');
   const t = existente || treinos.find((x) => jogoId && x.jogoId === jogoId) || {};
   let fc = t.fc || [], origem = t.origem || 'manual', inicio = t.inicio || null;
@@ -864,6 +885,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
   el.innerHTML = `<div class="opcao form-treino"><b>⌚ Treino do relógio</b>
     <label>Ficheiro do relógio (.FIT, .TCX ou .GPX)</label><input type="file" id="tr-fich" accept=".fit,.tcx,.gpx">
     <details class="mute" style="font-size:12px"><summary>Como tiro o ficheiro do meu relógio?</summary>
+      <b>Atalho no Android</b> (com a Futebolada instalada no ecrã inicial): em qualquer app onde tenhas o ficheiro, Partilhar → Futebolada, e o treino abre aqui já ligado ao jogo.<br>
       <b>Garmin:</b> Garmin Connect no browser → a atividade → ⚙ → Exportar original (.FIT).<br>
       <b>Apple Watch:</b> a app HealthFit (iPhone) exporta o treino em .FIT; ou liga ao Strava e usa o passo do Strava.<br>
       <b>Wear OS / Samsung / Pixel / Huawei / Amazfit:</b> liga a app do relógio ao Strava → strava.com no browser → a atividade → ⋯ → Exportar GPX.<br>
@@ -885,8 +907,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
       ${t.id ? '<button class="perigo" id="tr-del">Apagar treino</button>' : ''}</div></div>`;
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const g = (id) => document.getElementById(id);
-  g('tr-fich').onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
+  const lerFich = async (f) => {
     try {
       const r = await lerFicheiro(f);
       fc = r.fc; origem = r.origem; inicio = r.inicio;
@@ -901,6 +922,8 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null) 
       g('tr-lido').innerHTML = `✔ Lido: ${r.inicio ? new Date(r.inicio).toLocaleString('pt-PT') : ''} · ${fc.filter(Boolean).length ? `FC em ${fc.length} blocos de 30 s` : 'sem FC'}${jogo ? ' · ligado ao jogo do mesmo dia' : ''}`;
     } catch (err) { console.error(err); toast(err.message || 'Não deu para ler o ficheiro'); }
   };
+  g('tr-fich').onchange = (e) => { if (e.target.files[0]) lerFich(e.target.files[0]); };
+  if (partilhado) lerFich(partilhado);
   g('tr-cancel').onclick = () => (el.innerHTML = '');
   g('tr-del')?.addEventListener('click', async () => {
     if (!confirm('Apagar este treino?')) return;
@@ -2855,6 +2878,8 @@ const PRINCIPAIS = ['', '#', '#jogos', '#jogadores', '#cartas', '#tabela', '#eu'
 const PAI = { '#votar': '#eu', '#definicoes': '#eu' };
 const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.startsWith('#jogo=') ? '#jogos' : h.startsWith('#votar=') ? '#' : '#');
 // Profundidade dentro da app, guardada no histórico: o ← só volta atrás se viemos de uma página da app.
+// Veio de "Partilhar → Futebolada": tira o ?partilha=1 do endereço (o ficheiro espera na cache até o perfil o ler).
+if (new URLSearchParams(location.search).has('partilha')) history.replaceState(null, '', location.pathname + (location.hash || '#eu'));
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
 document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(location.hash); };

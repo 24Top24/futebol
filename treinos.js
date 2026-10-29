@@ -142,6 +142,12 @@ export async function lerFicheiro(file) {
   if (ext === 'fit') return lerFIT(await file.arrayBuffer());
   if (ext === 'tcx') return lerTCX(await file.text());
   if (ext === 'gpx') return lerGPX(await file.text());
+  // Sem extensão conhecida (ficheiros partilhados de outras apps às vezes vêm sem ela): vê o conteúdo.
+  const buf = await file.arrayBuffer();
+  if (String.fromCharCode(...new Uint8Array(buf, 8, Math.min(4, Math.max(0, buf.byteLength - 8)))) === '.FIT') return lerFIT(buf);
+  const txt = new TextDecoder().decode(buf.slice(0, 4000));
+  if (/<TrainingCenterDatabase/i.test(txt)) return lerTCX(new TextDecoder().decode(buf));
+  if (/<gpx[\s>]/i.test(txt)) return lerGPX(new TextDecoder().decode(buf));
   throw new Error('Formato não suportado (usa .FIT, .TCX ou .GPX)');
 }
 
