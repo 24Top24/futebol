@@ -1,6 +1,6 @@
-import { DB, novoToken, novoPin } from './db.js?v=35';
-import { paginaLigas, paginaEntrar, ligaGuardada } from './ligas-ui.js?v=2';
-import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual } from './ligas.js?v=1';
+import { DB, novoToken, novoPin } from './db.js?v=36';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto } from './ligas-ui.js?v=3';
+import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
@@ -95,7 +95,7 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 // PÁGINAS PÚBLICAS  (Início · Jogos · Jogadores · Tabela · Eu) — barra de navegação em baixo / ao lado
 // =====================================================================
 // Numa liga extra, o título leva o nome da liga por baixo (para nunca se confundir com a principal).
-let NOME_LIGA = null;
+let NOME_LIGA = null, MODO_TODAS = false;
 const titulo = (t) => { const el = document.getElementById('titulo'); el.textContent = t; if (NOME_LIGA) el.insertAdjacentHTML('beforeend', ` <small style="font-size:11px;opacity:.7">🏆 ${esc(NOME_LIGA)}</small>`); };
 const av = (p) => `<span class="av">${foto(p)}</span>`;
 const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}</span>${t}${extra ? `<div style="margin-top:12px">${extra}</div>` : ''}</div>`;
@@ -103,7 +103,9 @@ const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}<
 const lerRes = (jogosPub) => jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
   .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
 async function dadosPublicos() {
-  const [players, perfis, jogosPub, games] = await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listJogosPub(), DB.listGames()]);
+  // 🌍 Todas as ligas juntas: jogadores, jogos e equipas de todas as ligas da pessoa, com a mesma pessoa junta.
+  const [players, perfis, jogosPub, games] = MODO_TODAS ? await dadosTodas().then((d) => [d.players, d.perfis, d.jogosPub, d.games])
+    : await Promise.all([DB.listPlayers(), DB.listPerfis(), DB.listJogosPub(), DB.listGames()]);
   return { todos: juntarPerfis(players, perfis), res: lerRes(jogosPub), games };
 }
 const minuto = (t) => Math.floor(t / 60000) + 1;
@@ -1389,7 +1391,7 @@ async function votar(eu, todos) {
     r[p.id] = { ...(r[p.id] || {}), ...parcial };
     r[p.id].t = Date.now(); atualizar.delete(p.id);
     $app.querySelector(`.vrow[data-id="${p.id}"] .tag-atual`)?.remove();
-    try { await DB.saveVote(eu.id, p.id, { ...parcial, t: r[p.id].t }); }
+    try { await DB.saveVote(eu.id, p.id, { ...parcial, t: r[p.id].t }); espelharVoto(p.id, { ...parcial, t: r[p.id].t }); }   // a mesma nota nas outras ligas onde estamos os dois
     catch (e) { console.error(e); r[p.id] = antes; toast('Erro a guardar — tenta outra vez'); }
     atualizarTopo();
   }
@@ -2977,7 +2979,13 @@ const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.sta
 // Veio de "Partilhar → Futebolada": tira o ?partilha=1 do endereço (o ficheiro espera na cache até o perfil o ler).
 if (new URLSearchParams(location.search).has('partilha')) history.replaceState(null, '', location.pathname + (location.hash || '#eu'));
 // Liga ativa (escolhida em ⚙️ → Ligas): tudo o que se lê e grava passa a ser dessa liga.
-{ const lg = ligaGuardada(); if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } } }
+// Todas as ligas são iguais; a "Futebolada semanal" só fica na raiz da base de dados. Cada liga tem as suas cores (o jogador pode trocar).
+{
+  const lg = ligaGuardada();
+  if (lg === TODAS) { MODO_TODAS = true; NOME_LIGA = 'Todas as ligas'; try { localStorage.removeItem('meu-perfil'); } catch {} }
+  else if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } }
+  if (!MODO_TODAS) { const cfg = await DB.getConfigLiga().catch(() => null); aplicarTema(temaEscolhido(DB.ligaAtual()) || cfg?.cor); if (cfg?.nome && DB.ligaAtual()) NOME_LIGA = cfg.nome; }
+}
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
@@ -3003,8 +3011,11 @@ async function rota() {
     if (h === '#jogadores' || h === '#cartas') return await paginaJogadores();
     if (h === '#tabela') return await paginaTabela();
     if (h === '#definicoes') return await paginaDefinicoes();
-    if (h === '#ligas') return await paginaLigas($app, { esc, toast, titulo });
-    if (h.startsWith('#entrar=')) return await paginaEntrar($app, decodeURIComponent(h.slice(8)), { esc, toast, titulo });
+    if (h === '#ligas') return await paginaLigas($app, { esc, toast, titulo, htmlCarta });
+    if (h.startsWith('#liga=') || h.startsWith('#entrar=')) { if (!(await abrirConvite(decodeURIComponent(h.split('=')[1])))) $app.innerHTML = vazio('🤷', 'Esta liga não existe (ou o link está errado).'); return; }
+    // No modo "todas as ligas" só se vê: votar, o perfil e a administração são de uma liga.
+    if (MODO_TODAS && (h === '#eu' || h === '#votar' || h.startsWith('#votar=') || h === '#admin' || h === '#jogo'))
+      { titulo('Todas as ligas'); $app.innerHTML = vazio('🌍', 'Estás a ver todas as tuas ligas juntas. Para votar, ver o teu perfil ou administrar, abre uma liga.', '<a class="btn prim" href="#ligas">🏆 Escolher a liga</a>'); return; }
     if (h.startsWith('#jogador=')) return await paginaJogador(decodeURIComponent(h.slice(9)));
     if (h.startsWith('#jogo=')) return await paginaJogoPub(decodeURIComponent(h.slice(6)));
     if (h === '#eu' || h === '#votar' || h.startsWith('#votar=')) return await paginaEu(h === '#eu' ? 'eu' : 'votar', h.startsWith('#votar=') ? decodeURIComponent(h.slice(7)) : null);

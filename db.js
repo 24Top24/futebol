@@ -55,7 +55,7 @@ function demoDb() {
     async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
     async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     // Ligas: no demo só existe a principal.
-    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; },
+    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
     async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
@@ -196,14 +196,35 @@ async function fireDb() {
         }
       } else user = u || (await au.signInWithPopup(auth, prov)).user;
       await user.getIdToken(true);   // o token passa a dizer google.com (as regras exigem)
-      await setDoc(doc(db, 'contas', user.uid), { player: id, h: lig?.h || null, email: user.email || null, ts: Date.now() });
+      if (LIGA) {
+        // Numa liga das novas: membro (provado com o PIN deste jogador nessa liga) + a lista das ligas da pessoa, num lote.
+        const b = writeBatch(db), agora = Date.now();
+        b.set(doc(db, 'ligas', LIGA, 'membros', user.uid), { uid: user.uid, player: id, h: lig?.h || null, ts: agora });
+        b.set(doc(db, 'filiacoes', `${LIGA}_${user.uid}`), { uid: user.uid, liga: LIGA, player: id, ts: agora });
+        await b.commit();
+      } else {
+        // Futebolada semanal: conta (com e-mail, só o próprio e o Rui leem) + membros/{uid} sem e-mail (junta a pessoa entre ligas).
+        const b = writeBatch(db), agora = Date.now();
+        b.set(doc(db, 'contas', user.uid), { player: id, h: lig?.h || null, email: user.email || null, ts: agora });
+        b.set(doc(db, 'membros', user.uid), { uid: user.uid, player: id, ts: agora });
+        await b.commit();
+      }
       return user.email;
     },
     // Noutro telemóvel: entra com o Google; devolve a conta (ou null se esse Google ainda não está ligado a ninguém).
     async entrarGoogle() { await au.signInWithPopup(auth, new au.GoogleAuthProvider()); return this.minhaConta(); },
-    async desligarGoogle() { const u = await atual(); if (u && !u.isAnonymous) { await deleteDoc(doc(db, 'contas', u.uid)).catch(() => {}); } },
+    async desligarGoogle() {
+      const u = await atual();
+      if (!u || u.isAnonymous) return;
+      if (LIGA) { const b = writeBatch(db); b.delete(doc(db, 'ligas', LIGA, 'membros', u.uid)); b.delete(doc(db, 'filiacoes', `${LIGA}_${u.uid}`)); await b.commit().catch(() => {}); }
+      else { await deleteDoc(doc(db, 'membros', u.uid)).catch(() => {}); await deleteDoc(doc(db, 'contas', u.uid)).catch(() => {}); }
+    },
     // O admin (Google) liga-se ao seu perfil de jogador sem PIN.
-    async contaAdmin(id) { const u = await atual(); if (!u || u.isAnonymous || !id) return; if (!(await getRaiz('contas', u.uid).catch(() => null))) await setDoc(doc(db, 'contas', u.uid), { player: id, h: null, email: u.email || null, ts: Date.now() }); },
+    async contaAdmin(id) {
+      const u = await atual(); if (!u || u.isAnonymous || !id) return;
+      if (!(await getRaiz('contas', u.uid).catch(() => null))) await setDoc(doc(db, 'contas', u.uid), { player: id, h: null, email: u.email || null, ts: Date.now() });
+      if (!(await getRaiz('membros', u.uid).catch(() => null))) await setDoc(doc(db, 'membros', u.uid), { uid: u.uid, player: id, ts: Date.now() }).catch((e) => console.error(e));
+    },
     listContas: () => listRaiz('contas'),
 
     // ---- Ligas (29/10/2026, LIGAS.md) ----
@@ -265,9 +286,17 @@ async function fireDb() {
       await b.commit();
     },
     recusarPedido: (liga, uid) => deleteDoc(doc(db, 'ligas', liga, 'pedidos', uid)),
-    listMembros: (liga) => listRaiz('ligas', liga, 'membros'),
+    // Membros (pessoa Google ↔ jogador) de uma liga; null = a Futebolada semanal (membros/ na raiz).
+    listMembros: (liga) => (liga ? listRaiz('ligas', liga, 'membros') : listRaiz('membros')),
     async tirarMembro(liga, uid) { const b = writeBatch(db); b.delete(doc(db, 'ligas', liga, 'membros', uid)); b.delete(doc(db, 'filiacoes', `${liga}_${uid}`)); await b.commit(); },
     setLiga: (id, d) => setDoc(doc(db, 'ligas', id), d, { merge: true }),
+    // Definições da liga ativa (nome, cor, pública): a Futebolada semanal guarda-as em public/liga; as outras no próprio documento.
+    async getConfigLiga() {
+      if (LIGA) { const l = (await getRaiz('ligas', LIGA).catch(() => null)) || {}; return { nome: l.nome || LIGA, cor: l.cor || 'azul', publico: !!l.publico, criador: l.criador, admins: l.admins || [] }; }
+      const c = (await getRaiz('public', 'liga').catch(() => null)) || {};
+      return { nome: c.nome || 'Futebolada semanal', cor: c.cor || 'vermelho', publico: c.publico !== false, raiz: true };
+    },
+    setConfigLiga: (d) => (LIGA ? setDoc(doc(db, 'ligas', LIGA), d, { merge: true }) : setDoc(doc(db, 'public', 'liga'), d, { merge: true })),
     apagarConta: (uid) => deleteDoc(doc(db, 'contas', uid)),
     // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
     async mudarPin(id, pin) {
@@ -308,7 +337,8 @@ async function fireDb() {
     listVotes: () => list('votes'),
     saveVote: (voter, target, rating) =>
       setDoc(D('votes', voter), { voter, r: { [target]: rating }, ts: Date.now() }, { merge: true }),
-    getPublic: (d) => get('public', d),
+    // public/cartas deixou de ser legível para os jogadores (cartas sempre privadas): sem permissão devolve null.
+    getPublic: (d) => get('public', d).catch((e) => { if (d === 'cartas') return null; throw e; }),
     setPublic: (d, v) => setDoc(D('public', d), v),
     async saveGame(g) { const id = g.id || novoToken(10); const { id: _, ...d } = g; await setDoc(D('games', id), d); return id; },
     deleteGame: (id) => deleteDoc(D('games', id)),
