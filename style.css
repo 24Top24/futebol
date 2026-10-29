@@ -881,3 +881,55 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .mgolo .mlado { position: absolute; left: 0; right: 0; bottom: 6px; font-size: 12px; font-weight: 700; opacity: .75; }
 .mj-rodape .campo-lados { flex: 1; max-width: 240px; margin: 0 auto; }
 .mj-rodape .cl-campo { height: 170px; }
+
+/* ---------- Conquistas e físico (conquistas-ui.js) ---------- */
+.dna { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.dna li { background: var(--bg3); border-radius: 12px; padding: 10px 12px; }
+.dna li.eu { outline: 2px solid var(--verde2); }
+.dna li a { display: flex; align-items: center; gap: 6px; font-weight: 800; margin-bottom: 4px; }
+.dna li p { margin: 2px 0 0; line-height: 1.35; }
+.dna-eq { width: 12px; height: 12px; border-radius: 50%; flex: none; border: 1px solid #fff6; }
+.dna-eq.b { background: #f1f1f1; } .dna-eq.p { background: #000; }
+.dna-curto { list-style: none; margin: 8px 0 0; padding: 0; font-size: 14px; line-height: 1.4; }
+.fis-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; margin-bottom: 10px; }
+.fis-nums div { background: var(--bg3); border-radius: 12px; padding: 10px 4px; }
+.fis-nums b { display: block; font-size: 24px; font-weight: 900; }
+.fis-nums span { font-size: 12px; color: var(--mute); }
+.fis-leg { font-size: 12px; margin: 8px 0 4px; }
+.zbar { display: flex; height: 16px; border-radius: 8px; overflow: hidden; background: var(--bg3); }
+.zbar i, .zleg i { display: block; }
+.z0 { background: #4b5563; } .z1 { background: #60a5fa; } .z2 { background: #34d399; } .z3 { background: #fbbf24; } .z4 { background: #ef4444; }
+.zleg { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; }
+.zleg span { display: flex; align-items: center; gap: 4px; } .zleg i { width: 10px; height: 10px; border-radius: 3px; }
+.tline { position: relative; height: 34px; background: var(--bg3); border-radius: 8px; margin-bottom: 18px; }
+.tline .sp, .sp-ic { position: absolute; top: 8px; width: 4px; height: 18px; margin-left: -2px; background: #ef4444; border-radius: 2px; }
+.tline .vm, .vm-ic { position: absolute; top: 4px; width: 12px; height: 12px; margin-left: -6px; background: #f1c40f; transform: rotate(45deg); }
+.sp-ic, .vm-ic { position: static; display: inline-block; vertical-align: middle; margin: 0 2px; }
+.sp-ic { height: 12px; } .vm-ic { width: 9px; height: 9px; }
+.tl-min { position: absolute; left: 0; right: 0; top: 36px; font-size: 10px; color: var(--mute); }
+.tl-min span { position: absolute; transform: translateX(-50%); }
+.heat { display: flex; flex-direction: column; align-items: center; }
+.heat-campo { position: relative; display: grid; width: 160px; height: 280px; border: 2px solid #ffffffb0; border-radius: 6px; overflow: hidden;
+  background: repeating-linear-gradient(180deg, #1c7a3a 0 35px, #1a7035 35px 70px); }
+.heat-campo i { display: block; }
+.hm-meio { position: absolute; left: 0; right: 0; top: 50%; border-top: 2px solid #ffffff90; }
+.hm-bal { position: absolute; left: 50%; width: 50px; margin-left: -25px; height: 16px; border: 2px solid #ffffff90; }
+.hm-bal.cima { top: -2px; border-top: 0; } .hm-bal.baixo { bottom: -2px; border-bottom: 0; }
+.heat-leg { font-size: 12px; margin-top: 4px; }
+.tercos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; margin-top: 10px; }
+.tercos b { display: block; font-size: 22px; } .tercos span { font-size: 12px; color: var(--mute); }
+.medalhas { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.med { background: var(--bg3); border-radius: 12px; padding: 10px 8px; text-align: center; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.med.n0 { opacity: .55; }
+.med-ic { position: relative; font-size: 30px; line-height: 1.1; }
+.med-niv { position: absolute; right: 50%; margin-right: -30px; bottom: -4px; font-size: 18px; }
+.med b { font-size: 13px; } .med small { font-size: 11px; color: var(--mute); overflow-wrap: anywhere; }
+.med .pbar-b, .desafio .pbar-b { margin-top: 4px; }
+.desafio { background: var(--bg3); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; }
+.desafio.feito { outline: 2px solid var(--verde2); }
+.desafio .linha span { min-width: 0; }
+.tend { display: flex; align-items: flex-end; gap: 0; }
+.tend-m { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; min-width: 0; }
+.tend-b { width: 60%; max-width: 34px; height: 90px; display: flex; align-items: flex-end; background: var(--bg3); border-radius: 6px; overflow: hidden; }
+.tend-b i { display: block; width: 100%; background: var(--verde2); }
+.med .pbar-b, .desafio .pbar-b { background: #0005; } .med .pbar-b i, .desafio .pbar-b i { background: var(--vitoria); }

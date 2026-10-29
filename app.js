@@ -1,7 +1,9 @@
 import { DB, novoToken, novoPin } from './db.js?v=32';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
-import { resumoFisico, campoDeNuvem } from './fisico.js?v=2';
+import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq } from './conquistas-ui.js?v=1';
+import { dnaJogo } from './conquistas.js?v=2';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
 
 const $app = document.getElementById('app');
@@ -278,7 +280,7 @@ async function paginaJogoPub(id) {
   const cab = `<section class="mjogo jcab"><div class="mj-topo"><div class="mj-estado"><span>${esc(diaSemana(j))} · ${esc(dataDe(j))}</span><span>${j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>
     <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span>${v === 'B' ? '<small class="jvenc">Vencedor</small>' : ''}</div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span>${v === 'P' ? '<small class="jvenc">Vencedor</small>' : ''}</div></div>
     ${j.semGolos ? '' : marcadoresHTML(j)}</div>
-    ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></div>`
+    ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><span class="linha"><button class="peq" id="j-cartao">📤 O meu cartão</button><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></span></div>`
       : !eu ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
   // Painéis
   const graf = ev.length ? `<section class="cartao"><div class="cartao-tit">Desenrolar do jogo <small class="mute">toca num golo</small></div>${graficoJogo(j, ev, dur, nome)}
@@ -286,9 +288,18 @@ async function paginaJogoPub(id) {
   const resumo = `<section class="cartao"><div class="cartao-tit">Resumo${(j.turnos || []).length ? '<label class="tgr"><input type="checkbox" id="r-gr"> trocas de GR</label>' : ''}</div>${resumoJogoHTML(j, ev, dur, lnk, parte)}</section>`;
   const stats = `<section class="cartao"><div class="cartao-tit">Estatísticas da equipa</div>${statsJogoHTML(j, ev, dur)}</section>`;
   const equipas = `<section class="cartao"><div class="cartao-tit">Equipas</div>${campoHTML(j, ev, quem, posPub?.pos || {})}</section>`;
+  // Destaques (Match DNA) de cada jogador; quem jogou e tem relógio vê também o seu físico deste jogo (só ele).
+  const jogosC = jogosConq(res);
+  const fisTodos = joguei ? (await DB.getMinhaCarta(eu).catch(() => null))?.fisico || {} : {};
+  // Chave dos dados físicos: a mesma com que o admin os grava (gameId ou o id do jogo); a data lá vem em dd/mm/aaaa.
+  const kJ = j.gameId || res[i].id, iso = (x) => (String(x || '').includes('/') ? x.split('/').reverse().join('-') : x || '');
+  const fisEu = fisTodos[kJ] || null;
+  const fisAntes = Object.entries(fisTodos).filter(([k, f]) => k !== kJ && iso(f?.data) < iso(j.data || dataDe(j))).map(([, f]) => f);
+  const dnaH = htmlDNAJogo(j, jogosC, quem, { eu: joguei ? eu : null, fisEu, fisAntes });
+  const fisH = joguei ? htmlFisicoJogo(fisEu, j) : '';
   $app.innerHTML = `${nav}${cab}
     <div class="tabs jtabs" role="tablist"><button data-ja="resumo" class="on">Resumo</button><button data-ja="stats">Estatísticas</button><button data-ja="equipas">Equipas</button></div>
-    <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${resumo}</div></div>
+    <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${dnaH}${fisH}${resumo}</div></div>
       <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>`;
   $app.querySelectorAll('[data-ja]').forEach((b) => (b.onclick = () => {
     $app.querySelectorAll('[data-ja]').forEach((x) => x.classList.toggle('on', x === b));
@@ -296,6 +307,17 @@ async function paginaJogoPub(id) {
   }));
   document.getElementById('r-gr')?.addEventListener('change', (e) => $app.querySelector('.resumo').classList.toggle('com-gr', e.target.checked));
   document.getElementById('j-aval')?.addEventListener('click', () => abrirAvaliacao(id, j, eu, quem));
+  // Cartão partilhável do próprio (imagem para o WhatsApp); os dados do relógio só entram porque é o próprio que partilha.
+  document.getElementById('j-cartao')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const img = (src) => new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = src; });
+      const [B, P] = await Promise.all([img('brancos.svg?v=2'), img('pretos.svg?v=2')]);
+      const png = await imagemCartao(j, eu, res, { fis: fisEu, fisAntes, proprio: true, logos: { B, P } });
+      if (png) await partilharWhatsApp(png, `⚽ O meu jogo de ${dataDe(j)}`, `o-meu-jogo-${(j.data || '').replace(/-/g, '')}.png`);
+    } catch (err) { console.error(err); toast('Não deu para fazer o cartão'); }
+    e.target.disabled = false;
+  });
   if (avaliarJa && joguei) abrirAvaliacao(id, j, eu, quem);
   // Tocar num golo do gráfico: quem marcou, quem assistiu e o resultado nesse momento.
   const det = document.getElementById('g-det');
@@ -1008,13 +1030,15 @@ function renderPerfil(el, p, d) {
       <div class="pinfo"><h1>${esc(nomeDe(p))}</h1>${real}<div class="pchips">${chips}</div></div></div>
     <div class="pnums"><div><b>${m.j}</b><span>Jogos</span></div><div><b>${m.g}</b><span>Golos</span></div><div><b>${m.a}</b><span>Assist.</span></div><div><b>${m.j ? Math.round(m.pv * 100) + '%' : '–'}</b><span>Vitórias</span></div></div>
     ${acoes}</section>`;
-  const abas = [['geral', 'Resumo'], ['jogos', `Jogos${meus.length ? ` (${meus.length})` : ''}`], ['stats', 'Estatísticas'], ...(proprio ? [['fis', '🔒 Físico']] : [])];
+  const abas = [['geral', 'Resumo'], ['jogos', `Jogos${meus.length ? ` (${meus.length})` : ''}`], ['stats', 'Estatísticas'], ['conq', '🏅 Conquistas'], ...(proprio ? [['fis', '🔒 Físico']] : [])];
+  const fisPorJogo = proprio ? d.mc?.fisico || {} : {};
   if (!abas.some(([k]) => k === A.pAba)) A.pAba = 'geral';
   el.innerHTML = `${cab}<div class="tabs ptabs" role="tablist">${abas.map(([k, n]) => `<button role="tab" data-pa="${k}" class="${A.pAba === k ? 'on' : ''}" aria-selected="${A.pAba === k}">${n}</button>`).join('')}</div>
     <div data-painel="geral" ${A.pAba === 'geral' ? '' : 'hidden'}>${painelGeral(p, d, meus, m, proprio, S, cartaVis, est)}</div>
     <div data-painel="jogos" ${A.pAba === 'jogos' ? '' : 'hidden'}>${painelJogos(p, d, meus, proprio)}</div>
     <div data-painel="stats" ${A.pAba === 'stats' ? '' : 'hidden'}>${painelStats(p, S, m, proprio)}</div>
-    ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}><div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 só tu e o Rui</span></div><div id="eu-form"></div>
+    <div data-painel="conq" ${A.pAba === 'conq' ? '' : 'hidden'}>${htmlConquistas(d.res, p.id, { proprio, fisPorJogo })}</div>
+    ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}>${Object.keys(fisPorJogo).length ? htmlHeatmap(somarGrelhas(Object.values(fisPorJogo).map((f) => f?.grelha)), 'Onde andaste (todos os jogos)') : ''}<div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 só tu e o Rui</span></div><div id="eu-form"></div>
       ${blocoFisico(d.saude, d.treinos, meus.map((x) => ({ id: x.id, jogo: x.j })), false)}</div></div>` : ''}`;
   const mostrar = (k) => {
     A.pAba = k;
@@ -1092,7 +1116,9 @@ function painelGeral(p, d, meus, m, proprio, S, cartaVis, est) {
     return `<section class="cartao ultima"><div class="cartao-tit">Última partida<a href="#jogo=${esc(u.id)}">Ver o jogo →</a></div>
       <a class="up" href="#jogo=${esc(u.id)}"><span class="res res-${u.r}">${u.r}</span><span class="up-placar">${LOGO[u.lado]}<b>${marcaDe(u.j, u.lado)} – ${marcaDe(u.j, outro)}</b>${LOGO[outro]}</span>
         <span class="up-data">${esc(diaSemana(u.j))} ${esc(dataDe(u.j))}</span></a>
-      <p class="up-fez">${fez || '<span class="mute">Sem golos nem assistências neste jogo.</span>'}</p></section>`;
+      <p class="up-fez">${fez || '<span class="mute">Sem golos nem assistências neste jogo.</span>'}</p>
+      ${(() => { const f = dnaJogo(u.j, p.id, jogosConq(d.res), { publico: !proprio, fis: proprio ? d.mc?.fisico?.[u.j.gameId || u.id] : null });
+        return f.length ? `<ul class="dna-curto">${f.map((x) => `<li>🧬 ${esc(x.txt)}</li>`).join('')}</ul>` : ''; })()}</section>`;
   })() : '';
   const forma = meus.slice(0, 5).reverse();
   const formaH = forma.length ? `<section class="cartao"><div class="cartao-tit">Forma <small class="mute">últimos ${forma.length} · mais recente à direita</small></div>
@@ -2331,10 +2357,14 @@ function secEquipas(el, X = A.ctxEq) {
   const ativos = X.players.filter((p) => p.ativo !== false);
   const grupo = ativos.filter((p) => !p.convidado), convidados = ativos.filter((p) => p.convidado);
   const ov = (id) => cartas[id]?.overall ?? '–';
+  // Elo (Rui, 29/10): a pontuação da carta e, ao lado, +x / −y que a forma soma ou tira para equilibrar (já com o teto de 10 %).
+  // Quem anda a perder desce ainda mais → o gerador dá-lhe colegas mais fortes e fica mais perto de ganhar.
+  const ajE = (id) => (A.usarElo && X.elo && cartas[id]?.overall != null ? Math.round(cartas[id].overall + ajusteElo(cartas[id].overall, X.elo[id]?.forma || 0)) - cartas[id].overall : 0);
+  const ovElo = (id) => { const d = ajE(id); return `${ov(id)}${d ? ` <b title="Ajuste pela forma (Elo): conta ${ov(id) + d} a fazer as equipas" style="color:${d > 0 ? '#16a34a' : '#dc2626'}">${d > 0 ? '+' : '−'}${Math.abs(d)}</b>` : ''}`; };
   const pid = (id) => X.players.find((p) => p.id === id);
   const nm = (id) => esc(nomeDe(pid(id) || { nome: '?' }));
   const sel = [...A.sel].filter(pid);
-  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))} <small class="mute">${ov(p.id)}</small></button>`;
+  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))} <small class="mute">${ovElo(p.id)}</small></button>`;
   const opts = (vazio) => `<option value="">${vazio}</option>` + sel.map((id) => `<option value="${id}">${nm(id)}</option>`).join('');
   const nOpc = R.separar.length + R.juntar.length + Object.keys(R.cor).filter((id) => A.sel.has(id)).length;
 
@@ -2403,6 +2433,7 @@ function secEquipas(el, X = A.ctxEq) {
       const estado = (await DB.getPublic('estado')) || {};
       await DB.setPublic('estado', { ...estado, usarElo: A.usarElo });   // o perfil de cada um diz se o Elo está a contar
     } catch { /* moderador/colaborador: sem permissão, vale só para estas equipas */ }
+    el.querySelectorAll('.chip[data-id]').forEach((b) => { const sm = b.querySelector('small'); if (sm) sm.innerHTML = ovElo(b.dataset.id); });
   });
   g('gerar').onclick = () => {
     const ids = [...A.sel];
@@ -2504,7 +2535,7 @@ function secEquipas(el, X = A.ctxEq) {
         <span>${a.k === 'gr' ? '🧤 GR' : a.ab}</span>${barra(vB, 'dir', d < -1)}<b class="${d < -1 ? 'ganha' : ''}">${vB == null ? '–' : Math.round(vB)}</b></div>`;
     };
     const plantel = (eq) => { const g1 = melhorGR(eq);
-      return eq.map((id) => `<div>${nm(id)}${id === g1 ? ' <span title="Melhor GR da equipa">🧤</span>' : ''} <small class="mute">${ov(id)}</small></div>`).join(''); };
+      return eq.map((id) => `<div>${nm(id)}${id === g1 ? ' <span title="Melhor GR da equipa">🧤</span>' : ''} <small class="mute">${ovElo(id)}</small></div>`).join(''); };
     return `<div class="cjogo">
       <div class="ftopo">
         <div class="fequipa">${LOGO.B}<div class="fnome">BRANCOS</div><div class="frat">${o.ovA.toFixed(0)}</div><div class="festr">${estrelas(o.ovA)}</div></div>
