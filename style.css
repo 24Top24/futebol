@@ -862,3 +862,22 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 
 .elo-mini { text-align: center; font-size: 13px; font-weight: 700; margin-top: 4px; }
 .elo-mini.sobe { color: var(--verde); } .elo-mini.desce { color: var(--vermelho); } .elo-mini.igual { color: var(--mute); }
+
+/* Lado de início: campo na vertical, balizas em cima e em baixo, balneários por baixo (atrás da baliza de baixo). */
+.campo-lados { max-width: 260px; margin: 6px auto 0; }
+.cl-campo { position: relative; display: grid; grid-template-rows: 1fr 1fr; height: 220px; border: 2px solid #ffffffb0; border-radius: 6px;
+  background: repeating-linear-gradient(180deg, #1c7a3a 0 22px, #1a7035 22px 44px); overflow: hidden; }
+.cl-metade { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center; padding: 6px; }
+.cl-metade b { font-size: 15px; padding: 3px 10px; border-radius: 99px; }
+.cl-metade.branco b { background: #f1f1f1; color: #111; }
+.cl-metade.preto b { background: #000; color: #fff; border: 1px solid #fff6; }
+.cl-metade small { color: #fff; font-size: 11px; opacity: .9; }
+.cl-meio { position: absolute; left: 0; right: 0; top: 50%; border-top: 2px solid #ffffffb0; }
+.cl-meio::after { content: ''; position: absolute; left: 50%; top: -18px; width: 34px; height: 34px; margin-left: -17px; border: 2px solid #ffffffb0; border-radius: 50%; }
+.cl-baliza { position: absolute; left: 50%; width: 64px; margin-left: -32px; height: 22px; border: 2px solid #ffffffb0; }
+.cl-baliza.cima { top: -2px; border-top: 0; } .cl-baliza.baixo { bottom: -2px; border-bottom: 0; }
+.cl-balneario { margin-top: 4px; text-align: center; font-weight: 900; font-size: 13px; letter-spacing: 1px; background: var(--bg3); border-radius: 8px; padding: 6px; }
+.mgolo { position: relative; }
+.mgolo .mlado { position: absolute; left: 0; right: 0; bottom: 6px; font-size: 12px; font-weight: 700; opacity: .75; }
+.mj-rodape .campo-lados { flex: 1; max-width: 240px; margin: 0 auto; }
+.mj-rodape .cl-campo { height: 170px; }

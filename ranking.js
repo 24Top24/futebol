@@ -171,6 +171,11 @@ export function tier(ov) {
 // anteriores: [[brancos],[pretos]] de jogos passados (penaliza repetir).
 // restr (opcional): { separar: [[a,b]], juntar: [[a,b,c]], cor: { id: 'B'|'P' } } — regras obrigatórias.
 // Devolve A = Brancos, B = Pretos.
+// Lado de início (Rui, 28/10): quem começa do lado dos balneários. Não há troca de campo, por isso fica para o jogo todo
+// e diz sempre quem ataca para que baliza (heatmap, sprints). Sorteado ao escolher as equipas.
+export const sortearLado = () => ({ B: Math.random() < 0.5 ? 'balnearios' : 'oposto' });
+export const textoLado = (l) => (l?.B ? `🚪 Lado dos balneários: ${l.B === 'balnearios' ? '⚪ Brancos' : '⚫ Pretos'} · à baliza do outro lado: ${l.B === 'balnearios' ? '⚫ Pretos' : '⚪ Brancos'}` : '');
+
 export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) {
   const N = ids.length, metade = Math.floor(N / 2);
   if (N < 2) return [];

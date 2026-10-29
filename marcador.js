@@ -12,8 +12,22 @@ const PARTES = { pd: 'Pé direito', pe: 'Pé esquerdo', cab: 'Cabeça', out: 'Ou
 export const hojeLocal = () => new Date().toLocaleDateString('sv-SE');
 
 // ---------- estado (mesmo formato que o relógio envia) ----------
+// Lado de início (Rui, 28/10): quem começa do lado dos balneários — a baliza de BAIXO no desenho (os balneários estão
+// atrás dela). Não há troca de campo. Formato do futebol-dev: ladoInicio = { B: 'balnearios' | 'oposto' }.
+const sortear = () => ({ B: Math.random() < 0.5 ? 'balnearios' : 'oposto' });
+const emBaixo = (l) => (l?.B === 'oposto' ? 'P' : 'B');   // a equipa da metade dos balneários
+// Campo na vertical: balizas em cima e em baixo, 🚪 BALNEÁRIOS por baixo. Cada equipa na metade onde começa.
+export function campoLados(lado, nomes = {}) {
+  if (!lado?.B) return '';
+  const b = emBaixo(lado), c = b === 'B' ? 'P' : 'B';
+  const metade = (e, onde) => `<div class="cl-metade ${onde} ${e === 'B' ? 'branco' : 'preto'}"><b>${e === 'B' ? '⚪ BRANCOS' : '⚫ PRETOS'}</b>${nomes[e] ? `<small>${nomes[e]}</small>` : ''}</div>`;
+  return `<div class="campo-lados" role="img" aria-label="${b === 'B' ? 'Brancos' : 'Pretos'} começam do lado dos balneários">
+    <div class="cl-campo"><span class="cl-baliza cima"></span>${metade(c, 'cima')}<span class="cl-meio"></span>${metade(b, 'baixo')}<span class="cl-baliza baixo"></span></div>
+    <div class="cl-balneario">🚪 BALNEÁRIOS</div></div>`;
+}
 function novoJogo(eq) {
   return { gameId: eq?.id || '', data: eq?.data || hojeLocal(), brancos: eq?.brancos || [], pretos: eq?.pretos || [],
+    ladoInicio: eq?.ladoInicio?.B ? eq.ladoInicio : sortear(),
     minTurno: 6, rondas: 2, fase: 'prep', inicioEpoch: 0, fimEpoch: 0, pausadoEm: 0, pausaTotal: 0,
     eventos: [], penaltis: [], baliza: {}, turnos: [], enviado: false, origem: 'telemovel' };
 }
@@ -106,6 +120,9 @@ export function paginaMarcador(opts) {
         ${j.brancos.length ? `<div class="equipas"><div class="eq branco"><h4>⚪ Brancos</h4>${j.brancos.map((p) => esc(p.nome)).join('<br>')}</div>
           <div class="eq preto"><h4>⚫ Pretos</h4>${j.pretos.map((p) => esc(p.nome)).join('<br>')}</div></div>` : '<p class="mute">Carrega as equipas feitas no site.</p>'}</div>
       ${j.brancos.length ? `
+      <label>Quem começa do lado dos balneários</label>
+      ${campoLados(j.ladoInicio)}
+      <button class="peq" id="m-lados" style="width:100%;margin-top:6px">⇄ Trocar lados</button>
       <label>Minutos por turno de GR</label><div class="linha">${DUR.map((m) => `<button class="peq ${j.minTurno === m ? 'on' : ''}" data-min="${m}">${m}</button>`).join('')}</div>
       <label>Rondas de baliza</label><div class="linha">${[2, 3].map((r) => `<button class="peq ${j.rondas === r ? 'on' : ''}" data-ron="${r}">${r}</button>`).join('')}
         <span class="mute">${j.rondas * j.brancos.length * j.minTurno} min de jogo</span></div>
@@ -117,6 +134,9 @@ export function paginaMarcador(opts) {
     el.querySelector('#m-assumir')?.addEventListener('click', () => {
       if (!confirm(`Assumir a marcação no lugar de ${ou.nome}? O telemóvel dele deixa de contar.`)) return;
       j = { ...ou.jogo, enviado: false }; salvar(); bipDesbloquear(); ecraInteiro(); pedirEcraLigado(); render();
+    });
+    el.querySelector('#m-lados')?.addEventListener('click', () => {
+      j.ladoInicio = { B: j.ladoInicio?.B === 'balnearios' ? 'oposto' : 'balnearios' }; salvar(); render();
     });
     el.querySelectorAll('[data-min]').forEach((b) => (b.onclick = () => { j.minTurno = Number(b.dataset.min); salvar(); render(); }));
     el.querySelectorAll('[data-ron]').forEach((b) => (b.onclick = () => { j.rondas = Number(b.dataset.ron); salvar(); render(); }));
@@ -138,7 +158,7 @@ export function paginaMarcador(opts) {
     const t = decorrido(j);
     el.innerHTML = `${opts.teste ? '<div class="teste-faixa">🧪 TESTE</div>' : ''}
       <div class="mtopo" id="m-tempo">${j.pausadoEm ? '⏸ PAUSA — toca para retomar' : mmss(t)}</div>
-      <div class="mplacar">${['B', 'P'].map((e) => `<button class="mgolo ${e === 'B' ? 'branco' : 'preto'}" data-golo="${e}">${golos(j, e)}</button>`).join('')}</div>
+      <div class="mplacar">${['B', 'P'].map((e) => `<button class="mgolo ${e === 'B' ? 'branco' : 'preto'}" data-golo="${e}">${golos(j, e)}${j.ladoInicio?.B && emBaixo(j.ladoInicio) === e ? '<small class="mlado">🚪 lado dos balneários</small>' : ''}</button>`).join('')}</div>
       <div class="mplacar">${['B', 'P'].map((e) => {
         const b = j.baliza[e]; const resta = b.dur * 60000 - (t - b.inicio);
         return `<button class="mgr ${b.expirou || resta < 30000 ? 'alerta' : ''}" data-gr="${e}">🧤 ${esc(nome(j, b.atual))}<b>${b.expirou ? 'TROCA!' : mmss(resta)}</b></button>`;

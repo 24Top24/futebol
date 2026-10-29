@@ -1,6 +1,7 @@
 import { DB, novoToken, novoPin } from './db.js?v=32';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe } from './ranking.js?v=29';
-import { paginaMarcador, hojeLocal } from './marcador.js?v=24';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
+import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
+import { resumoFisico, campoDeNuvem } from './fisico.js?v=2';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=26';
 
 const $app = document.getElementById('app');
@@ -169,7 +170,8 @@ function cartoesTopo(todos, res, games, vivo) {
     const eqs = (ids) => (ids || []).map((id) => pessoa(id, ult.nomes?.[id]));
     if (r) mostrado = r.id;
     html += cartaoJogo({ estado: vv ? '<span class="ao-vivo"></span>Ao vivo' : r ? 'Último jogo' : 'Próximo jogo', data: r ? dataDe(r.jogo) : diaPT(ult.data),
-      j: r?.jogo || vv, B: eqs(ult.brancos), P: eqs(ult.pretos), rodape: r ? `<span class="mute">${res.length} jogos registados</span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>` : '' });
+      j: r?.jogo || vv, B: eqs(ult.brancos), P: eqs(ult.pretos), rodape: r ? `<span class="mute">${res.length} jogos registados</span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>`
+        : campoLados(vv?.ladoInicio || ult.ladoInicio) });
   }
   return { html, mostrado, pessoa };
 }
@@ -1435,7 +1437,9 @@ async function publicarCartasPessoais() {
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
-  const elo = calcularElo((await DB.listResultados()).map((r) => { try { return JSON.parse(r.json || '{}').jogo; } catch { return null; } }).filter(Boolean), cartas);
+  const brutos = (await DB.listResultados()).map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
+  const elo = calcularElo(brutos.map((r) => r.jogo), cartas);
+  const fisicoDe = await resumosFisicos(brutos).catch((e) => { console.error(e); return {}; });
   // Último jogo terminado e a carta de cada um com os votos de agora mas os pesos de ANTES desse jogo:
   // separa o que mudou por causa do peso dos votos (o jogo) do que mudou por notas novas/alteradas.
   const jogos = (await DB.listJogosPub()).map((x) => { try { return { id: x.id, ...JSON.parse(x.json || '{}') }; } catch { return null; } })
@@ -1468,11 +1472,44 @@ async function publicarCartasPessoais() {
     const mudanca = ref ? { desde: ref.data, pesos: agora.ov - semPesos.ov, notas: semPesos.ov - ref.ov, quantos } : null;
     const e = elo[p.id];
     const aj = e ? ajusteElo(c.overall, e.forma) : 0;   // pontos de overall que o Elo soma/tira (já com o teto)
-    const novo = { carta, hist, ref, mudanca, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo), ajuste: Math.round(aj * 10) / 10, pct: Math.round((aj / c.overall) * 1000) / 10 } : null };
+    const novo = { carta, hist, ref, mudanca, elo: e ? { forma: Math.round(e.forma), jogos: e.jogos, ultimo: Math.round(e.ultimo), ajuste: Math.round(aj * 10) / 10, pct: Math.round((aj / c.overall) * 1000) / 10 } : null,
+      ...(fisicoDe[p.id] ? { fisico: fisicoDe[p.id] } : {}) };
     const { id: _, ts: __, ...velho } = antes[p.id] || {};
     if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
     await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
   }
+}
+
+// Resumo físico de cada jogo de quem tem relógio (velocidade, zonas, sprints, heatmap em grelha) → minhacarta/{id}.fisico,
+// que só o próprio e o admin leem. O dono do fit é fit.dono (relógios de vários jogadores) ou, por agora, o perfil do Rui.
+// O retângulo do campo calcula-se do GPS de todos os jogos juntos e fica em segredos/campo (tem a localização do pavilhão).
+async function resumosFisicos(brutos) {
+  const P = { ...PERFIL0, ...((await DB.getSegredo('perfil')) || {}) };
+  const temFit = (f) => f && ((f.bins || []).length || (f.serie1s || []).length || (f.gps || []).length);
+  const comFit = brutos.filter((r) => temFit(r.fit)).sort((a, b) => (a.jogo.inicioEpoch || 0) - (b.jogo.inicioEpoch || 0));
+  if (!comFit.length) return {};
+  const guardado = (await DB.getSegredo('campo')) || null;
+  let campo = guardado;
+  // Só se juntam jogos com o GPS no mesmo referencial (formato e origem do relógio) — o do jogo com GPS mais recente.
+  const ult = [...comFit].reverse().find((r) => (r.fit.gps || []).length);
+  const mesmo = (f) => !!f.gpsXY === !!ult?.fit.gpsXY && (f.gpsRef || null) === (ult?.fit.gpsRef || null);
+  const doRef = comFit.filter((r) => ult && mesmo(r.fit));
+  const gps = doRef.flatMap((r) => r.fit.gps || []);
+  if (guardado && ult && (!!guardado.xy !== !!ult.fit.gpsXY || (guardado.ref || null) !== (ult.fit.gpsRef || null))) campo = null;
+  // Ponta dos balneários: enviada pelo relógio no aquecimento (fit.balnearios, no mesmo formato do GPS) ou guardada antes.
+  const balnearios = doRef.map((r) => r.fit.balnearios).find(Boolean) || (campo ? guardado?.balnearios : null) || null;
+  if (gps.length && (gps.length !== campo?.nPontos || balnearios !== (campo?.balnearios || null))) {
+    const novo = campoDeNuvem(gps, balnearios, { xy: !!ult.fit.gpsXY, ref: ult.fit.gpsRef || null });
+    if (novo) { campo = { ...novo, nPontos: gps.length, balnearios, ts: Date.now() }; await DB.setSegredo('campo', campo); }
+  }
+  const out = {};
+  for (const r of comFit) {
+    const dono = r.fit.dono || P.eu;
+    if (!dono) continue;
+    const res = resumoFisico(r.jogo, r.fit, dono, { campo });
+    if (res) (out[dono] ||= {})[r.jogo.gameId || r.id] = { ...res, data: dataDe(r.jogo) };
+  }
+  return out;
 }
 
 // Atualiza o "retrato" que o link de colaborador lê (notas finais, sem votos individuais).
@@ -2412,7 +2449,7 @@ function secEquipas(el, X = A.ctxEq) {
     return '<span class="on">' + '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '') + '</span>' + '★'.repeat(5 - Math.ceil(n)); };
   const melhorGR = (eq) => eq.reduce((m, id) => ((cartas[id]?.stats.gr ?? 0) > (cartas[m]?.stats.gr ?? 0) ? id : m), eq[0]);
   // Imagem 1080×1350 do cartão (para o WhatsApp), desenhada em canvas.
-  async function imagemJogo(o, nomes, data) {
+  async function imagemJogo(o, nomes, data, lado = null) {
     const W = 1080, H = 1350, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const c = cv.getContext('2d');
     const gr = c.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#1d2a1f'); gr.addColorStop(0.6, '#0b120d'); gr.addColorStop(1, '#070a08');
@@ -2429,10 +2466,13 @@ function secEquipas(el, X = A.ctxEq) {
       txt(nome, x, 395, 36, '#fff', 'center', 900);
       txt(String(Math.round(ovr)), x, 495, 100, '#f1c40f', 'center', 900);
       const n = Math.max(0.5, Math.min(5, Math.round((ovr / 20) * 2) / 2));
+      // Lado de início (não há troca de campo): 🚪 = começa do lado dos balneários.
+      if (lado?.B) { const bal = (nome === 'BRANCOS') === (lado.B === 'balnearios');
+        txt(bal ? '🚪 LADO DOS BALNEÁRIOS' : 'BALIZA DO OUTRO LADO', x, 592, 22, bal ? '#f1c40f' : '#9aa3ab', 'center', 900); }
       for (let k = 0; k < 5; k++) txt('★', x - 96 + k * 48, 552, 44, k < n ? '#f1c40f' : '#3a3f45');
     }
     txt('VS', W / 2, 470, 54, '#6b7280', 'center', 900);
-    let y = 620;
+    let y = lado?.B ? 645 : 620;   // espaço para a linha do lado de início
     for (const a of AREAS) {
       const vA = areaE(o.A, a.k), vB = areaE(o.B, a.k), d = (vA ?? 0) - (vB ?? 0);
       c.globalAlpha = a.k === 'gr' ? 0.5 : 1;
@@ -2451,9 +2491,9 @@ function secEquipas(el, X = A.ctxEq) {
     for (let k = 0; k < Math.max(o.A.length, o.B.length); k++) {
       if (o.A[k]) txt(nomes[o.A[k]] + (o.A[k] === gA ? ' 🧤' : ''), 90, y, 40, '#fff', 'left', 700);
       if (o.B[k]) txt((o.B[k] === gB ? '🧤 ' : '') + nomes[o.B[k]], W - 90, y, 40, '#fff', 'right', 700);
-      y += 56;
+      y += lado?.B ? 53 : 56;
     }
-    txt('🧤 = melhor guarda-redes da equipa', W / 2, H - 40, 24, '#6b7280', 'center', 600);
+    txt('🧤 = melhor guarda-redes da equipa', W / 2, H - 22, 24, '#6b7280', 'center', 600);
     return new Promise((ok) => cv.toBlob(ok, 'image/png'));
   }
   function cartaoJogo(o) {
@@ -2489,24 +2529,28 @@ function secEquipas(el, X = A.ctxEq) {
       const k = Number(b.dataset.k), o = ops[k];
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
       b.disabled = true;
-      const id = await X.saveGame({ data: VV.data || hojeLocal(), brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now() }, VV.gameId || undefined);
+      const ladoInicio = sortearLado();
+      const id = await X.saveGame({ data: VV.data || hojeLocal(), brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now(), ladoInicio }, VV.gameId || undefined);
       Object.assign(VV, { escolhida: k, gameId: id, partilhado: null });
-      await X.publicar({ escolhida: k, gameId: id, partilhado: null, nomes });
+      VV.ladoInicio = ladoInicio;
+      await X.publicar({ escolhida: k, gameId: id, partilhado: null, nomes, ladoInicio });   // o marcador começa com o lado sorteado
       escolhidas(o);
     }));
     el.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => {
       const o = ops[b.dataset.k];
       const data = X.vivo?.data || hojeLocal();
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
-      const texto = `⚽ Equipas de hoje\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}`;
+      const ladoInicio = sortearLado();
+      const texto = `⚽ Equipas de hoje\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}\n\n${textoLado(ladoInicio)}`;
       // Primeiro a partilha (o telemóvel só a deixa abrir logo a seguir ao toque), depois guarda.
       let png = null;
-      try { png = await imagemJogo(o, nomes, data); } catch (e) { console.error(e); }
+      try { png = await imagemJogo(o, nomes, data, ladoInicio); } catch (e) { console.error(e); }
       await partilharWhatsApp(png, texto, `equipas-${data}.png`);
-      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now() });
+      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now(), ladoInicio });
       // Confirmação: as equipas ficam como as do próximo jogo; daqui vai-se direto para o marcador.
       g('res').innerHTML = `<div class="opcao" style="text-align:center"><h3 style="margin:4px 0">✅ Equipas escolhidas</h3>
         ${cartaoJogo(o)}
+        ${campoLados(ladoInicio)}<p class="mute" style="margin-top:4px">Pode trocar-se no ecrã do START do marcador.</p>
         <p class="mute">Ficam como as equipas do jogo de hoje (link geral, relógio e marcador).</p>
         ${X.irMarcador ? '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador com estas equipas</button>'
           : '<p class="mute">No relógio: "Descarregar equipas" e START GAME.</p>'}
@@ -2522,6 +2566,7 @@ function secEquipas(el, X = A.ctxEq) {
     const v = X.vivo, hora = (t) => new Date(t).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
     g('res').innerHTML = `<div class="opcao" style="text-align:center"><h3 style="margin:4px 0">✅ Equipas escolhidas</h3>
       ${cartaoJogo(o)}
+      ${campoLados(v.ladoInicio)}
       ${v.partilhado ? `<p class="mute">📤 Enviadas para o grupo por ${esc(v.partilhado.nome)} às ${hora(v.partilhado.ts)}.</p>` : '<p><b>⚠️ Ainda ninguém as enviou para o grupo.</b></p>'}
       <button class="${v.partilhado ? '' : 'prim'}" id="partilhar" style="width:100%;margin-bottom:8px">📤 ${v.partilhado ? 'Enviar outra vez' : 'Enviar'} para o grupo (WhatsApp)</button>
       ${v.fase === 'fim' ? (X.teste ? '<p>🧪 Teste terminado (não foi registado).</p>' : '<p>✅ Jogo terminado e registado.</p>') : '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador</button>'}
@@ -2536,9 +2581,9 @@ function secEquipas(el, X = A.ctxEq) {
       if (X.teste) { v.partilhado = { nome: nomeDe(X.eu), ts: Date.now() }; await X.publicar({ partilhado: v.partilhado }); toast('🧪 Teste: fica marcado como enviado (nada foi enviado)'); return escolhidas(o); }
       const data = v.data || hojeLocal();
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
-      const texto = `⚽ Equipas de ${diaPT(data)}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}`;
+      const texto = `⚽ Equipas de ${diaPT(data)}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}${v.ladoInicio?.B ? `\n\n${textoLado(v.ladoInicio)}` : ''}`;
       let png = null;
-      try { png = await imagemJogo(o, nomes, data); } catch (e) { console.error(e); }
+      try { png = await imagemJogo(o, nomes, data, v.ladoInicio); } catch (e) { console.error(e); }
       await partilharWhatsApp(png, texto, `equipas-${data}.png`);
       v.partilhado = { nome: nomeDe(X.eu), ts: Date.now() };
       await X.publicar({ partilhado: v.partilhado });
@@ -2597,13 +2642,13 @@ async function paginaColab(K, mod = null) {
     const VV = A.vivo;
     if (mod && VV?.gameId && VV.opcoes?.[VV.escolhida]) {
       const o = VV.opcoes[VV.escolhida], n = (id) => ({ id, nome: VV.nomes?.[id] || retrato.jogadores.find((p) => p.id === id)?.alias || retrato.jogadores.find((p) => p.id === id)?.nome || id });
-      return { id: VV.gameId, data: VV.data, brancos: o.A.map(n), pretos: o.B.map(n) };
+      return { id: VV.gameId, data: VV.data, brancos: o.A.map(n), pretos: o.B.map(n), ladoInicio: VV.ladoInicio };
     }
     const todas = [...(await DB.listPart(K, 'games')), ...(await DB.listGames().catch(() => []))];
     const g = (A.vivo?.gameId && todas.find((x) => x.id === A.vivo.gameId)) || todas.sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
     if (!g) return null;
     const n = (id) => ({ id, nome: g.nomes?.[id] || id });
-    return { id: g.id, data: g.data, brancos: (g.brancos || []).map(n), pretos: (g.pretos || []).map(n) };
+    return { id: g.id, data: g.data, brancos: (g.brancos || []).map(n), pretos: (g.pretos || []).map(n), ladoInicio: g.ladoInicio };
   };
   if (A.colabTab === 'marc') {
     let carregarJa = A.carregarJa; A.carregarJa = false;
