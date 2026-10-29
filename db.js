@@ -49,6 +49,11 @@ function demoDb() {
     },
     async ligacaoOk(id) { return s.ligacao?.player === id && s.ligacao.h === s.pins?.[id]?.h; },
     async desligar() { delete s.ligacao; save(); },
+    // Conta Google (no demo não há): ver a versão Firestore.
+    async minhaConta() { return null; },
+    async ligarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
+    async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
+    async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     async mudarPin(id, pin) {
       if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
       const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
@@ -154,6 +159,37 @@ async function fireDb() {
     // Ligação válida = consigo ler o meu voto (as regras confirmam o PIN atual).
     async ligacaoOk(id) { try { await this.uid(); await getDoc(doc(db, 'votes', id)); return true; } catch { return false; } },
     async desligar() { try { const u = await atual(); if (u) await deleteDoc(doc(db, 'ligacoes', u.uid)); } catch {} },
+    // ---- Conta Google ligada ao jogador (29/10/2026): contas/{uid Google} = { player, h, email, ts }. ----
+    // Com ela o jogador entra em qualquer telemóvel com o Google, sem PIN (as regras aceitam contas/{uid} no souEu()).
+    // Para criar a ligação prova-se o PIN uma vez: o h vem da ligação PIN deste browser (ligacoes/{uid}); o admin não precisa.
+    async minhaConta() {
+      const u = await atual();
+      if (!u || u.isAnonymous) return null;
+      try { const c = await get('contas', u.uid); return c ? { ...c, uid: u.uid, email: c.email || u.email } : null; } catch { return null; }
+    },
+    async ligarGoogle(id) {
+      const u = await atual(), prov = new au.GoogleAuthProvider();
+      const lig = u ? await get('ligacoes', u.uid).catch(() => null) : null;
+      let user;
+      if (u?.isAnonymous) {
+        // Converte a conta anónima deste browser em conta Google (mesmo uid). Se esse Google já tem conta, entra nela.
+        try { user = (await au.linkWithPopup(u, prov)).user; }
+        catch (e) {
+          if (e.code !== 'auth/credential-already-in-use') throw e;
+          user = (await au.signInWithCredential(auth, au.GoogleAuthProvider.credentialFromError(e))).user;
+        }
+      } else user = u || (await au.signInWithPopup(auth, prov)).user;
+      await user.getIdToken(true);   // o token passa a dizer google.com (as regras exigem)
+      await setDoc(doc(db, 'contas', user.uid), { player: id, h: lig?.h || null, email: user.email || null, ts: Date.now() });
+      return user.email;
+    },
+    // Noutro telemóvel: entra com o Google; devolve a conta (ou null se esse Google ainda não está ligado a ninguém).
+    async entrarGoogle() { await au.signInWithPopup(auth, new au.GoogleAuthProvider()); return this.minhaConta(); },
+    async desligarGoogle() { const u = await atual(); if (u && !u.isAnonymous) { await deleteDoc(doc(db, 'contas', u.uid)).catch(() => {}); } },
+    // O admin (Google) liga-se ao seu perfil de jogador sem PIN.
+    async contaAdmin(id) { const u = await atual(); if (!u || u.isAnonymous || !id) return; if (!(await get('contas', u.uid).catch(() => null))) await setDoc(doc(db, 'contas', u.uid), { player: id, h: null, email: u.email || null, ts: Date.now() }); },
+    listContas: () => list('contas'),
+    apagarConta: (uid) => deleteDoc(doc(db, 'contas', uid)),
     // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
     async mudarPin(id, pin) {
       const uid = await this.uid(), h = await sha256hex(pin + id), b = writeBatch(db);

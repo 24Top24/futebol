@@ -1,8 +1,8 @@
-import { DB, novoToken, novoPin } from './db.js?v=32';
+import { DB, novoToken, novoPin } from './db.js?v=33';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo } from './conquistas-ui.js?v=3';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=4';
 import { dnaJogo } from './conquistas.js?v=3';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=2';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
@@ -160,7 +160,8 @@ function cartaoJogo(o) {
 }
 
 // Cartões do topo (Início e Jogos): jogo aberto à espera de equipas, e o jogo das equipas mais recentes (próximo / ao vivo / último).
-function cartoesTopo(todos, res, games, vivo) {
+// desafiosPrimeiro: os meus desafios por cima do cartão do próximo jogo (Início do próprio).
+function cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro = false } = {}) {
   const aoVivo = vivo?.fase === 'jogo' && vivo.live ? JSON.parse(vivo.live) : null;
   const pessoa = (id, nome) => todos.find((p) => p.id === id) || { nome: nome || '?' };   // sem id = não abre perfil
   const ult = [...games].sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
@@ -172,17 +173,19 @@ function cartoesTopo(todos, res, games, vivo) {
     const vv = !r && aoVivo?.gameId === ult.id ? aoVivo : null;
     const eqs = (ids) => (ids || []).map((id) => pessoa(id, ult.nomes?.[id]));
     if (r) mostrado = r.id;
-    html += cartaoJogo({ estado: vv ? '<span class="ao-vivo"></span>Ao vivo' : r ? 'Último jogo' : 'Próximo jogo', data: r ? dataDe(r.jogo) : diaPT(ult.data),
+    const card = cartaoJogo({ estado: vv ? '<span class="ao-vivo"></span>Ao vivo' : r ? 'Último jogo' : 'Próximo jogo', data: r ? dataDe(r.jogo) : diaPT(ult.data),
       j: r?.jogo || vv, B: eqs(ult.brancos), P: eqs(ult.pretos), rodape: r ? `<span class="mute">${res.length} jogos registados</span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>`
         : campoLados(vv?.ladoInicio || ult.ladoInicio) });
     // Antes do jogo: os desafios que me calharam (games/{id}.desafios, desafios.js).
     const euId = lsGet('meu-perfil');
-    if (!r && euId && ult.desafios?.[euId]) html += htmlDesafiosAntes(ult.desafios[euId], ult.nomes || {});
+    const des = !r && euId && ult.desafios?.[euId] ? htmlDesafiosAntes(ult.desafios[euId], ult.nomes || {}) : '';
+    html += desafiosPrimeiro ? des + card : card + des;
   }
   return { html, mostrado, pessoa };
 }
 
-// Início: o jogo que aí vem (ou ao vivo), o último resultado, a votação e os líderes.
+// Início (Rui, 29/10): quem entrou no seu perfil vê o que é seu — o próximo jogo com os seus desafios, o seu último jogo
+// (resultado, desafios ✅/❌ e destaques) e o desafio do mês. Quem não entrou vê o geral (próximo jogo, votação, líderes).
 async function paginaInicio() {
   titulo('Futebolada');
   const [estado, { todos, res, games }, vivo] = await Promise.all([DB.getPublic('estado').then((x) => x || {}), dadosPublicos(), DB.getAoVivo().catch(() => null)]);
@@ -202,6 +205,9 @@ async function paginaInicio() {
     <div class="v-botoes"><a class="btn prim" href="#votar">Votar nos colegas</a>
       ${ultMeu ? `<a class="btn" href="#votar=${esc(ultMeu.id)}">Ajustar os do último jogo <small>${esc(dataDe(ultMeu.jogo).slice(0, 5))}</small></a>
         <a class="btn" href="#jogo=${esc(ultMeu.id)}&avaliar">⭐ Avaliar o último jogo</a>` : ''}</div></section>`;
+  const euOk = euId && lsGet('perfil-ok-' + euId) && (await DB.ligacaoOk(euId).catch(() => false));
+  if (euOk) return inicioEu(euId, { todos, res, games, vivo, votar });
+  const entrar = euId ? '' : `<div class="aviso"><span class="ic">👤</span><div><b>Entra no teu perfil</b><p>Para veres aqui o teu último jogo e os teus desafios.</p></div><a class="btn peq" href="#eu">Entrar</a></div>`;
   // Líderes (só golos e assistências: são públicos) e últimos resultados.
   const S = estatisticas(res);
   const nm = (s) => esc(nomeDe(todos.find((p) => p.id === s.id) || { nome: s.nome }));
@@ -218,7 +224,31 @@ async function paginaInicio() {
   };
   const ultimos = res.length ? `<section class="cartao"><div class="cartao-tit">Últimos resultados<a href="#jogos">Ver todos →</a></div>
     ${res.slice(0, 5).map((r) => linhaResultado(r, todos.find((p) => p.id === euId))).join('')}</section>` : '';
-  $app.innerHTML = `<div class="grelha2"><div>${votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
+  $app.innerHTML = `<div class="grelha2"><div>${entrar}${votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
+}
+
+// Início do próprio jogador.
+async function inicioEu(eu, { todos, res, games, vivo, votar }) {
+  const topo = cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro: true });
+  // O cartão de cima só fica se o jogo ainda não acabou (o acabado aparece em baixo, se joguei).
+  const cima = topo.mostrado ? topo.html.replace(/<article class="mjogo">[\s\S]*<\/article>/, '') : topo.html;
+  const fis = (await DB.getMinhaCarta(eu).catch(() => null))?.fisico || {};
+  const r = res.find((x) => [...(x.jogo.brancos || []), ...(x.jogo.pretos || [])].some((y) => y.id === eu));
+  let ultimo = '';
+  if (r) {
+    const j = r.jogo, lado = (j.brancos || []).some((x) => x.id === eu) ? 'B' : 'P', v = vencedorDe(j);
+    const fisJ = fis[j.gameId || r.id] || null;
+    const f = dnaJogo(j, eu, jogosConq(res), { publico: false, fis: fisJ });
+    const resTxt = v === 'E' ? 'Empate' : v === lado ? 'Vitória' : 'Derrota';
+    ultimo = cartaoJogo({ estado: 'O teu último jogo', data: dataDe(j), j, B: [], P: [],
+      rodape: `<span class="mute">Jogaste nos ${lado === 'B' ? 'Brancos' : 'Pretos'} · <b>${resTxt}</b></span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>` })
+      + htmlDesafiosJogo(j, eu, games.find((g) => g.id === j.gameId), { fis: fisJ })
+      + (f.length ? `<section class="cartao"><div class="cartao-tit">🧬 Os teus destaques</div><ul class="dna-curto">${f.map((x) => `<li>${esc(x.txt)}</li>`).join('')}</ul></section>` : '');
+  }
+  const mes = htmlDesafioMes(res, games, eu, { fisPorJogo: fis });
+  const nada = !cima && !ultimo ? `<div class="cartao">${vazio('📋', 'Ainda não há equipas nem jogos teus.<br><small>O próximo jogo e os teus desafios aparecem aqui.</small>')}</div>` : '';
+  $app.innerHTML = `<div class="grelha2"><div>${cima}${nada}${ultimo}</div><aside>${mes}${votar}
+    <div class="linha" style="justify-content:center;gap:16px;margin:8px 0"><a href="#tabela">Classificação →</a><a href="#jogos">Todos os jogos →</a></div></aside></div>`;
 }
 
 const lnkJog = (p) => (p.id ? `<a class="lnk-j" href="#jogador=${esc(p.id)}">${esc(p.nome)}</a>` : esc(p.nome));
@@ -591,7 +621,12 @@ async function paginaVotar(el) {
   const $app = el;
   const [players, perfis] = await Promise.all([DB.listPlayers(), DB.listPerfis()]);
   const todos = juntarPerfis(players, perfis).filter((p) => p.ativo !== false && !p.convidado);
-  const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
+  let eu = todos.find((p) => p.id === lsGet('meu-perfil'));
+  // Conta Google ligada a um jogador: entra sem PIN (em qualquer telemóvel).
+  if (!eu || !(await DB.ligacaoOk(eu.id))) {
+    const c = await DB.minhaConta().catch(() => null), p = c && todos.find((x) => x.id === c.player);
+    if (p) { lsSet('meu-perfil', p.id); lsSet('perfil-ok-' + p.id, '1'); eu = p; }
+  }
   if (!eu) return escolherPerfil(todos);
   // Sem ligação válida (outro telemóvel, ou o Rui mudou o PIN) → pede o PIN outra vez.
   if (!(await DB.ligacaoOk(eu.id))) return pedirPin(eu, todos);
@@ -604,8 +639,16 @@ function escolherPerfil(todos) {
   const lista = [...todos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
   $app.innerHTML = `<h2>Quem és tu?</h2>
     <p class="mute">Escolhe o teu nome. Vais avaliar de 1 a 10 todos os outros jogadores que conheces, para as equipas serem feitas de forma automática e equilibrada. Os outros jogadores não veem as tuas notas.</p>
+    ${DB.demo ? '' : '<button id="g-entrar" style="width:100%;margin-bottom:12px">🔐 Já liguei a minha conta Google — entrar com o Google</button>'}
     <div class="chips">${lista.map((p) => `<button class="chip" data-id="${p.id}">${foto(p)}${esc(p.nome)}</button>`).join('')}</div>
     <p class="mute" style="margin-top:14px">O teu nome não aparece? Fala com o Rui.</p>`;
+  document.getElementById('g-entrar')?.addEventListener('click', async () => {
+    try {
+      const c = await DB.entrarGoogle(), p = c && lista.find((x) => x.id === c.player);
+      if (!p) return toast('Esta conta Google ainda não está ligada a nenhum jogador. Entra com o PIN e liga-a nos teus dados.');
+      lsSet('meu-perfil', p.id); lsSet('perfil-ok-' + p.id, '1'); seguir(p, todos);
+    } catch (e) { console.error(e); toast('Não deu para entrar com o Google'); }
+  });
   $app.querySelectorAll('.chip').forEach((b) => (b.onclick = () => {
     const p = lista.find((x) => x.id === b.dataset.id);
     $app.innerHTML = `<div class="fim"><div class="alvo" style="justify-content:center">${foto(p)}</div>
@@ -644,6 +687,28 @@ function pedirPin(p, todos) {
   inp.oninput = () => { if (/^\d{4}$/.test(inp.value)) entrar(); };
 }
 
+// Conta Google ligada ao perfil: entra-se em qualquer telemóvel sem PIN (e, mais tarde, é precisa para criar ligas).
+async function blocoGoogle(eu) {
+  const el = document.getElementById('pf-google');
+  if (!el) return;
+  const c = await DB.minhaConta().catch(() => null);
+  if (c && c.player === eu.id) {
+    el.innerHTML = `<b>🔐 Conta Google ligada</b><div class="mute">${esc(c.email || '')} — entras em qualquer telemóvel com o Google, sem PIN.</div>
+      <button class="peq" id="g-desligar" style="margin-top:6px">Desligar a conta Google</button>`;
+    document.getElementById('g-desligar').onclick = async () => {
+      if (!confirm('Desligar a conta Google? Voltas a precisar do PIN.')) return;
+      await DB.desligarGoogle(); await DB.logout(); lsDel('meu-perfil'); location.hash = '#eu'; location.reload();
+    };
+    return;
+  }
+  el.innerHTML = `<b>🔐 Ligar à minha conta Google</b><div class="mute">Passas a entrar com o Google em qualquer telemóvel, sem PIN. Só guardamos o e-mail.</div>
+    <button class="peq prim" id="g-ligar" style="margin-top:6px">Ligar ao Google</button>`;
+  document.getElementById('g-ligar').onclick = async () => {
+    try { const email = await DB.ligarGoogle(eu.id); toast(`Ligado a ${email} ✔`); blocoGoogle(eu); }
+    catch (e) { console.error(e); toast(e.code === 'auth/popup-blocked' ? 'O telemóvel bloqueou a janela do Google — tenta outra vez' : 'Não deu para ligar ao Google'); }
+  };
+}
+
 // depois: o que fazer depois de guardar (nas ⚙ Definições fica lá; no primeiro acesso segue para o perfil / votação).
 function editarPerfil(eu, todos, depois = null) {
   const $app = document.getElementById('pub') || document.getElementById('app');
@@ -661,8 +726,14 @@ function editarPerfil(eu, todos, depois = null) {
       <div class="linha"><input id="pf-pin1" inputmode="numeric" maxlength="4" placeholder="novo PIN" style="max-width:120px">
         <input id="pf-pin2" inputmode="numeric" maxlength="4" placeholder="repetir" style="max-width:120px">
         <button class="peq" id="pf-pin-ok">Mudar PIN</button></div></details>
+    ${DB.demo ? '' : '<div id="pf-google" class="opcao" style="margin-top:12px"></div>'}
     <button id="pf-trocar" style="width:100%;margin-top:10px">← Não sou eu / escolher outro perfil</button>`;
-  document.getElementById('pf-trocar').onclick = async () => { lsDel('meu-perfil'); await DB.desligar(); escolherPerfil(todos); };
+  document.getElementById('pf-trocar').onclick = async () => {
+    lsDel('meu-perfil'); await DB.desligar();
+    if (await DB.minhaConta().catch(() => null)) await DB.logout();   // com conta Google, sai dela (senão voltava a entrar sozinho)
+    escolherPerfil(todos);
+  };
+  blocoGoogle(eu);
   document.getElementById('pf-pin-ok').onclick = async () => {
     const a = document.getElementById('pf-pin1').value.trim(), b = document.getElementById('pf-pin2').value.trim();
     if (!/^\d{4}$/.test(a)) return toast('O PIN são 4 algarismos');
@@ -1433,6 +1504,8 @@ async function paginaAdmin() {
     document.getElementById('login').onclick = async () => { await DB.login(); paginaAdmin(); };
     return;
   }
+  // O Rui (admin, Google) fica ligado ao seu perfil de jogador: nunca precisa de PIN.
+  DB.getSegredo('perfil').then((p) => p?.eu && DB.contaAdmin(p.eu)).catch((e) => console.error(e));
   await recarregar();
   A.usarElo ??= (await DB.getPublic('estado'))?.usarElo !== false;   // por defeito: ligado (Rui, 28/10)
   renderAdmin();
@@ -2894,6 +2967,7 @@ const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.sta
 // Profundidade dentro da app, guardada no histórico: o ← só volta atrás se viemos de uma página da app.
 // Veio de "Partilhar → Futebolada": tira o ?partilha=1 do endereço (o ficheiro espera na cache até o perfil o ler).
 if (new URLSearchParams(location.search).has('partilha')) history.replaceState(null, '', location.pathname + (location.hash || '#eu'));
+if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
 document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(location.hash); };
