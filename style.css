@@ -933,3 +933,13 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .tend-b { width: 60%; max-width: 34px; height: 90px; display: flex; align-items: flex-end; background: var(--bg3); border-radius: 6px; overflow: hidden; }
 .tend-b i { display: block; width: 100%; background: var(--verde2); }
 .med .pbar-b, .desafio .pbar-b { background: #0005; } .med .pbar-b i, .desafio .pbar-b i { background: var(--vitoria); }
+
+/* Desafios por jogo */
+.des-j { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--linha, #ffffff14); }
+.des-j:first-of-type { border-top: 0; }
+.des-ic { font-size: 18px; width: 24px; text-align: center; flex: none; }
+.des-txt { flex: 1; min-width: 0; }
+.des-nv { flex: none; font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 99px; background: var(--bg3); }
+.des-nv.n1 { color: #4ade80; } .des-nv.n2 { color: #f1c40f; } .des-nv.n3 { color: #f87171; }
+.des-j.falhou .des-txt { opacity: .6; }
+.des-j.sem .des-txt { opacity: .75; }

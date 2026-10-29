@@ -2,8 +2,9 @@ import { DB, novoToken, novoPin } from './db.js?v=32';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq } from './conquistas-ui.js?v=1';
-import { dnaJogo } from './conquistas.js?v=2';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo } from './conquistas-ui.js?v=3';
+import { dnaJogo } from './conquistas.js?v=3';
+import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=2';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
 
 const $app = document.getElementById('app');
@@ -174,6 +175,9 @@ function cartoesTopo(todos, res, games, vivo) {
     html += cartaoJogo({ estado: vv ? '<span class="ao-vivo"></span>Ao vivo' : r ? 'Último jogo' : 'Próximo jogo', data: r ? dataDe(r.jogo) : diaPT(ult.data),
       j: r?.jogo || vv, B: eqs(ult.brancos), P: eqs(ult.pretos), rodape: r ? `<span class="mute">${res.length} jogos registados</span><a href="#jogo=${esc(r.id)}">Ver o jogo →</a>`
         : campoLados(vv?.ladoInicio || ult.ladoInicio) });
+    // Antes do jogo: os desafios que me calharam (games/{id}.desafios, desafios.js).
+    const euId = lsGet('meu-perfil');
+    if (!r && euId && ult.desafios?.[euId]) html += htmlDesafiosAntes(ult.desafios[euId], ult.nomes || {});
   }
   return { html, mostrado, pessoa };
 }
@@ -258,7 +262,7 @@ async function paginaJogoPub(id) {
   // "#jogo=<id>&avaliar" (vindo do Início): abre logo a avaliação dos colegas.
   const avaliarJa = id.endsWith('&avaliar');
   id = id.replace(/&avaliar$/, '');
-  const [{ todos, res }, euLs, posPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null)]);
+  const [{ todos, res, games }, euLs, posPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null)]);
   const eu = euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
   const i = res.findIndex((r) => r.id === id);
   if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
@@ -297,9 +301,10 @@ async function paginaJogoPub(id) {
   const fisAntes = Object.entries(fisTodos).filter(([k, f]) => k !== kJ && iso(f?.data) < iso(j.data || dataDe(j))).map(([, f]) => f);
   const dnaH = htmlDNAJogo(j, jogosC, quem, { eu: joguei ? eu : null, fisEu, fisAntes });
   const fisH = joguei ? htmlFisicoJogo(fisEu, j) : '';
+  const desH = joguei ? htmlDesafiosJogo(j, eu, games.find((g) => g.id === j.gameId), { fis: fisEu }) : '';
   $app.innerHTML = `${nav}${cab}
     <div class="tabs jtabs" role="tablist"><button data-ja="resumo" class="on">Resumo</button><button data-ja="stats">Estatísticas</button><button data-ja="equipas">Equipas</button></div>
-    <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${dnaH}${fisH}${resumo}</div></div>
+    <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${desH}${dnaH}${fisH}${resumo}</div></div>
       <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>`;
   $app.querySelectorAll('[data-ja]').forEach((b) => (b.onclick = () => {
     $app.querySelectorAll('[data-ja]').forEach((x) => x.classList.toggle('on', x === b));
@@ -1056,11 +1061,13 @@ function renderPerfil(el, p, d) {
   const abas = [['geral', 'Resumo'], ['jogos', `Jogos${meus.length ? ` (${meus.length})` : ''}`], ['stats', 'Estatísticas'], ['conq', '🏅 Conquistas'], ...(proprio ? [['fis', '🔒 Físico']] : [])];
   const fisPorJogo = proprio ? d.mc?.fisico || {} : {};
   if (!abas.some(([k]) => k === A.pAba)) A.pAba = 'geral';
+  // Desafios (por jogo e do mês): precisam dos games/.
+  DB.listGames().then((games) => { const c = el.querySelector('#p-conq'); if (c) c.innerHTML = htmlConquistas(d.res, p.id, { proprio, fisPorJogo, games }); }).catch(() => {});
   el.innerHTML = `${cab}<div class="tabs ptabs" role="tablist">${abas.map(([k, n]) => `<button role="tab" data-pa="${k}" class="${A.pAba === k ? 'on' : ''}" aria-selected="${A.pAba === k}">${n}</button>`).join('')}</div>
     <div data-painel="geral" ${A.pAba === 'geral' ? '' : 'hidden'}>${painelGeral(p, d, meus, m, proprio, S, cartaVis, est)}</div>
     <div data-painel="jogos" ${A.pAba === 'jogos' ? '' : 'hidden'}>${painelJogos(p, d, meus, proprio)}</div>
     <div data-painel="stats" ${A.pAba === 'stats' ? '' : 'hidden'}>${painelStats(p, S, m, proprio)}</div>
-    <div data-painel="conq" ${A.pAba === 'conq' ? '' : 'hidden'}>${htmlConquistas(d.res, p.id, { proprio, fisPorJogo })}</div>
+    <div data-painel="conq" id="p-conq" ${A.pAba === 'conq' ? '' : 'hidden'}>${htmlConquistas(d.res, p.id, { proprio, fisPorJogo })}</div>
     ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}>${Object.keys(fisPorJogo).length ? htmlHeatmap(somarGrelhas(Object.values(fisPorJogo).map((f) => f?.grelha)), 'Onde andaste (todos os jogos)') : ''}<div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 só tu e o Rui</span></div><div id="eu-form"></div>
       ${blocoFisico(d.saude, d.treinos, meus.map((x) => ({ id: x.id, jogo: x.j })), false)}</div></div>` : ''}`;
   const mostrar = (k) => {
@@ -1464,6 +1471,7 @@ async function ctxAdmin() {
   return {
     players, cartas: calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv), games: A.games,
     elo: calcularElo((await DB.listResultados()).map((r) => JSON.parse(r.json || '{}').jogo), calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv)),
+    relogio: [((await DB.getSegredo('perfil')) || {}).eu].filter(Boolean),   // quem tem relógio (por agora o Rui) → desafios ⌚
     async addConvidado(d) { const id = await DB.savePlayer(d); await recarregar(); A.ctxEq = await ctxAdmin(); return id; },
     async notaConvidado(id, n) {
       const p = A.players.find((x) => x.id === id);
@@ -2583,8 +2591,11 @@ function secEquipas(el, X = A.ctxEq) {
       const k = Number(b.dataset.k), o = ops[k];
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
       b.disabled = true;
-      const ladoInicio = sortearLado();
-      const id = await X.saveGame({ data: VV.data || hojeLocal(), brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now(), ladoInicio }, VV.gameId || undefined);
+      const ladoInicio = sortearLado(), criado = Date.now();
+      const dataJ = VV.data || hojeLocal(), outros = (X.games || []).filter((x) => x.id !== VV.gameId);
+      const desafios = atribuirDesafios({ id: VV.gameId, brancos: o.A, pretos: o.B, criado }, outros, { relogio: X.relogio || [] });
+      const desafiosMes = completarDesafiosMes(dataJ.slice(0, 7), [...o.A, ...o.B], outros, { relogio: X.relogio || [] });
+      const id = await X.saveGame({ data: dataJ, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes }, VV.gameId || undefined);
       Object.assign(VV, { escolhida: k, gameId: id, partilhado: null });
       VV.ladoInicio = ladoInicio;
       await X.publicar({ escolhida: k, gameId: id, partilhado: null, nomes, ladoInicio });   // o marcador começa com o lado sorteado
@@ -2600,7 +2611,10 @@ function secEquipas(el, X = A.ctxEq) {
       let png = null;
       try { png = await imagemJogo(o, nomes, data, ladoInicio); } catch (e) { console.error(e); }
       await partilharWhatsApp(png, texto, `equipas-${data}.png`);
-      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado: Date.now(), ladoInicio });
+      // Desafios do jogo (1 a 3 por convocado, sem repetir entre jogadores nem do jogo anterior) — desafios.js.
+      const criado = Date.now(), desafios = atribuirDesafios({ brancos: o.A, pretos: o.B, criado }, X.games || [], { relogio: X.relogio || [] });
+      const desafiosMes = completarDesafiosMes(data.slice(0, 7), [...o.A, ...o.B], X.games || [], { relogio: X.relogio || [] });   // só os que ainda não têm o do mês
+      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes });
       // Confirmação: as equipas ficam como as do próximo jogo; daqui vai-se direto para o marcador.
       g('res').innerHTML = `<div class="opcao" style="text-align:center"><h3 style="margin:4px 0">✅ Equipas escolhidas</h3>
         ${cartaoJogo(o)}

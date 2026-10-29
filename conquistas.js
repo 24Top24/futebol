@@ -366,7 +366,7 @@ export function dadosCartao(j, pid, jogos, { fis = null, fisAntes = [], proprio 
 // Guarda-redes conta turnos SEM SOFRER e a Muralha o maior período seguido sem sofrer (decisão do Rui: não minutos na baliza).
 // Tudo calculado na hora a partir dos jogos (nada guardado); as do relógio só aparecem a quem o tem.
 const TURNO_MIN = 3 * MIN;   // um turno na baliza só conta para o Guarda-redes se durar 3+ min
-function balizaDe(j, pid) {
+export function balizaDe(j, pid) {
   const tur = (j.turnos || []).filter((t) => t.jogador === pid);
   const sofridos = (j.eventos || []).filter((e) => grSofreu(j, e) === pid && tur.some((t) => e.t >= t.de && e.t < t.ate)).map((e) => e.t);
   let limpos = 0, melhor = 0;
@@ -411,10 +411,11 @@ export const MEDALHAS = [
 
 // Medalhas de um jogador: nível atual (0–3), valor, próximo objetivo e % até lá.
 // fisPorJogo = minhacarta.fisico (só o próprio); as medalhas do relógio só aparecem a quem tem dados do relógio.
-export function medalhas(jogos, pid, { fisPorJogo = {}, hoje = new Date().toISOString().slice(0, 10) } = {}) {
+// desafiosFeitos: total de desafios cumpridos vindo de desafios.js (por jogo + do mês); sem ele contam os semanais/mensais antigos.
+export function medalhas(jogos, pid, { fisPorJogo = {}, hoje = new Date().toISOString().slice(0, 10), desafiosFeitos = null } = {}) {
   const H = historico(jogos, pid);
   const temRelogio = Object.keys(fisPorJogo).length > 0;
-  const c = { H, pid, jogos, hoje, fis: fisPorJogo, desafios: desafiosCumpridos(jogos, pid, { fisPorJogo, temRelogio }).length };
+  const c = { H, pid, jogos, hoje, fis: fisPorJogo, desafios: desafiosFeitos ?? desafiosCumpridos(jogos, pid, { fisPorJogo, temRelogio }).length };
   const pt = (v) => String(v).replace('.', ',');
   return MEDALHAS.filter((m) => temRelogio || !m.rel).map((m) => {
     const valor = m.medir(c);

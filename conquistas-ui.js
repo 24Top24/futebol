@@ -1,7 +1,8 @@
 // Ecrãs das conquistas e do físico (sessão equipas/golos). Os cálculos são do conquistas.js e do fisico.js (sessão
 // desenvolvimento); aqui só se desenha: destaques do jogo (Match DNA), medalhas, desafios, recordes, tendências,
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
-import { dnaJogo, recordes, tendencias, sentidoEpoca, desafiosAtivos, desafiosCumpridos, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=2';
+import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=3';
+import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=2';
 import { ZONAS_VEL, LIM_KMH, tercos } from './fisico.js?v=2';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -69,12 +70,38 @@ export function htmlHeatmap(grelha, titulo = 'Onde andaste') {
     ${t ? `<div class="tercos"><div><b>${t.ata}%</b><span>ataque</span></div><div><b>${t.meio}%</b><span>meio</span></div><div><b>${t.def}%</b><span>defesa</span></div></div>` : ''}</section>`;
 }
 
+// ---------- Desafios por jogo (desafios.js): antes do jogo, depois do jogo e o do mês ----------
+const NIVEL = ['', 'Fácil', 'Médio', 'Difícil'];
+const linhaDes = (d, est = '') => `<div class="des-j ${est}"><span class="des-ic">${est === 'feito' ? '✅' : est === 'falhou' ? '❌' : est === 'sem' ? '⏳' : d.ic}</span>
+  <span class="des-txt">${esc(d.txt)}${d.rel ? ' <small title="Precisa do relógio">⌚</small>' : ''}</span><span class="des-nv n${d.nv}">${NIVEL[d.nv] || ''}</span></div>`;
+// Antes do jogo (Próximo jogo): os desafios que me calharam. lista = games/{id}.desafios[eu]; nomes = games/{id}.nomes.
+export function htmlDesafiosAntes(lista, nomes = {}) {
+  const L = (lista || []).map((d) => textoDesafio(d, nomes)).filter(Boolean);
+  return L.length ? `<section class="cartao desafios"><div class="cartao-tit">🎯 Os teus desafios <small class="mute">para este jogo</small></div>
+    ${L.map((d) => linhaDes(d)).join('')}<p class="mute" style="margin:6px 0 0">Ninguém mais tem os mesmos neste jogo. Vê depois do jogo se os cumpriste.</p></section>` : '';
+}
+// Depois do jogo (página do jogo): ✅ / ❌ / ⏳ (sem dados, p. ex. ⌚ sem relógio). g = games/{id} deste jogo.
+export function htmlDesafiosJogo(j, pid, g, { fis = null } = {}) {
+  const lista = g?.desafios?.[pid];
+  if (!lista?.length) return '';
+  const R = avaliarDesafios(j, pid, lista, { fis, nomes: g.nomes || {} });
+  // Todos os convocados (sem os ⌚, que dependem dos dados de cada um): quantos se cumpriram no jogo.
+  let tot = 0, ok = 0;
+  for (const [q, l] of Object.entries(g.desafios)) for (const r of avaliarDesafios(j, q, l, { nomes: g.nomes || {} })) if (r.feito != null) { tot++; if (r.feito) ok++; }
+  const feitos = R.filter((r) => r.feito).length;
+  return `<section class="cartao desafios"><div class="cartao-tit">🎯 Os teus desafios <small class="mute">${feitos} de ${R.length}</small></div>
+    ${R.map((r) => linhaDes(r, r.feito ? 'feito' : r.feito === false ? 'falhou' : 'sem')).join('')}
+    ${tot ? `<p class="mute" style="margin:6px 0 0">No jogo todo: ${ok} de ${tot} desafios cumpridos.</p>` : ''}</section>`;
+}
 // ---------- Separador "Conquistas" do perfil: medalhas, desafios, recordes, tendências ----------
-export function htmlConquistas(res, pid, { proprio = false, fisPorJogo = {} } = {}) {
+// games = games/ (com .desafios); sem eles (ainda a carregar) não há a secção dos desafios.
+export function htmlConquistas(res, pid, { proprio = false, fisPorJogo = {}, games = null } = {}) {
   const jogos = jogosDe(res);
   const fis = proprio ? fisPorJogo || {} : {};
   const temRelogio = Object.keys(fis).length > 0;
-  const M = medalhas(jogos, pid, { fisPorJogo: fis });
+  const feitosJ = games ? desafiosCumpridosJogos(jogos, games, pid, { fisPorJogo: fis }) : [];
+  const feitosM = games ? desafiosMesCumpridos(jogos, games, pid, { fisPorJogo: fis }) : [];
+  const M = medalhas(jogos, pid, { fisPorJogo: fis, desafiosFeitos: games ? feitosJ.length + feitosM.length : 0 });
   const ganhas = M.filter((m) => m.nivel).length;
   const medH = `<section class="cartao"><div class="cartao-tit">🏅 Medalhas <small class="mute">${ganhas} de ${M.length}</small></div>
     <div class="medalhas">${M.map((m) => `<div class="med n${m.nivel}" title="${esc(m.txt)}">
@@ -83,15 +110,17 @@ export function htmlConquistas(res, pid, { proprio = false, fisPorJogo = {} } = 
       <div class="pbar-b"><i style="width:${m.pct}%"></i></div></div>`).join('')}</div>
     <p class="mute" style="margin:8px 0 0">🥉 🥈 🥇 três níveis por medalha. ${temRelogio ? '' : proprio ? 'As medalhas ⌚ aparecem quando o relógio enviar dados.' : ''}</p></section>`;
   let desH = '';
-  if (proprio) {
-    const D = desafiosAtivos(jogos, pid, { fisPorJogo: fis, temRelogio });
-    const feitos = desafiosCumpridos(jogos, pid, { fisPorJogo: fis, temRelogio }).length;
-    const fim = (d) => new Date(d.fim - 1).toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' });
-    const bloco = (tipo, tit) => { const L = D.filter((d) => d.tipo === tipo); return L.length ? `<h4>${tit} <small class="mute">até ${fim(L[0])}</small></h4>${L.map((d) => `<div class="desafio ${d.feito ? 'feito' : ''}">
-      <div class="linha" style="justify-content:space-between"><span>${d.feito ? '✅' : d.rel ? '⌚' : '🎯'} ${esc(d.txt)}</span><b>${pt(d.valor)}/${d.alvo}${d.un ? ' ' + esc(d.un) : ''}</b></div>
-      <div class="pbar-b"><i style="width:${d.pct}%"></i></div></div>`).join('')}` : ''; };
-    desH = `<section class="cartao"><div class="cartao-tit">🎯 Desafios <small class="mute">${feitos} cumpridos até hoje</small></div>
-      ${bloco('semana', 'Esta semana')}${bloco('mes', 'Este mês')}<p class="mute" style="margin:8px 0 0">Iguais para todos; mudam à segunda-feira e no dia 1.</p></section>`;
+  if (games) {
+    // Desafio do mês: o gravado nos jogos do mês (games/{id}.desafiosMes); quem ainda não o tem recebe-o no próximo jogo.
+    const mes = new Date().toISOString().slice(0, 7), id = desafiosMesDeGames(games, mes)[pid];
+    const d = id && progressoMes(jogos, pid, id, mes, { fisPorJogo: fis });
+    const ultimos = feitosJ.slice(-3).reverse();
+    desH = `<section class="cartao desafios"><div class="cartao-tit">🎯 Desafios <small class="mute">${feitosJ.length + feitosM.length} cumpridos</small></div>
+      ${d && proprio ? `<h4>Desafio do mês <small class="mute">${MESES[Number(mes.slice(5, 7)) - 1]}</small></h4><div class="desafio ${d.feito ? 'feito' : ''}">
+        <div class="linha" style="justify-content:space-between"><span>${d.feito ? '✅' : d.ic} ${esc(d.txt)}${d.rel ? ' ⌚' : ''}</span><b>${pt(d.valor)}/${d.alvo}${d.un ? ' ' + esc(d.un) : ''}</b></div>
+        <div class="pbar-b"><i style="width:${d.pct}%"></i></div></div>` : proprio ? '<p class="mute" style="margin:0 0 6px">Recebes o teu desafio do mês no próximo jogo.</p>' : ''}
+      ${ultimos.length ? `<h4>Últimos cumpridos</h4>${ultimos.map((r) => linhaDes(r, 'feito').replace('</span><span class="des-nv', ` <small class="mute">${esc(diaPT(r.data))}</small></span><span class="des-nv`)).join('')}` : ''}
+      <p class="mute" style="margin:8px 0 0">${proprio ? 'Cada jogo traz 1 a 3 desafios (vês no Próximo jogo) e há 1 desafio teu por mês.' : 'Desafios dos jogos (1 a 3 por jogo) e do mês.'}</p></section>`;
   }
   const R = recordes(jogos, pid, fis);
   const recH = R.length ? `<section class="cartao"><div class="cartao-tit">🏆 Recordes pessoais</div><table class="tficha">
