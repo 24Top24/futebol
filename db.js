@@ -224,6 +224,9 @@ async function fireDb() {
       const u = await atual(); if (!u || u.isAnonymous || !id) return;
       if (!(await getRaiz('contas', u.uid).catch(() => null))) await setDoc(doc(db, 'contas', u.uid), { player: id, h: null, email: u.email || null, ts: Date.now() });
       if (!(await getRaiz('membros', u.uid).catch(() => null))) await setDoc(doc(db, 'membros', u.uid), { uid: u.uid, player: id, ts: Date.now() }).catch((e) => console.error(e));
+      // O relógio do Rui (com a chave do relógio) vê as ligas desta conta: segredos/relogio.dono.
+      const rel = await getRaiz('segredos', 'relogio').catch(() => null);
+      if (rel && rel.dono !== u.uid) await setDoc(doc(db, 'segredos', 'relogio'), { dono: u.uid }, { merge: true }).catch((e) => console.error(e));
     },
     listContas: () => listRaiz('contas'),
 
@@ -290,20 +293,8 @@ async function fireDb() {
     listMembros: (liga) => (liga ? listRaiz('ligas', liga, 'membros') : listRaiz('membros')),
     async tirarMembro(liga, uid) { const b = writeBatch(db); b.delete(doc(db, 'ligas', liga, 'membros', uid)); b.delete(doc(db, 'filiacoes', `${liga}_${uid}`)); await b.commit(); },
     setLiga: (id, d) => setDoc(doc(db, 'ligas', id), d, { merge: true }),
-    // ⌚ Relógios emparelhados com a minha conta Google (o relógio mostra um código de 6 algarismos; ele confirma no ecrã).
-    async ligarRelogio(codigo) {
-      const u = await atual();
-      if (!u || u.isAnonymous) throw new Error('Precisas de entrar com o Google');
-      const e = await getRaiz('emparelhar', codigo).catch(() => null);
-      if (!e?.uid) throw new Error('Código errado ou expirado — vê o código no relógio');
-      await setDoc(doc(db, 'relogios', e.uid), { dono: u.uid, codigo, nome: u.displayName || u.email || 'Eu', ts: Date.now(), confirmado: false });
-      await deleteDoc(doc(db, 'emparelhar', codigo)).catch(() => {});
-      return e.uid;
-    },
-    async listRelogios() {
-      const u = await atual(); if (!u || u.isAnonymous) return [];
-      return (await getDocs(fs.query(collection(db, 'relogios'), fs.where('dono', '==', u.uid)))).docs.map((d) => ({ id: d.id, ...d.data() }));
-    },
+    // ⌚ Relógios que se apresentaram com a chave do relógio (só o admin vê); apagar um corta-lhe o acesso até voltar a entrar.
+    listRelogios: () => listRaiz('relogios').catch(() => []),
     desligarRelogio: (id) => deleteDoc(doc(db, 'relogios', id)),
     // Definições da liga ativa (nome, cor, pública): a Futebolada semanal guarda-as em public/liga; as outras no próprio documento.
     async getConfigLiga() {
@@ -360,7 +351,7 @@ async function fireDb() {
     listGames: () => list('games'),
     listResultados: () => list('resultados'),
     deleteResultado: (id) => deleteDoc(D('resultados', id)),
-    setChaveRelogio: (chave) => setDoc(D('segredos', 'relogio'), { chave }),
+    setChaveRelogio: (chave) => setDoc(D('segredos', 'relogio'), { chave }, { merge: true }),   // merge: guarda o dono (o relógio lê as ligas dele)
     getSegredo: (d) => get('segredos', d),
     setSegredo: (d, v) => setDoc(D('segredos', d), v),
     // Link de colaborador: tudo debaixo de partilha/{chave}/… (só quem sabe a chave lê/escreve).
