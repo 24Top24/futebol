@@ -263,7 +263,7 @@ async function relogios(el, { esc, toast }) {
   const L = await naLiga(null, () => DB.listRelogios()).catch(() => []);
   el.innerHTML = `${L.length ? L.map((r) => `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div>⌚ Relógio ${esc(r.id.slice(0, 6))}…
       <small class="mute">${r.confirmado ? '✔ ligado' : '⏳ falta confirmar no relógio'}</small></div><button class="peq perigo" data-desrel="${esc(r.id)}">Desligar</button></div>`).join('')
-      : '<p class="mute">No relógio: Definições → "Ligar ao telemóvel". Aparece um código de 6 algarismos; escreve-o aqui e confirma no relógio.</p>'}
+      : '<p class="mute">No relógio: Preparar → 🏆 Liga → ⌚ Ligar relógio à conta. Aparece um código de 6 algarismos; escreve-o aqui e confirma no relógio («Ligar a …?»).</p>'}
     <div class="linha"><input id="rel-cod" inputmode="numeric" maxlength="6" placeholder="código do relógio" style="max-width:170px"><button class="peq prim" id="rel-ok">Ligar relógio</button></div>`;
   document.getElementById('rel-ok').onclick = async () => {
     const c = document.getElementById('rel-cod').value.trim();
