@@ -298,6 +298,24 @@ export function textoDesafio(d, nomes = {}) {
 
 // Resultado dos desafios de um jogador num jogo terminado. feito: true / false / null (faltam dados, p. ex. sem relógio).
 // fis = resumo físico do jogador nesse jogo (só o próprio e o admin o têm; sem ele os ⌚ ficam null).
+// Dados que cada desafio precisa e que nem todos os jogos têm. Sem eles, um desafio que não deu certo fica ⏳ (sem dados),
+// em vez de ❌ — p. ex. o marcador não registou a parte do corpo, não houve trocas de GR ou o jogo fechou só com o vencedor.
+const SO_RESULTADO = new Set(['ganhar', 'naoperder', 'adv-ganha', 'adv-np']);   // os únicos que se sabem sem os golos
+const PRECISA_TURNOS = new Set(['baliza', 'baliza2']);
+const IDS_TURNOS = new Set(['gr-v', 'muro-v', 'p-limpo', 'adv-gr', 'adv-gr2', 'adv-assist-gr', 'adv-zero', 'gr2', 'gr3', 'gr-e-golo', 'gr-e-assist']);
+const IDS_PARTE = new Set(['assist-cab']);
+function faltamDados(x, j, pid) {
+  if (x.rel) return false;   // os ⌚ já dão null sem o resumo do relógio
+  if (j.semGolos) return !SO_RESULTADO.has(x.id);
+  if ((PRECISA_TURNOS.has(x.fam) || IDS_TURNOS.has(x.id)) && !(j.turnos || []).length) return true;
+  if (x.fam === 'tecnica' || IDS_PARTE.has(x.id)) {
+    const meus = (j.eventos || []).filter((e) => e.tipo !== 'autogolo' && (e.marcador === pid || (IDS_PARTE.has(x.id) && e.assist === pid)));
+    if (meus.some((e) => !e.parte)) return true;
+  }
+  if ((x.id === 'pen' || x.id === 'gr-pen') && !Array.isArray(j.penaltis)) return true;
+  return false;
+}
+
 export function avaliarDesafios(j, pid, lista = [], { fis = null, nomes = {} } = {}) {
   const l = linhaJogo(j, pid);
   if (!l) return (lista || []).map((d) => ({ ...textoDesafio(d, nomes), feito: null }));
@@ -307,6 +325,7 @@ export function avaliarDesafios(j, pid, lista = [], { fis = null, nomes = {} } =
     if (!x) return null;
     let feito = null;
     try { feito = x.ok({ ...c, p: d.p }); } catch { feito = null; }
+    if (feito === false && faltamDados(x, j, pid)) feito = null;   // não deu certo, mas faltam dados para o saber
     return { ...textoDesafio(d, nomes), feito: feito == null ? null : !!feito };
   }).filter(Boolean);
 }

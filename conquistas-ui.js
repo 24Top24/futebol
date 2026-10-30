@@ -2,7 +2,7 @@
 // desenvolvimento); aqui só se desenha: destaques do jogo (Match DNA), medalhas, desafios, recordes, tendências,
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
 import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=3';
-import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=2';
+import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=3';
 import { ZONAS_VEL, LIM_KMH, tercos } from './fisico.js?v=2';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -78,7 +78,7 @@ const linhaDes = (d, est = '') => `<div class="des-j ${est}"><span class="des-ic
 export function htmlDesafiosAntes(lista, nomes = {}) {
   const L = (lista || []).map((d) => textoDesafio(d, nomes)).filter(Boolean);
   return L.length ? `<section class="cartao desafios"><div class="cartao-tit">🎯 Os teus desafios <small class="mute">para este jogo</small></div>
-    ${L.map((d) => linhaDes(d)).join('')}<p class="mute" style="margin:6px 0 0">Ninguém mais tem os mesmos neste jogo. Vê depois do jogo se os cumpriste.</p></section>` : '';
+    ${L.map((d) => linhaDes(d)).join('')}<p class="mute" style="margin:6px 0 0">Ninguém mais tem os mesmos neste jogo. No fim, a app vê sozinha se os cumpriste (pelos golos, assistências e baliza registados; os ⌚ pelo relógio).</p></section>` : '';
 }
 // Depois do jogo (página do jogo): ✅ / ❌ / ⏳ (sem dados, p. ex. ⌚ sem relógio). g = games/{id} deste jogo.
 export function htmlDesafiosJogo(j, pid, g, { fis = null } = {}) {
