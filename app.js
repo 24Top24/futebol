@@ -1,5 +1,5 @@
 import { DB, novoToken, novoPin } from './db.js?v=43';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante } from './ligas-ui.js?v=17';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga } from './ligas-ui.js?v=18';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -2385,7 +2385,7 @@ async function secEstatisticas(el) {
 // gerar uma nova corta o link antigo E o acesso de quem deixou de ser moderador.
 async function secPartilhar(el) {
   const K = (await DB.getSegredo('partilha'))?.chave;
-  const url = K ? `${BASE}#c=${K}` : '';
+  const url = K ? `${BASE}#${LINK}/c=${K}` : '';
   const mods = A.players.filter((p) => p.moderador && p.ativo !== false);
   el.innerHTML = `<div class="secbar"><div><h2>Link de colaborador</h2><p class="mute">Para fazer equipas e marcar o jogo sem ser moderador.</p></div></div>
     <section class="cartao"><div class="cartao-tit">Para que serve</div>
@@ -2424,9 +2424,9 @@ async function publicarPosicoes() {
 }
 
 // ---------- Votação ----------
-const msgGrupo = () => `⚽ Malta, inspirei-me no grupo de segunda-feira e vamos passar a ter as equipas feitas de forma automática e equilibrada. Para isso preciso que cada um dê nota de 1 a 10 a todos os outros jogadores (menos a si próprio). Quem não conhecerem, carreguem em "Não conheço". Leva poucos minutos:\n👉 ${BASE}\nEscolham o vosso nome, metam o PIN de 4 algarismos que vos mando em privado, deem as notas e carreguem em OK. Podem voltar ao link para mudar.`;
+const msgGrupo = () => `⚽ Malta, inspirei-me no grupo de segunda-feira e vamos passar a ter as equipas feitas de forma automática e equilibrada. Para isso preciso que cada um dê nota de 1 a 10 a todos os outros jogadores (menos a si próprio). Quem não conhecerem, carreguem em "Não conheço". Leva poucos minutos:\n👉 ${BASE}#${LINK}/\nEscolham o vosso nome, metam o PIN de 4 algarismos que vos mando em privado, deem as notas e carreguem em OK. Podem voltar ao link para mudar.`;
 const msgPin = (p, pin) => `⚽ Olá ${nomeDe(p)}! O teu PIN para a votação da futebolada é *${pin}* — é só teu, não o partilhes.
-👉 ${BASE}`;
+👉 ${BASE}#${LINK}/`;
 
 async function secVotacao(el) {
   const votantes = A.players.filter((p) => !p.convidado && p.ativo !== false);
@@ -3018,6 +3018,16 @@ const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.sta
 if (new URLSearchParams(location.search).has('partilha')) history.replaceState(null, '', location.pathname + (location.hash || '#eu'));
 // Liga ativa (escolhida em ⚙️ → Ligas): tudo o que se lê e grava passa a ser dessa liga.
 // Todas as ligas são iguais; a "Futebolada semanal" só fica na raiz da base de dados. Cada liga tem as suas cores (o jogador pode trocar).
+// Link de uma liga (#<liga>/<página>): abre essa liga, como escolhê-la no menu. Se não existir (ou for privada), avisa e fica a que estava.
+let LINK_MAU = false;
+{
+  const m = location.hash.match(LINK_LIGA);
+  if (m) {
+    if (!DB.demo) await DB.uid().catch(() => {});
+    const id = await ligaDoLink(m[1]).catch(() => undefined);
+    if (id === undefined) LINK_MAU = true; else if (id !== ligaGuardada()) irParaLiga(id);
+  }
+}
 {
   const lg = ligaGuardada();
   if (lg && !DB.demo) await DB.uid().catch(() => {});   // ler uma liga das novas (mesmo pública) pede sessão (anónima serve)
@@ -3025,13 +3035,25 @@ if (new URLSearchParams(location.search).has('partilha')) history.replaceState(n
   else if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } }
   if (!MODO_TODAS) { const cfg = await DB.getConfigLiga().catch(() => null); aplicarTema(temaEscolhido(DB.ligaAtual()) || cfg?.cor); if (cfg?.nome && DB.ligaAtual()) NOME_LIGA = cfg.nome; }
 }
-montarSeletorLiga(NOME_LIGA || (MODO_TODAS ? 'Todas as ligas' : (await DB.getConfigLiga().catch(() => null))?.nome));   // título do menu = liga; lista para quem está em 2+
+const NOME_MENU = NOME_LIGA || (MODO_TODAS ? 'Todas as ligas' : (await DB.getConfigLiga().catch(() => null))?.nome);
+// Nome curto da liga aberta no endereço: #<liga>/<página>.
+const LINK = MODO_TODAS ? 'todas' : slugLiga(NOME_MENU || 'Futebolada semanal');
+const paginaDe = (hash) => { const m = hash.match(LINK_LIGA); return m ? '#' + m[2] : hash; };
+montarSeletorLiga(NOME_MENU);   // título do menu = liga; lista para quem está em 2+
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
-document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(location.hash); };
+document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(paginaDe(location.hash)); };
 async function rota() {
-  const h = location.hash;
+  // Link de outra liga colado com a app aberta: muda para essa liga.
+  const m = location.hash.match(LINK_LIGA);
+  if (m && m[1] !== LINK) {
+    const id = await ligaDoLink(m[1]).catch(() => undefined);
+    if (id === undefined) LINK_MAU = true; else if (id !== ligaGuardada()) { irParaLiga(id); location.reload(); return; }
+  }
+  if (LINK_MAU) { LINK_MAU = false; toast('Essa liga não existe ou é privada — abriu a tua liga'); }
+  const h = paginaDe(location.hash);
+  history.replaceState(history.state, '', '#' + LINK + '/' + h.replace(/^#/, ''));
   const destino = NAV[h] || (h.startsWith('#jogador=') ? 'jogadores' : h.startsWith('#jogo=') ? 'jogos' : h.startsWith('#votar=') ? 'inicio' : null);
   document.querySelectorAll('#nav a[data-r]').forEach((a) => (a.dataset.r === destino ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   document.getElementById('voltar').hidden = PRINCIPAIS.includes(h);
@@ -3125,7 +3147,7 @@ function abrirTicket() {
     e.target.disabled = true;
     try {
       const f = document.getElementById('tk-foto').files[0];
-      await DB.novoTicket({ texto, ecra: (location.hash || '#') + (A.pubTab && !location.hash.startsWith('#admin') ? ' · ' + A.pubTab : ''),
+      await DB.novoTicket({ texto, ecra: (location.hash || '#') + (A.pubTab && !paginaDe(location.hash).startsWith('#admin') ? ' · ' + A.pubTab : ''),
         quem: lsGet('meu-perfil') || null, ua: navigator.userAgent.slice(0, 250), erros: ERROS.join('\n').slice(-4000),
         foto: f ? await printParaDataURL(f) : '', ts: Date.now(), estado: 'aberto' });
       fechar(); toast('Enviado — obrigado! 👍');

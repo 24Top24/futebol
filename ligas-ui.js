@@ -29,6 +29,21 @@ export function mudarLiga(id) {
   location.reload();
 }
 
+// Links por liga (Rui, 31/10): #<liga>/<página>, p. ex. #futebolada-semanal/admin ou #ce-erre-setes/jogos.
+// O nome curto vem do nome da liga (mudar o nome muda o link; o id da liga também serve: #<id>/jogos). 'todas' = todas as ligas.
+export const slugLiga = (nome) => (nome || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'liga';
+export const LINK_LIGA = /^#([a-z0-9-]+)\/(.*)$/;
+// Liga de um link: o id (null = Futebolada semanal), TODAS, ou undefined se não existe (ou é privada e não é minha).
+export async function ligaDoLink(s) {
+  if (s === 'todas') return TODAS;
+  const ls = await asMinhasLigas().catch(() => []);
+  const l = ls.find((x) => x.id && x.id === s) || ls.find((x) => slugLiga(x.nome) === s);
+  return l ? (l.id || null) : undefined;
+}
+// Abre a liga de um link (como escolhê-la no menu, sem recarregar).
+export function irParaLiga(id) { trocarPerfil(id); lsSet('liga', id); }
+
 // Faz fn() com a liga id ativa no DB e volta à que estava.
 // fn recebe uma vista da base de dados presa a essa liga (DB.para) — a liga da app nunca muda a meio (31/10: mudá-la fazia a
 // página que estava a carregar ler a liga errada).
