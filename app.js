@@ -1,5 +1,5 @@
 import { DB, novoToken, novoPin } from './db.js?v=46';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas } from './ligas-ui.js?v=22';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora } from './ligas-ui.js?v=23';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -1108,7 +1108,7 @@ async function paginaJogador(id) {
     return perfilEu(p, todos.filter((x) => x.ativo !== false && !x.convidado));
   }
   const [jogosPub, pub] = await Promise.all([DB.listJogosPub(), DB.getPublic('cartas')]);
-  renderPerfil(document.getElementById('pub'), p, { todos, res: lerRes(jogosPub), pub });
+  renderPerfil(document.getElementById('pub'), p, { todos, res: lerRes([...jogosPub, ...(await jogosDeFora(p).catch(() => []))]), pub });
 }
 
 // Carta publicada pelo Rui (Jogadores › Cartas): as cartas públicas não têm id, liga-se pelo nome.
@@ -1345,7 +1345,7 @@ async function perfilEu(eu, todos) {
   $app.innerHTML = '<p class="mute">A carregar…</p>';
   const [estado, mc, jogosPub, saude, treinos, pub, players, perfis] = await Promise.all([DB.getPublic('estado'), DB.getMinhaCarta(eu.id).catch(() => null), DB.listJogosPub(),
     DB.getSaude(eu.id).catch(() => null), DB.listTreinos(eu.id).catch(() => []), DB.getPublic('cartas'), DB.listPlayers(), DB.listPerfis()]);
-  const res = lerRes(jogosPub);
+  const res = lerRes([...jogosPub, ...(await jogosDeFora(eu).catch(() => []))]);   // + os jogos da mesma pessoa noutras ligas
   const d = mc?.ref || null;   // carta antes do último jogo: { ov, st, data }
   // Pedido para votar nos novos / atualizar notas.
   let pedido = '';

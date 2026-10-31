@@ -369,12 +369,31 @@ export async function notasFora() {
 export const comNotaFora = (players, cartas, fora) => players.map((p) => fora[p.id] != null && (p.convidado || cartas[p.id]?.provisoria || cartas[p.id]?.estimada)
   ? { ...p, nota100: fora[p.id], fora: true } : p);
 
+// Histórico das outras ligas (Rui, 31/10): o perfil de um jogador traz também os jogos que a mesma pessoa fez noutras ligas
+// (sincronizado: players.sinc; ou juntado em 👥 Contas), com os ids trocados para o desta liga. Só no perfil — a classificação e
+// as estatísticas de cada liga continuam a ser só dela.
+export async function jogosDeFora(p) {
+  const aqui = ligaGuardada() || 'fs';
+  if (!p?.id || aqui === TODAS) return [];
+  const outros = new Map();
+  if (p.sinc?.id) outros.set(p.sinc.liga || 'fs', p.sinc.id);
+  const pessoas = (await DB.listPessoas().catch(() => null)) || [await DB.minhaPessoa().catch(() => null)];
+  const x = pessoas.find((y) => y?.ligas?.[aqui] === p.id);
+  for (const [lk, id] of Object.entries(x?.ligas || {})) if (lk !== aqui && !outros.has(lk)) outros.set(lk, id);
+  const out = [];
+  for (const [lk, id] of outros) {
+    const js = await DB.para(lk === 'fs' ? null : lk).listJogosPub().catch(() => []);
+    for (const j of js) { try { out.push({ ...j, id: lk + '~' + j.id, json: JSON.stringify(trocarIds(JSON.parse(j.json || '{}'), { [id]: p.id })) }); } catch {} }
+  }
+  return out;
+}
+
 // Jogadores de uma liga, incluindo os convidados (para sincronizar com eles).
 async function jogadoresDaLiga(lid) {
   const db = DB.para(lid);
   const [jog, segredo] = await Promise.all([db.listPlayers().catch(() => []), db.getSegredo('partilha').catch(() => null)]);
   const conv = segredo?.chave ? await db.listPart(segredo.chave, 'convidados').catch(() => []) : [];
-  return [...jog.map((x) => ({ id: x.id, nome: x.nome || '?', foto: x.foto || '' })), ...conv.map((x) => ({ id: x.id, nome: x.nome || '?', conv: true, foto: x.foto || '' }))]
+  return [...jog.map((x) => ({ id: x.id, nome: x.nome || '?', foto: x.foto || '', ...(x.convidado ? { conv: true } : {}) })), ...conv.map((x) => ({ id: x.id, nome: x.nome || '?', conv: true, foto: x.foto || '' }))]
     .sort((a, c) => a.nome.localeCompare(c.nome, 'pt'));
 }
 
@@ -465,7 +484,7 @@ async function juntarContas() {
   const porId = Object.fromEntries(pessoas.map((x) => [x.id, x]));
   const usadas = new Set();
   for (const ks of Object.values(grupos)) {
-    if (!ks.some((k) => !nos[k].conv)) continue;   // convidados soltos (amigos de alguém) não são contas
+    const conv = ks.every((k) => nos[k].conv);   // só convidado (provisório) em todas as ligas: fica na lista à parte
     ks.sort((a, b) => (nos[a].conv - nos[b].conv) || (a.startsWith('fs|') ? -1 : b.startsWith('fs|') ? 1 : 0));
     const ligasP = {};
     for (const k of ks) { const { lk, id } = nos[k]; if (ligasP[lk] && ligasP[lk] !== id) r.conflitos.push(`${nos[k].nome} (2 jogadores na mesma liga)`); else ligasP[lk] = id; }
@@ -473,10 +492,10 @@ async function juntarContas() {
     const id = ids[0] || ('p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
     usadas.add(id);
     const uid = ks.map((k) => uidDe[k]).find(Boolean) || null;
-    const novo = { nome: nos[ks.find((k) => k.startsWith('fs|')) || ks[0]].nome, uid, ligas: ligasP, ultimaLiga: 'fs' };
+    const novo = { nome: nos[ks.find((k) => !nos[k].conv && k.startsWith('fs|')) || ks.find((k) => !nos[k].conv) || ks[0]].nome, uid, ligas: ligasP, ultimaLiga: 'fs', conv };
     const velho = porId[id];
-    if (!velho || JSON.stringify([velho.nome, velho.uid || null, velho.ligas]) !== JSON.stringify([novo.nome, novo.uid, novo.ligas])) {
-      await DB.savePessoa(id, { ...novo, nome: velho?.nome || novo.nome, ts: Date.now() }); velho ? r.mudadas++ : r.novas++;
+    if (!velho || JSON.stringify([velho.nome, velho.uid || null, velho.ligas, !!velho.conv]) !== JSON.stringify([novo.nome, novo.uid, novo.ligas, novo.conv])) {
+      await DB.savePessoa(id, { ...novo, nome: (!velho?.conv && velho?.nome) || novo.nome, ...(velho?.pinEm ? { pinEm: velho.pinEm } : {}), ts: Date.now() }); velho ? r.mudadas++ : r.novas++;
     }
     for (const outro of ids.slice(1)) { await DB.apagarPessoa(outro).catch(() => {}); r.apagadas++; }
   }
@@ -535,8 +554,11 @@ export async function paginaContas(el, { esc, toast, titulo }) {
     ${r ? `<p class="mute">Agora: ${r.novas} novas, ${r.mudadas} atualizadas, ${r.apagadas} juntadas${r.pins ? `, ${r.pins} jogadores passaram a usar o PIN que já tinham` : ''}.</p>` : '<p class="mute">Não deu para juntar tudo agora (vê a consola).</p>'}
     ${r?.conflitos.length ? `<p class="mute">⚠️ ${esc(r.conflitos.join('; '))}</p>` : ''}
     <input id="ct-busca" placeholder="Procurar pessoa…" style="margin:6px 0">
-    <div id="ct-lista">${pessoas.map(linha).join('')}</div></section>`;
-  el.querySelector('#ct-busca').oninput = (e) => { const q = e.target.value.toLowerCase(); el.querySelectorAll('#ct-lista > [data-p]').forEach((d) => (d.hidden = q && !d.textContent.toLowerCase().includes(q))); };
+    <div id="ct-lista">${pessoas.filter((x) => !x.conv).map(linha).join('')}</div></section>
+  <section class="cartao"><h3>🕓 Provisórios (convidados) — ${pessoas.filter((x) => x.conv).length}</h3>
+    <p class="mute">Convidados que ainda não são jogadores de nenhuma liga. Se um deles é a mesma pessoa que alguém de outra liga (p. ex. o «Alex (Fontes)» da Futebolada semanal é o Alexandre do World Crap), carrega em 🔗 Juntar: passa a ter o histórico todo dos jogos que já fez.</p>
+    <div id="ct-prov">${pessoas.filter((x) => x.conv).map(linha).join('') || '<p class="mute">Nenhum.</p>'}</div></section>`;
+  el.querySelector('#ct-busca').oninput = (e) => { const q = e.target.value.toLowerCase(); el.querySelectorAll('#ct-lista > [data-p], #ct-prov > [data-p]').forEach((d) => (d.hidden = q && !d.textContent.toLowerCase().includes(q))); };
   const refazer = () => paginaContas(el, { esc, toast, titulo });
   el.querySelectorAll('[data-pin]').forEach((b) => (b.onclick = async () => {
     const x = pessoas.find((y) => y.id === b.dataset.pin);
@@ -551,14 +573,14 @@ export async function paginaContas(el, { esc, toast, titulo }) {
     const x = pessoas.find((y) => y.id === b.dataset.juntar);
     const caixa = [...el.querySelectorAll('[data-caixa]')].find((c) => c.dataset.caixa === x.id);
     const outras = pessoas.filter((y) => y.id !== x.id && !Object.keys(y.ligas || {}).some((k) => x.ligas?.[k]));
-    caixa.innerHTML = `<label>É a mesma pessoa que…</label><select class="j-sel">${outras.map((y) => `<option value="${esc(y.id)}">${esc(y.nome)} — ${esc(Object.keys(y.ligas || {}).map(nomeL).join(', '))}</option>`).join('')}</select>
+    caixa.innerHTML = `<label>É a mesma pessoa que…</label><select class="j-sel">${outras.map((y) => `<option value="${esc(y.id)}">${esc(y.nome)}${y.conv ? ' (provisório)' : ''} — ${esc(Object.keys(y.ligas || {}).map(nomeL).join(', '))}</option>`).join('')}</select>
       <button class="peq prim j-ok" style="margin-top:6px">Juntar</button>`;
     if (!outras.length) { caixa.innerHTML = '<p class="mute">Não há ninguém para juntar (as outras pessoas já estão nas mesmas ligas).</p>'; return; }
     caixa.querySelector('.j-ok').onclick = async () => {
       const y = pessoas.find((z) => z.id === caixa.querySelector('.j-sel').value);
       if (!y) return;
       try {
-        await DB.savePessoa(x.id, { nome: x.nome, uid: x.uid || y.uid || null, ligas: { ...y.ligas, ...x.ligas }, ultimaLiga: 'fs', ts: Date.now() });
+        await DB.savePessoa(x.id, { nome: x.conv && !y.conv ? y.nome : x.nome, uid: x.uid || y.uid || null, ligas: { ...y.ligas, ...x.ligas }, ultimaLiga: 'fs', conv: !!(x.conv && y.conv), ts: Date.now() });
         await DB.apagarPessoa(y.id);
         // o "Todas as ligas" e a nota de fora juntam pelo sinc: o jogador de cada liga aponta para o da Futebolada semanal (ou o 1.º)
         const ent = Object.entries({ ...y.ligas, ...x.ligas }), [al, aid] = ent.find(([k]) => k === 'fs') || ent[0];
