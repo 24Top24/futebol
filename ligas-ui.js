@@ -67,6 +67,16 @@ async function asMinhasLigas() {
   // O Rui é admin global: vê todas as ligas (mesmo as que não são dele).
   if (await naLiga(null, async (db) => db.isAdmin(await DB.user())).catch(() => false))
     for (const l of await naLiga(null, (db) => db.todasLigas())) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, admin: true, global: true });
+  // Quem entra só com PIN (sem conta Google) não tem filiações: também vê as ligas públicas e aquelas em que já entrou neste
+  // telemóvel (meu-perfil@<liga>) — senão ficava preso na 1.ª liga sem a lista (Rui, 31/10).
+  const pub = await naLiga(null, (db) => db.ligasPublicas()).catch(() => []);
+  for (const l of pub) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, player: lsGet('meu-perfil@' + l.id) || null });
+  let chaves = []; try { chaves = Object.keys(localStorage); } catch {}
+  for (const k of chaves) {
+    const id = k.startsWith('meu-perfil@') ? k.slice(11) : null;
+    if (!id || id === 'fs' || !lsGet(k) || ls.some((x) => x.id === id)) continue;
+    const d = await DB.getLiga(id).catch(() => null); if (d) ls.push({ id, ...d, player: lsGet(k) });
+  }
   if (!ls.some((l) => l.id == null)) ls.unshift({ id: null, player: null });
   const nomeFS = (await naLiga(null, (db) => db.getConfigLiga().catch(() => null)))?.nome || LIGA_PRINCIPAL.nome;
   for (const l of ls) if (l.id == null) l.nome = nomeFS;
