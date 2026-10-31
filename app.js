@@ -1690,7 +1690,9 @@ async function publicarRetrato() {
   const ativos = comNotaFora(ativos0, calcularCartas(ativos0, A.votes, A.conv), fora);
   const cartas = calcularCartas(ativos, A.votes, A.conv);
   // fora: a nota de fora dos convidados do link (não estão no plantel), já feita — o moderador não lê as outras ligas.
-  await DB.setPart(K, 'dados', 'retrato', { ts: Date.now(), fora, jogadores: ativos.map((p) => ({
+  // emprestaveis: quem os moderadores podem pedir emprestado de outras ligas (nome, ligas e nota geral) — o moderador não lê as Contas.
+  const emprestaveis = await paraEmprestar().catch(() => []);
+  await DB.setPart(K, 'dados', 'retrato', { ts: Date.now(), fora, emprestaveis, jogadores: ativos.map((p) => ({
     id: p.id, nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '', convidado: !!p.convidado,
     notaConvidado: p.notaConvidado || null, nota100: p.nota100 ?? null, overall: cartas[p.id]?.overall ?? null, stats: cartas[p.id]?.stats || {},
   })) });
@@ -2579,10 +2581,10 @@ function secEquipas(el, X = A.ctxEq) {
   // 🔁 Emprestado: alguém de outra liga (👥 Contas), só com a nota geral de lá.
   g('d-emp').ontoggle = async () => {
     if (!g('d-emp').open || g('emp-sel')) return;
-    const L = (await paraEmprestar().catch(() => [])).filter((x) => !X.players.some((p) => p.emprestado?.pessoa === x.pessoa));
+    const L = (X.emprestaveis || (await paraEmprestar().catch(() => []))).filter((x) => !X.players.some((p) => p.emprestado?.pessoa === x.pessoa));
     g('emp-cx').innerHTML = L.length ? `<select id="emp-sel">${L.map((x, i) => `<option value="${i}">${esc(x.nome)}${x.conv ? ' (convidado)' : ''} — ${esc(x.ligas)}${x.ov != null ? ` · ${x.ov}` : ''}</option>`).join('')}</select>
       <button class="prim" id="emp-add" style="margin-top:8px">Emprestar e selecionar</button>`
-      : '<p class="mute">Não há ninguém de outras ligas para emprestar (ou só o admin pode ver a lista).</p>';
+      : '<p class="mute">Não há ninguém de outras ligas para emprestar (a lista atualiza quando o admin abre a app).</p>';
     g('emp-add')?.addEventListener('click', async () => {
       const x = L[Number(g('emp-sel').value)]; if (!x) return;
       const id = await X.addConvidado({ nome: x.nome, alcunha: '', foto: '', ativo: true, convidado: true, nota100: x.ov ?? 60, nivel: null,
@@ -2915,7 +2917,7 @@ async function paginaColab(K, mod = null) {
     const fechados = jogosPub.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
     A.usarElo ??= estado?.usarElo !== false;
     return {
-      players, cartas, games: await DB.listPart(K, 'games'),
+      players, cartas, games: await DB.listPart(K, 'games'), emprestaveis: retrato.emprestaveis || [],
       elo: calcularElo(fechados, cartas),
       irMarcador() { A.colabTab = 'marc'; A.carregarJa = true; paginaColab(K, mod); window.scrollTo(0, 0); },
       async addConvidado(d) {
