@@ -556,7 +556,10 @@ async function juntarContas() {
     const uid = ks.map((k) => uidDe[k]).find(Boolean) || null;
     const novo = { nome: nos[ks.find((k) => !nos[k].conv && k.startsWith('fs|')) || ks.find((k) => !nos[k].conv) || ks[0]].nome, uid, ligas: ligasP, ultimaLiga: 'fs', conv };
     const velho = porId[id];
-    if (!velho || JSON.stringify([velho.nome, velho.uid || null, velho.ligas, !!velho.conv]) !== JSON.stringify([novo.nome, novo.uid, novo.ligas, novo.conv])) {
+    // (a ordem das chaves das ligas pode vir trocada da base de dados: compara-se ordenado)
+    const ord = (o) => JSON.stringify(Object.entries(o || {}).sort());
+    const igual = (v, n) => v.nome === n.nome && (v.uid || null) === n.uid && ord(v.ligas) === ord(n.ligas) && !!v.conv === n.conv;
+    if (!velho || igual(velho, novo) === false) {
       await DB.savePessoa(id, { ...novo, nome: (!velho?.conv && velho?.nome) || novo.nome, ...(velho?.pinEm ? { pinEm: velho.pinEm } : {}), ts: Date.now() }); velho ? r.mudadas++ : r.novas++;
     }
     for (const outro of ids.slice(1)) { await DB.apagarPessoa(outro).catch(() => {}); r.apagadas++; }
