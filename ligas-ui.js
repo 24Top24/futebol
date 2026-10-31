@@ -90,7 +90,7 @@ export async function montarSeletorLiga(nomeAtual) {
         appearance: none; -webkit-appearance: none; cursor: pointer; text-overflow: ellipsis;
         background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
         background-position: calc(100% - 9px) 55%, calc(100% - 4px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
-      #nav .marca .marca-liga { font-size: 16px; flex: 1 1 auto; width: 100%; } #nav .marca { gap: 8px; }
+      #nav .marca .marca-liga { font-size: 16px; flex: 1 1 auto; width: 100%; } #nav .marca:has(select) .ic-bola { display: none; }
       select.sel-liga option { background: var(--bg2); color: var(--txt); font-size: 15px; font-weight: 600; }
       .sel-liga-topo { font-size: 13px !important; font-weight: 700; background-color: var(--bg3) !important; border: 1px solid var(--borda) !important;
         border-radius: 10px; padding: 6px 22px 6px 8px !important; max-width: 46vw; margin-left: auto; }
