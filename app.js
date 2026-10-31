@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=40';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga } from './ligas-ui.js?v=13';
+import { DB, novoToken, novoPin } from './db.js?v=42';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante } from './ligas-ui.js?v=15';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -96,6 +96,26 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 // =====================================================================
 // Numa liga extra, o título leva o nome da liga por baixo (para nunca se confundir com a principal).
 let NOME_LIGA = null, MODO_TODAS = false;
+// Visitante (sem PIN nem Google, Rui 31/10): vê o Início geral, a Classificação e os Jogos por cima (resultado e marcadores).
+// Não vê desafios, destaques, conquistas nem os jogadores: no lugar disso, o convite para entrar. Recalcula-se a cada página.
+// No demo há sempre "conta": ?visitante força o modo para testar.
+let VISITANTE = false;
+function conviteEntrar(txt = 'Com conta vês a tua liga: os teus desafios, o teu último jogo, os jogadores e os destaques de cada jogo.') {
+  return `<section class="cartao convite-entrar"><div class="v-cab"><span class="ic">👋</span><div><b>Entra para veres a tua liga</b><p>${txt}</p></div></div>
+    <div class="v-botoes"><a class="btn prim" href="#eu">Entrar com o PIN</a>${DB.demo ? '' : '<button class="btn v-google">🔐 Entrar com o Google</button>'}
+      <a class="btn" href="#ligas">Criar a minha liga</a></div></section>`;
+}
+// O botão do Google do convite (está em várias páginas): entra e recarrega; com a conta ligada a um jogador, fica logo esse perfil.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('.v-google');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const c = await DB.entrarGoogle();
+    if (c?.player) { lsSet('meu-perfil', c.player); lsSet('perfil-ok-' + c.player, '1'); }
+    location.reload();
+  } catch (err) { console.error(err); b.disabled = false; toast(err.code === 'auth/popup-blocked' ? 'O telemóvel bloqueou a janela do Google — tenta outra vez' : 'Não deu para entrar com o Google'); }
+});
 const titulo = (t) => { const el = document.getElementById('titulo'); el.textContent = t; if (NOME_LIGA) el.insertAdjacentHTML('beforeend', ` <small style="font-size:11px;opacity:.7">🏆 ${esc(NOME_LIGA)}</small>`); };
 const av = (p) => `<span class="av">${foto(p)}</span>`;
 const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}</span>${t}${extra ? `<div style="margin-top:12px">${extra}</div>` : ''}</div>`;
@@ -184,7 +204,7 @@ function cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro = false } = {})
         : campoLados(vv?.ladoInicio || ult.ladoInicio) });
     // Antes do jogo: os desafios que me calharam (games/{id}.desafios, desafios.js).
     const euId = lsGet('meu-perfil');
-    const des = !r && euId && ult.desafios?.[euId] ? htmlDesafiosAntes(ult.desafios[euId], ult.nomes || {}) : '';
+    const des = !r && euId && !VISITANTE && ult.desafios?.[euId] ? htmlDesafiosAntes(ult.desafios[euId], ult.nomes || {}) : '';
     html += desafiosPrimeiro ? des + card : card + des;
   }
   return { html, mostrado, pessoa };
@@ -211,9 +231,9 @@ async function paginaInicio() {
     <div class="v-botoes"><a class="btn prim" href="#votar">Votar nos colegas</a>
       ${ultMeu ? `<a class="btn" href="#votar=${esc(ultMeu.id)}">Ajustar os do último jogo <small>${esc(dataDe(ultMeu.jogo).slice(0, 5))}</small></a>
         <a class="btn" href="#jogo=${esc(ultMeu.id)}&avaliar">⭐ Avaliar o último jogo</a>` : ''}</div></section>`;
-  const euOk = euId && lsGet('perfil-ok-' + euId) && (await DB.ligacaoOk(euId).catch(() => false));
+  const euOk = !VISITANTE && euId && lsGet('perfil-ok-' + euId) && (await DB.ligacaoOk(euId).catch(() => false));
   if (euOk) return inicioEu(euId, { todos, res, games, vivo, votar });
-  const entrar = euId ? '' : `<div class="aviso"><span class="ic">👤</span><div><b>Entra no teu perfil</b><p>Para veres aqui o teu último jogo e os teus desafios.</p></div><a class="btn peq" href="#eu">Entrar</a></div>`;
+  const entrar = VISITANTE ? '' : euId ? '' : `<div class="aviso"><span class="ic">👤</span><div><b>Entra no teu perfil</b><p>Para veres aqui o teu último jogo e os teus desafios.</p></div><a class="btn peq" href="#eu">Entrar</a></div>`;
   // Líderes (só golos e assistências: são públicos) e últimos resultados.
   const S = estatisticas(res);
   const nm = (s) => esc(nomeDe(todos.find((p) => p.id === s.id) || { nome: s.nome }));
@@ -230,7 +250,7 @@ async function paginaInicio() {
   };
   const ultimos = res.length ? `<section class="cartao"><div class="cartao-tit">Últimos resultados<a href="#jogos">Ver todos →</a></div>
     ${res.slice(0, 5).map((r) => linhaResultado(r, todos.find((p) => p.id === euId))).join('')}</section>` : '';
-  $app.innerHTML = `<div class="grelha2"><div>${entrar}${votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
+  $app.innerHTML = `${VISITANTE ? conviteEntrar() : ''}<div class="grelha2"><div>${entrar}${VISITANTE ? '' : votar}${principal}</div><aside>${lideres('g', '⚽ Melhores marcadores')}${lideres('a', '🅰️ Mais assistências')}${ultimos}</aside></div>`;
 }
 
 // Início do próprio jogador.
@@ -299,7 +319,7 @@ async function paginaJogoPub(id) {
   const avaliarJa = id.endsWith('&avaliar');
   id = id.replace(/&avaliar$/, '');
   const [{ todos, res, games }, euLs, posPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null)]);
-  const eu = euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
+  const eu = !VISITANTE && euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
   const i = res.findIndex((r) => r.id === id);
   if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
   const j = res[i].jogo, v = vencedorDe(j);
@@ -321,7 +341,8 @@ async function paginaJogoPub(id) {
     <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span>${v === 'B' ? '<small class="jvenc">Vencedor</small>' : ''}</div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span>${v === 'P' ? '<small class="jvenc">Vencedor</small>' : ''}</div></div>
     ${j.semGolos ? '' : marcadoresHTML(j)}</div>
     ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><span class="linha"><button class="peq" id="j-cartao">📤 O meu cartão</button><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></span></div>`
-      : !eu ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
+      : !eu && !VISITANTE ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
+  if (VISITANTE) { $app.innerHTML = `${nav}${cab}${conviteEntrar('Com conta vês o resto do jogo: o desenrolar, as equipas, os destaques e os teus desafios.')}`; return; }
   // Painéis
   const graf = ev.length ? `<section class="cartao"><div class="cartao-tit">Desenrolar do jogo <small class="mute">toca num golo</small></div>${graficoJogo(j, ev, dur, nome)}
     <div class="gdet mute" id="g-det">Diferença no marcador ao longo do jogo: para cima a favor dos Brancos, para baixo a favor dos Pretos.</div></section>` : '';
@@ -2999,6 +3020,7 @@ if (new URLSearchParams(location.search).has('partilha')) history.replaceState(n
 // Todas as ligas são iguais; a "Futebolada semanal" só fica na raiz da base de dados. Cada liga tem as suas cores (o jogador pode trocar).
 {
   const lg = ligaGuardada();
+  if (lg && !DB.demo) await DB.uid().catch(() => {});   // ler uma liga das novas (mesmo pública) pede sessão (anónima serve)
   if (lg === TODAS) { MODO_TODAS = true; NOME_LIGA = 'Todas as ligas'; try { localStorage.removeItem('meu-perfil'); } catch {} }
   else if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } }
   if (!MODO_TODAS) { const cfg = await DB.getConfigLiga().catch(() => null); aplicarTema(temaEscolhido(DB.ligaAtual()) || cfg?.cor); if (cfg?.nome && DB.ligaAtual()) NOME_LIGA = cfg.nome; }
@@ -3021,7 +3043,11 @@ async function rota() {
   if (['', '#', '#jogos', '#jogadores', '#cartas', '#tabela'].includes(h) || h.startsWith('#jogador=') || h.startsWith('#jogo=')) $app.innerHTML = esqueleto();
   pararAoVivo();
   confirmarModerador();
+  VISITANTE = (await souVisitante().catch(() => false)) || (DB.demo && /[?&]visitante/.test(location.search));
   try {
+    if (VISITANTE && (h === '#jogadores' || h === '#cartas' || h.startsWith('#jogador='))) {
+      titulo('Jogadores'); $app.innerHTML = conviteEntrar('Os jogadores, as cartas e as conquistas só se veem com conta. Entra com o PIN ou com o Google.'); return;
+    }
     if (h === '#jogo') { A.pubTab = 'mod'; titulo('🛡 Moderador'); $app.innerHTML = '<div id="pub"></div>'; return await paginaJogo(document.getElementById('pub')); }
     if (h === '#admin') return await paginaAdmin();
     if (h.startsWith('#c=')) return await paginaColab(h.slice(3));

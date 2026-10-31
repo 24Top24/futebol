@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=40';
+import { DB } from './db.js?v=42';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -12,6 +12,8 @@ const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return nu
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch {} };
 export const TODAS = '*';
 export const ligaGuardada = () => lsGet('liga') || null;
+// Visitante = não entrou com PIN nem com conta Google: vê só tabelas, estatísticas e jogos (sem desafios nem dados de jogadores).
+export const souVisitante = async () => !lsGet('meu-perfil') && !(await DB.user());
 
 // Muda de liga (ou TODAS): guarda, esquece o "quem sou eu" (é outro jogador em cada liga) e recarrega.
 // O "quem sou eu" de cada liga fica guardado à parte (meu-perfil@<liga>): ao voltar a uma liga não se pede o PIN outra vez.
@@ -28,20 +30,24 @@ export function mudarLiga(id) {
 }
 
 // Faz fn() com a liga id ativa no DB e volta à que estava.
-async function naLiga(id, fn) {
-  const antes = DB.ligaAtual();
-  DB.usarLiga(id);
-  try { return await fn(); } finally { DB.usarLiga(antes); }
-}
+// fn recebe uma vista da base de dados presa a essa liga (DB.para) — a liga da app nunca muda a meio (31/10: mudá-la fazia a
+// página que estava a carregar ler a liga errada).
+async function naLiga(id, fn) { return fn(DB.para(id)); }
 
 // Ligas desta pessoa (com a Futebolada semanal sempre na lista). Cada uma: { id, nome, player, admin }.
 async function asMinhasLigas() {
-  const ls = await naLiga(null, () => DB.minhasLigas());
+  // Sem conta (visitante): a Futebolada semanal e as ligas públicas, só para ver tabelas, estatísticas e jogos.
+  if (!(await DB.user()) && !lsGet('meu-perfil')) {
+    const pub = await naLiga(null, (db) => db.ligasPublicas()).catch(() => []);
+    const nomeFS = (await naLiga(null, (db) => db.getConfigLiga().catch(() => null)))?.nome || LIGA_PRINCIPAL.nome;
+    return [{ id: null, nome: nomeFS, publica: true }, ...pub.map((l) => ({ ...l, publica: true }))];
+  }
+  const ls = await naLiga(null, (db) => db.minhasLigas());
   // O Rui é admin global: vê todas as ligas (mesmo as que não são dele).
-  if (await naLiga(null, async () => DB.isAdmin(await DB.user())).catch(() => false))
-    for (const l of await naLiga(null, () => DB.todasLigas())) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, admin: true, global: true });
+  if (await naLiga(null, async (db) => db.isAdmin(await DB.user())).catch(() => false))
+    for (const l of await naLiga(null, (db) => db.todasLigas())) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, admin: true, global: true });
   if (!ls.some((l) => l.id == null)) ls.unshift({ id: null, player: null });
-  const nomeFS = (await naLiga(null, () => DB.getConfigLiga().catch(() => null)))?.nome || LIGA_PRINCIPAL.nome;
+  const nomeFS = (await naLiga(null, (db) => db.getConfigLiga().catch(() => null)))?.nome || LIGA_PRINCIPAL.nome;
   for (const l of ls) if (l.id == null) l.nome = nomeFS;
   return ls;
 }
@@ -62,9 +68,9 @@ export async function dadosTodas() {
   const ligas = await asMinhasLigas();
   const out = { players: [], perfis: [], jogosPub: [], games: [] }, vistos = new Set();
   for (const l of ligas) {
-    const r = await naLiga(l.id, async () => {
-      const [players, perfis, jogosPub, games, membros] = await Promise.all([DB.listPlayers(), DB.listPerfis().catch(() => []),
-        DB.listJogosPub().catch(() => []), DB.listGames().catch(() => []), DB.listMembros(l.id).catch(() => [])]);
+    const r = await naLiga(l.id, async (db) => {
+      const [players, perfis, jogosPub, games, membros] = await Promise.all([db.listPlayers().catch(() => []), db.listPerfis().catch(() => []),
+        db.listJogosPub().catch(() => []), db.listGames().catch(() => []), db.listMembros(l.id).catch(() => [])]);
       return { players, perfis, jogosPub, games, membros };
     }).catch((e) => { console.error(e); return null; });
     if (!r) continue;
@@ -97,7 +103,6 @@ export async function montarSeletorLiga(nomeAtual) {
       @media (min-width: 900px) { .sel-liga-topo { display: none; } }</style>`);
     const span = document.querySelector('#nav .marca span');
     if (span) { span.textContent = nomeAtual || LIGA_PRINCIPAL.nome; span.classList.add('marca-liga'); }
-    if (!(await DB.user())) return;
     const ligas = await asMinhasLigas();
     if (ligas.length < 2) return;
     const atual = ligaGuardada();
@@ -127,9 +132,9 @@ export async function espelharVoto(alvoId, nota) {
     if (!alvoUid || alvoUid === u.uid) return;
     for (const l of await asMinhasLigas()) {
       if ((l.id || null) === (aqui || null) || !l.player) continue;
-      await naLiga(l.id, async () => {
-        const alvoL = (await DB.listMembros(l.id).catch(() => [])).find((m) => m.uid === alvoUid)?.player;
-        if (alvoL && alvoL !== l.player) await DB.saveVote(l.player, alvoL, nota);
+      await naLiga(l.id, async (db) => {
+        const alvoL = (await db.listMembros(l.id).catch(() => [])).find((m) => m.uid === alvoUid)?.player;
+        if (alvoL && alvoL !== l.player) await db.saveVote(l.player, alvoL, nota);
       }).catch((e) => console.error(e));
     }
   } catch (e) { console.error(e); }
@@ -141,7 +146,7 @@ export async function asMinhasCartas() {
   const ligas = (await asMinhasLigas()).filter((l) => l.player);
   const por = [];
   for (const l of ligas) {
-    const mc = await naLiga(l.id, () => DB.getMinhaCarta(l.player)).catch(() => null);
+    const mc = await naLiga(l.id, (db) => db.getMinhaCarta(l.player)).catch(() => null);
     if (mc?.carta?.overall != null) por.push({ liga: l, carta: mc.carta, peso: Math.max(1, mc.carta.conhecem || 1) });
   }
   if (!por.length) return { por, geral: null };
@@ -153,8 +158,8 @@ export async function asMinhasCartas() {
 
 // ---------- Estatísticas por liga e época ----------
 async function statsNaLiga(ligaId, player) {
-  return naLiga(ligaId, async () => {
-    const jogos = (await DB.listJogosPub()).map((r) => ({ ...JSON.parse(r.json || '{}'), _id: r.id })).filter((j) => j.fase === 'fim');
+  return naLiga(ligaId, async (db) => {
+    const jogos = (await db.listJogosPub()).map((r) => ({ ...JSON.parse(r.json || '{}'), _id: r.id })).filter((j) => j.fase === 'fim');
     const out = {};
     for (const { j, l } of historico(jogos, player)) {
       const s = (out[epocaDoJogo(j)] ||= { j: 0, v: 0, e: 0, d: 0, g: 0, a: 0 });
@@ -192,7 +197,7 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
     return;
   }
   $app.innerHTML = '<p class="mute">A carregar as tuas ligas…</p>';
-  const [ligas, limite, souRui] = await Promise.all([asMinhasLigas(), naLiga(null, () => DB.meuLimite()), naLiga(null, () => DB.isAdmin(u))]);
+  const [ligas, limite, souRui] = await Promise.all([asMinhasLigas(), naLiga(null, (db) => db.meuLimite()), naLiga(null, (db) => db.isAdmin(u))]);
   const nomeL = (l) => l.nome || l.id || LIGA_PRINCIPAL.nome;
   const porLiga = [];
   for (const l of ligas.filter((x) => x.player)) porLiga.push({ l, s: await statsNaLiga(l.id, l.player) });
@@ -245,12 +250,12 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
     const nome = document.getElementById('lg-nome').value.trim(), meuNome = document.getElementById('lg-eu').value.trim(), cor = document.getElementById('lg-cor').value;
     if (!nome) return toast('Dá um nome à liga');
     e.target.disabled = true;
-    try { const r = await naLiga(null, () => DB.criarLiga(idLiga(nome), { nome, meuNome })); await DB.setLiga(r.id, { cor }); toast('Liga criada ✔'); mudarLiga(r.id); }
+    try { const r = await naLiga(null, (db) => db.criarLiga(idLiga(nome), { nome, meuNome })); await DB.setLiga(r.id, { cor }); toast('Liga criada ✔'); mudarLiga(r.id); }
     catch (err) { console.error(err); e.target.disabled = false; toast(err.message || 'Não deu para criar a liga'); }
   });
   if (souRui) relogios(document.getElementById('lg-rel'), { esc, toast });
   if (souAdmin) definicoesLiga(document.getElementById('lg-def'), cfg, atual, { esc, toast, refazer });
-  if (souRui) naLiga(null, () => autorizacoes(document.getElementById('lg-rui'), { esc, toast, refazer }));
+  if (souRui) naLiga(null, (db) => autorizacoes(db, document.getElementById('lg-rui'), { esc, toast, refazer }));
 }
 
 function ligarTema($app, atual, cfg) {
@@ -284,24 +289,24 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
 }
 
 // O Rui (admin global) vê quantas ligas cada pessoa criou e pode dar mais.
-async function autorizacoes(el, { esc, toast, refazer }) {
-  const [contas, aut, players, ligas] = await Promise.all([DB.listContas(), DB.listAutorizados(), DB.listPlayers(), DB.todasLigas()]);
+async function autorizacoes(db, el, { esc, toast, refazer }) {
+  const [contas, aut, players, ligas] = await Promise.all([db.listContas(), db.listAutorizados(), db.listPlayers(), db.todasLigas()]);
   const nome = (uid) => { const c = contas.find((x) => x.id === uid); return players.find((p) => p.id === c?.player)?.nome || c?.email || aut.find((x) => x.id === uid)?.nome || uid.slice(0, 6) + '…'; };
   el.innerHTML = `<section class="cartao"><h3>🌍 Todas as ligas <small class="mute">(só tu vês — admin global)</small></h3>
     ${ligas.length ? ligas.map((l) => `<div class="opcao"><b>${esc(l.nome || l.id)}</b> <small class="mute">criada por ${esc(nome(l.criador || ''))}${l.publico ? ' · pública' : ' · privada'}</small></div>`).join('') : '<p class="mute">Ainda não há outras ligas.</p>'}
     <h4>Ligas criadas por pessoa</h4><p class="mute">Qualquer pessoa com conta Google pode criar até 2. Podes dar mais a quem precisar.</p>
     ${aut.length ? aut.map((a) => `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div><b>${esc(nome(a.id))}</b> <small class="mute">${a.criadas || 0}/${a.max} criadas</small></div>
       <button class="peq" data-mais="${esc(a.id)}">+1 liga</button></div>`).join('') : '<p class="mute">Ninguém criou ligas ainda.</p>'}</section>`;
-  el.querySelectorAll('[data-mais]').forEach((b) => (b.onclick = async () => { const a = aut.find((x) => x.id === b.dataset.mais); await naLiga(null, () => DB.autorizar(a.id, a.nome, (a.max || 2) + 1)); toast('Feito ✔'); refazer(); }));
+  el.querySelectorAll('[data-mais]').forEach((b) => (b.onclick = async () => { const a = aut.find((x) => x.id === b.dataset.mais); await naLiga(null, (db) => db.autorizar(a.id, a.nome, (a.max || 2) + 1)); toast('Feito ✔'); refazer(); }));
 }
 
 // ⌚ O relógio do Rui liga-se sozinho às ligas dele com a chave do relógio (a do Admin → Relógio). Aqui só se veem os relógios.
 async function relogios(el, { esc, toast }) {
-  const L = await naLiga(null, () => DB.listRelogios()).catch(() => []);
+  const L = await naLiga(null, (db) => db.listRelogios()).catch(() => []);
   el.innerHTML = `<p class="mute">O teu relógio liga-se sozinho às tuas ligas com a chave do relógio (🔧 Administração → Relógio): vê as equipas do próximo jogo de qualquer liga e guarda lá o jogo.</p>
     ${L.length ? L.map((r) => `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div>⌚ Relógio ${esc(r.id.slice(0, 6))}… <small class="mute">desde ${esc(new Date(r.ts || 0).toLocaleDateString('pt-PT'))}</small></div>
       <button class="peq perigo" data-desrel="${esc(r.id)}">Desligar</button></div>`).join('') : ''}`;
-  el.querySelectorAll('[data-desrel]').forEach((b) => (b.onclick = async () => { if (!confirm('Desligar este relógio? Volta a ligar-se se ainda tiver a chave — para o cortar de vez, muda a chave no Admin.')) return; await naLiga(null, () => DB.desligarRelogio(b.dataset.desrel)); relogios(el, { esc, toast }); }));
+  el.querySelectorAll('[data-desrel]').forEach((b) => (b.onclick = async () => { if (!confirm('Desligar este relógio? Volta a ligar-se se ainda tiver a chave — para o cortar de vez, muda a chave no Admin.')) return; await naLiga(null, (db) => db.desligarRelogio(b.dataset.desrel)); relogios(el, { esc, toast }); }));
 }
 
 // Link de convite #liga=<id>: abre essa liga e vai para o "Quem és tu?" (a Futebolada semanal é 'futebolada-semanal').

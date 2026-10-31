@@ -55,7 +55,7 @@ function demoDb() {
     async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
     async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     // Ligas: no demo só existe a principal.
-    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
+    usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
     async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
@@ -139,15 +139,19 @@ async function fireDb() {
   const { doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch } = fs;
   // Liga ativa (29/10/2026): null = a principal, na raiz (como sempre); outra = ligas/{id}/… com as mesmas coleções.
   // contas/ e tickets/ são sempre da raiz (são da pessoa / da app, não de uma liga).
-  let LIGA = null;
-  const P = (...s) => (LIGA ? ['ligas', LIGA, ...s] : s);
+  // A liga da app (usarLiga) é uma só; para ler/gravar noutra liga SEM mexer na da app usa-se DB.para(id) (31/10: mudar a liga
+  // da app a meio de uma consulta em segundo plano fazia a página ler os dados da liga errada).
+  let LIGA_APP = null;
+  const listRaiz = async (...c) => (await getDocs(collection(db, ...c))).docs.map((d) => ({ id: d.id, ...d.data() }));
+  const getRaiz = async (...c) => { const d = await getDoc(doc(db, ...c)); return d.exists() ? d.data() : null; };
+  const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
+  // Uma "vista" da base de dados presa a uma liga (fixa, ou a da app).
+  const fazer = (L) => {
+  const P = (...s) => (L() ? ['ligas', L(), ...s] : s);
   const D = (...s) => doc(db, ...P(...s));
   const Cl = (...s) => collection(db, ...P(...s));
   const list = async (c) => (await getDocs(Cl(c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const get = async (c, id) => { const d = await getDoc(D(c, id)); return d.exists() ? d.data() : null; };
-  const listRaiz = async (...c) => (await getDocs(collection(db, ...c))).docs.map((d) => ({ id: d.id, ...d.data() }));
-  const getRaiz = async (...c) => { const d = await getDoc(doc(db, ...c)); return d.exists() ? d.data() : null; };
-  const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
   return {
     demo: false,
     async uid() { const u = (await atual()) || (await au.signInAnonymously(auth)).user; return u.uid; },
@@ -180,7 +184,7 @@ async function fireDb() {
       const u = await atual();
       if (!u || u.isAnonymous) return null;
       // Numa liga extra, o jogador desta pessoa é o do seu documento de membro (ligas/{id}/membros/{uid}).
-      if (LIGA) { try { const m = await getRaiz('ligas', LIGA, 'membros', u.uid); return m ? { ...m, uid: u.uid, email: u.email } : null; } catch { return null; } }
+      if (L()) { try { const m = await getRaiz('ligas', L(), 'membros', u.uid); return m ? { ...m, uid: u.uid, email: u.email } : null; } catch { return null; } }
       try { const c = await getRaiz('contas', u.uid); return c ? { ...c, uid: u.uid, email: c.email || u.email } : null; } catch { return null; }
     },
     async ligarGoogle(id) {
@@ -196,11 +200,11 @@ async function fireDb() {
         }
       } else user = u || (await au.signInWithPopup(auth, prov)).user;
       await user.getIdToken(true);   // o token passa a dizer google.com (as regras exigem)
-      if (LIGA) {
+      if (L()) {
         // Numa liga das novas: membro (provado com o PIN deste jogador nessa liga) + a lista das ligas da pessoa, num lote.
         const b = writeBatch(db), agora = Date.now();
-        b.set(doc(db, 'ligas', LIGA, 'membros', user.uid), { uid: user.uid, player: id, h: lig?.h || null, ts: agora });
-        b.set(doc(db, 'filiacoes', `${LIGA}_${user.uid}`), { uid: user.uid, liga: LIGA, player: id, ts: agora });
+        b.set(doc(db, 'ligas', L(), 'membros', user.uid), { uid: user.uid, player: id, h: lig?.h || null, ts: agora });
+        b.set(doc(db, 'filiacoes', `${L()}_${user.uid}`), { uid: user.uid, liga: L(), player: id, ts: agora });
         await b.commit();
       } else {
         // Futebolada semanal: conta (com e-mail, só o próprio e o Rui leem) + membros/{uid} sem e-mail (junta a pessoa entre ligas).
@@ -216,7 +220,7 @@ async function fireDb() {
     async desligarGoogle() {
       const u = await atual();
       if (!u || u.isAnonymous) return;
-      if (LIGA) { const b = writeBatch(db); b.delete(doc(db, 'ligas', LIGA, 'membros', u.uid)); b.delete(doc(db, 'filiacoes', `${LIGA}_${u.uid}`)); await b.commit().catch(() => {}); }
+      if (L()) { const b = writeBatch(db); b.delete(doc(db, 'ligas', L(), 'membros', u.uid)); b.delete(doc(db, 'filiacoes', `${L()}_${u.uid}`)); await b.commit().catch(() => {}); }
       else { await deleteDoc(doc(db, 'membros', u.uid)).catch(() => {}); await deleteDoc(doc(db, 'contas', u.uid)).catch(() => {}); }
     },
     // O admin (Google) liga-se ao seu perfil de jogador sem PIN.
@@ -232,12 +236,14 @@ async function fireDb() {
 
     // ---- Ligas (29/10/2026, LIGAS.md) ----
     // usarLiga(null) = a principal (raiz); usarLiga(id) = ligas/{id}/… para tudo o que vem a seguir.
-    usarLiga(id) { LIGA = id || null; },
-    ligaAtual: () => LIGA,
+    usarLiga(id) { LIGA_APP = id || null; },
+    ligaAtual: () => L(),
     getLiga: (id) => getRaiz('ligas', id),
     // Ligas desta pessoa (com login Google): as que administra e aquelas em que é membro (+ a principal, se tem conta lá).
     // O Rui (admin global) vê todas as ligas.
     async todasLigas() { return listRaiz('ligas').catch(() => []); },
+    // Ligas que o admin pôs públicas (as que quem não tem conta pode ver).
+    async ligasPublicas() { return (await getDocs(fs.query(collection(db, 'ligas'), fs.where('publico', '==', true)))).docs.map((d) => ({ id: d.id, ...d.data() })); },
     async minhasLigas() {
       const u = await atual();
       if (!u || u.isAnonymous) return [];
@@ -301,11 +307,11 @@ async function fireDb() {
     desligarRelogio: (id) => deleteDoc(doc(db, 'relogios', id)),
     // Definições da liga ativa (nome, cor, pública): a Futebolada semanal guarda-as em public/liga; as outras no próprio documento.
     async getConfigLiga() {
-      if (LIGA) { const l = (await getRaiz('ligas', LIGA).catch(() => null)) || {}; return { nome: l.nome || LIGA, cor: l.cor || 'azul', publico: !!l.publico, criador: l.criador, admins: l.admins || [] }; }
+      if (L()) { const l = (await getRaiz('ligas', L()).catch(() => null)) || {}; return { nome: l.nome || L(), cor: l.cor || 'azul', publico: !!l.publico, criador: l.criador, admins: l.admins || [] }; }
       const c = (await getRaiz('public', 'liga').catch(() => null)) || {};
       return { nome: c.nome || 'Futebolada semanal', cor: c.cor || 'vermelho', publico: c.publico !== false, raiz: true };
     },
-    setConfigLiga: (d) => (LIGA ? setDoc(doc(db, 'ligas', LIGA), d, { merge: true }) : setDoc(doc(db, 'public', 'liga'), d, { merge: true })),
+    setConfigLiga: (d) => (L() ? setDoc(doc(db, 'ligas', L()), d, { merge: true }) : setDoc(doc(db, 'public', 'liga'), d, { merge: true })),
     apagarConta: (uid) => deleteDoc(doc(db, 'contas', uid)),
     // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
     async mudarPin(id, pin) {
@@ -375,6 +381,10 @@ async function fireDb() {
     getModeracao: (d) => get('moderacao', d),
     setModeracao: (d, v) => setDoc(D('moderacao', d), v),
   };
+  };
+  const base = fazer(() => LIGA_APP);
+  base.para = (id) => { const v = fazer(() => id || null); v.para = base.para; return v; };
+  return base;
 }
 
 // ?demo no endereço força o modo demo (para testes, sem tocar nos dados reais).
