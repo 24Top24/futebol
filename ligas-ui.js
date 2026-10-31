@@ -67,18 +67,33 @@ function trocarIds(j, m) {
 export async function dadosTodas() {
   const ligas = await asMinhasLigas();
   const out = { players: [], perfis: [], jogosPub: [], games: [] }, vistos = new Set();
+  const dados = [];
   for (const l of ligas) {
     const r = await naLiga(l.id, async (db) => {
       const [players, perfis, jogosPub, games, membros] = await Promise.all([db.listPlayers().catch(() => []), db.listPerfis().catch(() => []),
         db.listJogosPub().catch(() => []), db.listGames().catch(() => []), db.listMembros(l.id).catch(() => [])]);
       return { players, perfis, jogosPub, games, membros };
     }).catch((e) => { console.error(e); return null; });
-    if (!r) continue;
-    const m = Object.fromEntries(r.membros.map((x) => [x.player, 'u:' + x.uid]));   // jogador desta liga → pessoa
-    for (const p of r.players) { const id = m[p.id] || p.id; if (!vistos.has(id)) { vistos.add(id); out.players.push({ ...p, id, liga: l.id }); } }
-    for (const p of r.perfis) out.perfis.push({ ...p, id: m[p.id] || p.id });
-    for (const j of r.jogosPub) { try { out.jogosPub.push({ ...j, id: (l.id || 'fs') + '~' + j.id, json: JSON.stringify(trocarIds(JSON.parse(j.json || '{}'), m)) }); } catch {} }
-    out.games.push(...r.games.map((g) => ({ ...g, id: (l.id || 'fs') + '~' + g.id, liga: l.id })));
+    if (r) dados.push({ l, ...r });
+  }
+  // Quem é quem: a mesma pessoa pela conta Google ('u:<uid>') ou pelo "sincronizar com outra liga" do admin (players.sinc = { liga, id }).
+  const uidDe = {}, sincDe = {};
+  for (const d of dados) {
+    for (const m of d.membros) uidDe[(d.l.id || 'fs') + '|' + m.player] = 'u:' + m.uid;
+    for (const p of d.players) if (p.sinc?.id) sincDe[(d.l.id || 'fs') + '|' + p.id] = (p.sinc.liga || 'fs') + '|' + p.sinc.id;
+  }
+  const canon = (k, n = 0) => uidDe[k] || (sincDe[k] && n < 5 ? canon(sincDe[k], n + 1) : k.split('|')[1]);
+  for (const d of dados) {
+    const lk = d.l.id || 'fs';
+    const m = {};
+    for (const p of d.players) m[p.id] = canon(lk + '|' + p.id);
+    for (const mb of d.membros) m[mb.player] = 'u:' + mb.uid;
+    // o alvo de uma sincronização (p. ex. um convidado, que não está em players/) passa a ter o id da pessoa
+    for (const k of Object.keys(sincDe)) { const alvo = sincDe[k]; if (alvo.startsWith(lk + '|')) m[alvo.split('|')[1]] ||= canon(k); }
+    for (const p of d.players) { const id = m[p.id] || p.id; if (!vistos.has(id)) { vistos.add(id); out.players.push({ ...p, id, liga: d.l.id }); } }
+    for (const p of d.perfis) out.perfis.push({ ...p, id: m[p.id] || p.id });
+    for (const j of d.jogosPub) { try { out.jogosPub.push({ ...j, id: lk + '~' + j.id, json: JSON.stringify(trocarIds(JSON.parse(j.json || '{}'), m)) }); } catch {} }
+    out.games.push(...d.games.map((g) => ({ ...g, id: lk + '~' + g.id, liga: d.l.id })));
   }
   return out;
 }
@@ -257,6 +272,8 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
   // Ligas criadas antes de "pública por defeito" (31/10) não têm o campo: grava-se publico = true (o admin pode mudar).
   if (souAdmin && cfg && !cfg.raiz && !cfg.publicoDefinido) DB.setConfigLiga({ publico: true }).catch((e) => console.error(e));
   if (souRui) for (const l of ligas) if (l.id && !('publico' in l)) DB.setLiga(l.id, { publico: true }).catch((e) => console.error(e));
+  // 31/10: o erro da liga trocada gravou o nome e as cores da Ce Erre Setes na Futebolada semanal — repõe-se uma vez (Rui).
+  if (souRui) { const fs = DB.para(null); fs.getConfigLiga().then((c) => c?.nome === 'Ce Erre Setes' && fs.setConfigLiga({ nome: 'Futebolada semanal', cor: 'vermelho' })).catch((e) => console.error(e)); }
   if (souAdmin) definicoesLiga(document.getElementById('lg-def'), cfg, atual, { esc, toast, refazer });
   if (souRui) naLiga(null, (db) => autorizacoes(db, document.getElementById('lg-rui'), { esc, toast, refazer }));
 }
@@ -289,7 +306,61 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
     try { await DB.setConfigLiga(d); toast('Guardado ✔'); if (!temaEscolhido(atual)) aplicarTema(d.cor); refazer(); } catch (e) { console.error(e); toast('Não deu para guardar'); }
   };
   if (atual) importarJogadores(el, atual, { esc, toast, refazer });
+  gerirJogadores(el, atual, { esc, toast, refazer });
   document.getElementById('ld-copiar').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado ✔'); } catch { document.getElementById('ld-link').select(); } };
+}
+
+// 🧑‍🤝‍🧑 Jogadores desta liga (admin): apagar (por engano) e sincronizar com o mesmo jogador noutra liga — p. ex. o Alex é fixo aqui e
+// convidado na Futebolada semanal. Sincronizado = a mesma pessoa no "Todas as ligas" e nas estatísticas globais; a foto copia-se
+// de lá. A carta e os votos continuam a ser de cada liga.
+async function gerirJogadores(el, liga, { esc, toast, refazer }) {
+  const [players, membros, ligas] = await Promise.all([DB.listPlayers(), DB.listMembros(liga).catch(() => []), asMinhasLigas()]);
+  const outras = ligas.filter((l) => (l.id || null) !== (liga || null));
+  const nomeL = (id) => ligas.find((l) => (l.id || null) === (id || null))?.nome || LIGA_PRINCIPAL.nome;
+  el.insertAdjacentHTML('beforeend', `<section class="cartao" id="gj"><h3>🧑‍🤝‍🧑 Jogadores desta liga</h3>
+    <p class="mute">🔗 Sincronizar: é o mesmo jogador noutra liga (fica junto nas estatísticas de todas as ligas; a foto vem de lá). 🗑 Apagar: só para enganos — os jogos já registados ficam.</p>
+    ${[...players].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt')).map((p) => `<div class="opcao linha" style="justify-content:space-between;align-items:center;gap:6px">
+      <div style="min-width:0"><b>${esc(p.nome || '?')}</b>${p.sinc ? ` <small class="mute">🔗 ${esc(nomeL(p.sinc.liga))}: ${esc(p.sinc.nome || '')}</small>` : ''}${membros.some((m) => m.player === p.id) ? ' <small title="Tem conta">🔐</small>' : ''}</div>
+      <div class="linha" style="gap:4px;flex:none">${outras.length ? `<button class="peq" data-sinc="${esc(p.id)}" title="Sincronizar com outra liga">🔗</button>` : ''}<button class="peq perigo" data-apagar="${esc(p.id)}" title="Apagar">🗑</button></div></div>
+      <div data-caixa="${esc(p.id)}"></div>`).join('')}
+  </section>`);
+  const sec = el.querySelector('#gj');
+  sec.querySelectorAll('[data-apagar]').forEach((b) => (b.onclick = async () => {
+    const p = players.find((x) => x.id === b.dataset.apagar);
+    if (!confirm(`Apagar ${p?.nome || 'este jogador'} desta liga? Os jogos já registados ficam; os votos nele deixam de contar.`)) return;
+    try {
+      for (const m of membros.filter((x) => x.player === p.id)) await DB.tirarMembro(liga, m.uid).catch(() => {});
+      await DB.deletePlayer(p.id); toast('Apagado ✔'); refazer();
+    } catch (e) { console.error(e); toast('Não deu para apagar'); }
+  }));
+  sec.querySelectorAll('[data-sinc]').forEach((b) => (b.onclick = async () => {
+    const p = players.find((x) => x.id === b.dataset.sinc);
+    const caixa = [...sec.querySelectorAll('[data-caixa]')].find((x) => x.dataset.caixa === p.id);
+    caixa.innerHTML = `<div class="opcao"><label>Liga</label><select class="s-liga">${outras.map((l) => `<option value="${esc(l.id ?? '')}">${esc(l.nome || LIGA_PRINCIPAL.nome)}</option>`).join('')}</select>
+      <label>É este jogador</label><select class="s-jog"><option>a carregar…</option></select>
+      <div class="linha" style="margin-top:6px"><button class="peq prim s-ok">Sincronizar</button>${p.sinc ? '<button class="peq s-tirar">Tirar sincronização</button>' : ''}</div></div>`;
+    let lista = [];
+    const carregar = async () => {
+      const lid = caixa.querySelector('.s-liga').value || null, db = DB.para(lid);
+      const [jog, segredo] = await Promise.all([db.listPlayers().catch(() => []), db.getSegredo('partilha').catch(() => null)]);
+      const conv = segredo?.chave ? await db.listPart(segredo.chave, 'convidados').catch(() => []) : [];
+      lista = [...jog.map((x) => ({ id: x.id, nome: x.nome || '?', foto: x.foto || '' })), ...conv.map((x) => ({ id: x.id, nome: x.nome || '?', conv: true, foto: x.foto || '' }))]
+        .sort((a, c) => a.nome.localeCompare(c.nome, 'pt'));
+      const primeiro = (p.nome || '').toLowerCase().split(' ')[0];
+      caixa.querySelector('.s-jog').innerHTML = lista.map((x) => `<option value="${esc(x.id)}" ${primeiro && x.nome.toLowerCase().startsWith(primeiro) ? 'selected' : ''}>${esc(x.nome)}${x.conv ? ' (convidado)' : ''}</option>`).join('');
+    };
+    caixa.querySelector('.s-liga').onchange = carregar; await carregar();
+    caixa.querySelector('.s-ok').onclick = async () => {
+      const lid = caixa.querySelector('.s-liga').value || null, alvo = lista.find((x) => x.id === caixa.querySelector('.s-jog').value);
+      if (!alvo) return toast('Escolhe o jogador');
+      const { id: _, ...resto } = p;
+      try {
+        await DB.savePlayer({ ...resto, id: p.id, sinc: { liga: lid, id: alvo.id, nome: alvo.nome }, ...(alvo.foto && !p.foto ? { foto: alvo.foto } : {}) });
+        toast('Sincronizado ✔'); refazer();
+      } catch (e) { console.error(e); toast('Não deu para sincronizar'); }
+    };
+    caixa.querySelector('.s-tirar')?.addEventListener('click', async () => { const { id: _, sinc, ...resto } = p; await DB.savePlayer({ ...resto, id: p.id }); toast('Feito ✔'); refazer(); });
+  }));
 }
 
 // 👥 Importar jogador de outra liga (admin da liga): uma pessoa com conta passa a ser este jogador da liga — a foto e o nome
