@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=42';
+import { DB } from './db.js?v=43';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -254,6 +254,9 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
     catch (err) { console.error(err); e.target.disabled = false; toast(err.message || 'Não deu para criar a liga'); }
   });
   if (souRui) relogios(document.getElementById('lg-rel'), { esc, toast });
+  // Ligas criadas antes de "pública por defeito" (31/10) não têm o campo: grava-se publico = true (o admin pode mudar).
+  if (souAdmin && cfg && !cfg.raiz && !cfg.publicoDefinido) DB.setConfigLiga({ publico: true }).catch((e) => console.error(e));
+  if (souRui) for (const l of ligas) if (l.id && !('publico' in l)) DB.setLiga(l.id, { publico: true }).catch((e) => console.error(e));
   if (souAdmin) definicoesLiga(document.getElementById('lg-def'), cfg, atual, { esc, toast, refazer });
   if (souRui) naLiga(null, (db) => autorizacoes(db, document.getElementById('lg-rui'), { esc, toast, refazer }));
 }
@@ -285,7 +288,28 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
     const pub = document.getElementById('ld-pub'); if (pub) d.publico = pub.checked;
     try { await DB.setConfigLiga(d); toast('Guardado ✔'); if (!temaEscolhido(atual)) aplicarTema(d.cor); refazer(); } catch (e) { console.error(e); toast('Não deu para guardar'); }
   };
+  if (atual) importarJogadores(el, atual, { esc, toast, refazer });
   document.getElementById('ld-copiar').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado ✔'); } catch { document.getElementById('ld-link').select(); } };
+}
+
+// 👥 Importar jogador de outra liga (admin da liga): uma pessoa com conta passa a ser este jogador da liga — a foto e o nome
+// vêm do perfil dela, a liga aparece-lhe na lista; a carta e os votos são desta liga. Serve também para ligar um jogador já criado.
+async function importarJogadores(el, liga, { esc, toast, refazer }) {
+  const [pessoas, players, membros] = await Promise.all([DB.pessoasComConta(), DB.listPlayers(), DB.listMembros(liga).catch(() => [])]);
+  const jaCa = new Set(membros.map((m) => m.uid)), ligados = new Set(membros.map((m) => m.player));
+  const livres = pessoas.filter((p) => !jaCa.has(p.uid));
+  el.insertAdjacentHTML('beforeend', `<section class="cartao"><h3>👥 Importar jogador de outra liga</h3>
+    <p class="mute">Para quem já tem conta (p. ex. na Futebolada semanal): fica a mesma pessoa, com a foto e o nome do perfil dela. A carta e as votações são desta liga.</p>
+    ${livres.length ? `<label>Pessoa</label><select id="imp-pessoa">${livres.map((p) => `<option value="${esc(p.uid)}">${esc(p.nome)}</option>`).join('')}</select>
+      <label>É qual jogador desta liga?</label><select id="imp-jog"><option value="">➕ Novo jogador</option>${players.filter((p) => !ligados.has(p.id)).map((p) => `<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('')}</select>
+      <button class="prim peq" id="imp-ok" style="margin-top:8px">Importar</button>` : '<p class="mute">Não há mais ninguém com conta para importar.</p>'}
+  </section>`);
+  document.getElementById('imp-ok')?.addEventListener('click', async () => {
+    const uid = document.getElementById('imp-pessoa').value, player = document.getElementById('imp-jog').value || null;
+    const p = livres.find((x) => x.uid === uid);
+    try { await DB.importarPessoa(liga, uid, { player, nome: p?.nome }); toast(`${p?.nome || 'Jogador'} importado ✔`); refazer(); }
+    catch (e) { console.error(e); toast('Não deu para importar'); }
+  });
 }
 
 // O Rui (admin global) vê quantas ligas cada pessoa criou e pode dar mais.

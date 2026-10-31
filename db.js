@@ -55,7 +55,7 @@ function demoDb() {
     async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
     async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     // Ligas: no demo só existe a principal.
-    usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
+    usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async importarPessoa() {}, async pessoasComConta() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
     async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
@@ -145,6 +145,18 @@ async function fireDb() {
   const listRaiz = async (...c) => (await getDocs(collection(db, ...c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const getRaiz = async (...c) => { const d = await getDoc(doc(db, ...c)); return d.exists() ? d.data() : null; };
   const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
+  // Jogador de uma liga → jogador da Futebolada semanal da mesma pessoa (pelas contas Google), com os perfis da raiz. Guardado 5 min.
+  const cacheMapa = {};
+  const mapaPartilhado = async (lid) => {
+    const c = cacheMapa[lid]; if (c && Date.now() - c.ts < 300000) return c.v;
+    const [mL, mR, pR, fR] = await Promise.all([listRaiz('ligas', lid, 'membros').catch(() => []), listRaiz('membros').catch(() => []),
+      listRaiz('players').catch(() => []), listRaiz('perfis').catch(() => [])]);
+    const raizDe = Object.fromEntries(mR.map((m) => [m.uid, m.player]));
+    const liga = Object.fromEntries(mL.filter((m) => raizDe[m.uid]).map((m) => [m.player, raizDe[m.uid]]));
+    const v = { liga, n: Object.keys(liga).length, players: Object.fromEntries(pR.map((p) => [p.id, p])), perfis: Object.fromEntries(fR.map((p) => [p.id, p])) };
+    cacheMapa[lid] = { ts: Date.now(), v };
+    return v;
+  };
   // Uma "vista" da base de dados presa a uma liga (fixa, ou a da app).
   const fazer = (L) => {
   const P = (...s) => (L() ? ['ligas', L(), ...s] : s);
@@ -160,10 +172,16 @@ async function fireDb() {
     logout: () => au.signOut(auth),
     // Admin = quem as regras deixam listar os votos (o e-mail só está nas regras).
     async isAdmin(u) { if (!u) return false; try { await getDocs(Cl('votes')); return true; } catch { return false; } },
-    listPlayers: () => list('players'),
+    // Numa liga das novas, a pessoa é a mesma em todas as ligas: o nome a mostrar, a foto e o alias vêm do seu perfil da
+    // Futebolada semanal (ligado pela conta Google: membros/ da liga ↔ membros/ da raiz). Só a carta e os votos são da liga.
+    listPlayers: async () => { const L0 = await list('players'); if (!L()) return L0; const m = await mapaPartilhado(L()); if (!m.n) return L0;
+      return L0.map((p) => { const r = m.players[m.liga[p.id]]; return r ? { ...p, foto: r.foto || p.foto || '', ...(r.alcunha ? { alcunha: r.alcunha } : {}) } : p; }); },
     async savePlayer(p) { const id = p.id || novoToken(10); const { id: _, ...d } = p; await setDoc(D('players', id), d); return id; },
     deletePlayer: (id) => deleteDoc(D('players', id)),
-    listPerfis: () => list('perfis'),
+    listPerfis: async () => { const L0 = await list('perfis'); if (!L()) return L0; const m = await mapaPartilhado(L()); if (!m.n) return L0;
+      const meus = Object.fromEntries(L0.map((x) => [x.id, x]));
+      for (const [pl, raiz] of Object.entries(m.liga)) { const r = m.perfis[raiz]; if (r) meus[pl] = { ...r, ...(meus[pl] || {}), id: pl, foto: meus[pl]?.foto || r.foto || '', alias: meus[pl]?.alias || r.alias || '' }; }
+      return Object.values(meus); },
     savePerfil: (id, d) => setDoc(D('perfis', id), d),
     listClaims: () => list('claims'),
     async reclamar(id) { const uid = await this.uid(); await setDoc(D('claims', id), { uid, ts: Date.now() }); },
@@ -275,7 +293,7 @@ async function fireDb() {
       if (!a) { a = { max: 2, criadas: 0, ts: Date.now() }; await setDoc(doc(db, 'autorizados', u.uid), a); }
       if ((a.criadas || 0) >= (a.max || 0)) throw new Error(`Já criaste ${a.criadas} liga(s), o máximo`);
       const pid = novoToken(10), b = writeBatch(db), agora = Date.now();
-      b.set(doc(db, 'ligas', id), { nome, criador: u.uid, admins: [u.uid], dia, local, ts: agora });
+      b.set(doc(db, 'ligas', id), { nome, criador: u.uid, admins: [u.uid], dia, local, ts: agora, publico: true });   // pública por defeito (Rui, 31/10)
       b.update(doc(db, 'autorizados', u.uid), { criadas: (a.criadas || 0) + 1 });
       b.set(doc(db, 'ligas', id, 'players', pid), { nome: meuNome || u.displayName || 'Eu', ativo: true });
       b.set(doc(db, 'ligas', id, 'membros', u.uid), { uid: u.uid, player: pid, ts: agora });
@@ -298,6 +316,22 @@ async function fireDb() {
       await b.commit();
     },
     recusarPedido: (liga, uid) => deleteDoc(doc(db, 'ligas', liga, 'pedidos', uid)),
+    // Importar uma pessoa (com conta, de outra liga) para esta liga: liga-a a um jogador já criado ou cria-o com o nome dela.
+    // Fica a mesma pessoa (foto e nome vêm do perfil dela; a carta e os votos são desta liga) e a liga aparece-lhe na lista.
+    async importarPessoa(liga, uid, { player = null, nome = '' } = {}) {
+      const b = writeBatch(db), agora = Date.now();
+      if (!player) { player = novoToken(10); b.set(doc(db, 'ligas', liga, 'players', player), { nome: nome || 'Jogador', ativo: true }); }
+      b.set(doc(db, 'ligas', liga, 'membros', uid), { uid, player, ts: agora });
+      b.set(doc(db, 'filiacoes', `${liga}_${uid}`), { uid, liga, player, ts: agora });
+      await b.commit();
+      delete cacheMapa[liga];
+      return player;
+    },
+    // Pessoas com conta na plataforma (membros/ da Futebolada semanal), com o nome e a foto de lá.
+    async pessoasComConta() {
+      const [m, p] = await Promise.all([listRaiz('membros').catch(() => []), listRaiz('players').catch(() => [])]);
+      return m.map((x) => { const q = p.find((y) => y.id === x.player); return { uid: x.uid, nome: q?.nome || '?', foto: q?.foto || '' }; }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+    },
     // Membros (pessoa Google ↔ jogador) de uma liga; null = a Futebolada semanal (membros/ na raiz).
     listMembros: (liga) => (liga ? listRaiz('ligas', liga, 'membros') : listRaiz('membros')),
     async tirarMembro(liga, uid) { const b = writeBatch(db); b.delete(doc(db, 'ligas', liga, 'membros', uid)); b.delete(doc(db, 'filiacoes', `${liga}_${uid}`)); await b.commit(); },
@@ -307,7 +341,7 @@ async function fireDb() {
     desligarRelogio: (id) => deleteDoc(doc(db, 'relogios', id)),
     // Definições da liga ativa (nome, cor, pública): a Futebolada semanal guarda-as em public/liga; as outras no próprio documento.
     async getConfigLiga() {
-      if (L()) { const l = (await getRaiz('ligas', L()).catch(() => null)) || {}; return { nome: l.nome || L(), cor: l.cor || 'azul', publico: !!l.publico, criador: l.criador, admins: l.admins || [] }; }
+      if (L()) { const l = (await getRaiz('ligas', L()).catch(() => null)) || {}; return { nome: l.nome || L(), cor: l.cor || 'azul', publico: l.publico !== false, publicoDefinido: 'publico' in l, criador: l.criador, admins: l.admins || [] }; }   // pública por defeito
       const c = (await getRaiz('public', 'liga').catch(() => null)) || {};
       return { nome: c.nome || 'Futebolada semanal', cor: c.cor || 'vermelho', publico: c.publico !== false, raiz: true };
     },
