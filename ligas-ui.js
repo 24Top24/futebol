@@ -81,22 +81,37 @@ export async function euTodas() { const u = await DB.user(); return u ? 'u:' + u
 
 // ---------- Seletor de liga (topo do menu no PC, topo da página no telemóvel) ----------
 // Só aparece a quem está em mais do que uma liga (com a conta Google). Mudar de liga recarrega a app nessa liga; "Todas" junta-as.
-export async function montarSeletorLiga() {
+export async function montarSeletorLiga(nomeAtual) {
   try {
+    // O título do menu (onde dizia "Futebolada") passa a ser o nome da liga aberta; quem está em 2+ ligas escolhe-a aí.
+    if (!document.getElementById('sel-liga-css')) document.head.insertAdjacentHTML('beforeend', `<style id="sel-liga-css">
+      .marca-liga { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      select.sel-liga { font: inherit; color: var(--txt); background: transparent; border: 0; padding: 0 18px 0 0; min-width: 0; max-width: 100%;
+        appearance: none; -webkit-appearance: none; cursor: pointer; text-overflow: ellipsis;
+        background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+        background-position: calc(100% - 9px) 55%, calc(100% - 4px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+      select.sel-liga option { background: var(--bg2); color: var(--txt); font-size: 15px; font-weight: 600; }
+      .sel-liga-topo { font-size: 13px !important; font-weight: 700; background-color: var(--bg3) !important; border: 1px solid var(--borda) !important;
+        border-radius: 10px; padding: 6px 22px 6px 8px !important; max-width: 46vw; margin-left: auto; }
+      @media (min-width: 900px) { .sel-liga-topo { display: none; } }</style>`);
+    const span = document.querySelector('#nav .marca span');
+    if (span) { span.textContent = nomeAtual || LIGA_PRINCIPAL.nome; span.classList.add('marca-liga'); }
     if (!(await DB.user())) return;
     const ligas = await asMinhasLigas();
     if (ligas.length < 2) return;
     const atual = ligaGuardada();
     const html = `${ligas.map((l) => `<option value="${(l.id ?? '').replace(/"/g, '')}" ${(l.id || null) === (atual === TODAS ? '§' : atual) ? 'selected' : ''}>${(l.nome || l.id || LIGA_PRINCIPAL.nome).replace(/</g, '&lt;')}</option>`).join('')}
       <option value="${TODAS}" ${atual === TODAS ? 'selected' : ''}>🌍 Todas as ligas</option>`;
-    if (!document.getElementById('sel-liga-css')) document.head.insertAdjacentHTML('beforeend', `<style id="sel-liga-css">
-      .sel-liga { font: inherit; font-size: 13px; font-weight: 700; color: var(--txt); background: var(--bg3); border: 1px solid var(--borda); border-radius: 10px; padding: 6px 8px; max-width: 100%; }
-      .sel-liga-nav { display: none; margin: -6px 2px 14px; } .sel-liga-topo { max-width: 46vw; margin-left: auto; }
-      @media (min-width: 900px) { .sel-liga-nav { display: block; } .sel-liga-topo { display: none; } }</style>`);
-    const marca = document.querySelector('#nav .marca'), topo = document.getElementById('ticket');
-    if (marca && !document.querySelector('.sel-liga-nav')) marca.insertAdjacentHTML('afterend', `<select class="sel-liga sel-liga-nav" aria-label="Liga">${html}</select>`);
+    // No PC: o próprio título vira a lista (o clique no título deixa de ir para o Início; o Início está logo abaixo).
+    const marca = document.querySelector('#nav .marca');
+    if (marca && span && !marca.querySelector('select')) {
+      span.outerHTML = `<select class="sel-liga marca-liga" aria-label="Liga">${html}</select>`;
+      marca.addEventListener('click', (e) => { if (e.target.closest('select')) e.preventDefault(); });
+    }
+    // No telemóvel o menu de baixo não tem título: a lista fica no topo da página.
+    const topo = document.getElementById('ticket');
     if (topo && !document.querySelector('.sel-liga-topo')) topo.insertAdjacentHTML('beforebegin', `<select class="sel-liga sel-liga-topo" aria-label="Liga">${html}</select>`);
-    document.querySelectorAll('.sel-liga').forEach((el) => (el.onchange = () => mudarLiga(el.value || null)));
+    document.querySelectorAll('select.sel-liga').forEach((el) => (el.onchange = () => mudarLiga(el.value || null)));
   } catch (e) { console.error(e); }
 }
 

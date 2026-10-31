@@ -1,5 +1,5 @@
 import { DB, novoToken, novoPin } from './db.js?v=40';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga } from './ligas-ui.js?v=9';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga } from './ligas-ui.js?v=10';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -3003,7 +3003,7 @@ if (new URLSearchParams(location.search).has('partilha')) history.replaceState(n
   else if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } }
   if (!MODO_TODAS) { const cfg = await DB.getConfigLiga().catch(() => null); aplicarTema(temaEscolhido(DB.ligaAtual()) || cfg?.cor); if (cfg?.nome && DB.ligaAtual()) NOME_LIGA = cfg.nome; }
 }
-montarSeletorLiga();   // escolher a liga no topo do menu (só a quem está em 2+ ligas)
+montarSeletorLiga(NOME_LIGA || (MODO_TODAS ? 'Todas as ligas' : (await DB.getConfigLiga().catch(() => null))?.nome));   // título do menu = liga; lista para quem está em 2+
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
