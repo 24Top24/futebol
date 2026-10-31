@@ -122,7 +122,10 @@ export function calcularCartas(players, votes, convivio = {}) {
     c.overall = overallDe(c.stats);
     c.estimada = true;
   }
-  posicoes(Object.values(cartas));
+  // 🧤 Só joga à baliza (Rui, 31/10): carta de GR — a posição é sempre GR e as áreas são as normais, mas o overall é só a nota de GR.
+  const soGR = new Set(players.filter((p) => p.soGR).map((p) => p.id));
+  posicoes(Object.values(cartas).filter((c) => !soGR.has(c.id)));
+  for (const id of soGR) { const c = cartas[id]; if (!c) continue; c.posicao = 'GR'; c.soGR = true; if (c.stats.gr != null) c.overall = Math.round(c.stats.gr * 10); }
   return cartas;
 }
 
@@ -140,6 +143,7 @@ export const POSICOES = [
   { k: 'DEF', nome: 'Defesa', pesos: { def: 0.65, for: 0.25, pas: 0.1 } },
   { k: 'MED', nome: 'Médio', pesos: { pas: 0.35, sta: 0.35, tec: 0.2, def: 0.1 } },
   { k: 'AVA', nome: 'Avançado', pesos: { rem: 0.55, tec: 0.3, sta: 0.1, for: 0.05 } },
+  { k: 'GR', nome: 'Guarda-redes', pesos: {} },   // só para quem "só joga à baliza" (não se calcula pelas áreas)
 ];
 const LIMIAR_MED = 0.3;
 function posicoes(lista) {
@@ -191,7 +195,9 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     if (!c || c.overall == null) return 60;
     let s = 0, p = 0;
     for (const a of semGR) if (c.stats[a.k] != null) { s += c.stats[a.k] * a.peso; p += a.peso; }
-    return p ? c.overall - (overallDe(c.stats) ?? c.overall) + (s / p) * 10 : c.overall;
+    // a carta de quem só joga à baliza tem o overall = nota de GR; a base para os ajustes (Elo) é essa
+    const base = c.soGR && c.stats.gr != null ? Math.round(c.stats.gr * 10) : overallDe(c.stats);
+    return p ? c.overall - (base ?? c.overall) + (s / p) * 10 : c.overall;
   };
   const val = (id, k) => (k === 'ov' ? ovSemGR(cartas[id]) : (cartas[id]?.stats[k] ?? 6) * 10);
   const somar = (eq, k) => eq.reduce((s, id) => s + val(id, k), 0);
