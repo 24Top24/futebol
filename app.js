@@ -1,5 +1,5 @@
 import { DB, novoToken, novoPin } from './db.js?v=43';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga } from './ligas-ui.js?v=18';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc } from './ligas-ui.js?v=19';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -2243,6 +2243,7 @@ function fichaJogador(sec, edit, cartas) {
     <div class="linha" style="margin-top:6px"><label style="margin:0"><input type="checkbox" id="f-sogr" ${p.soGR ? 'checked' : ''} style="width:auto"> 🧤 Só joga à baliza <span class="mute">(fica GR o jogo todo e as equipas equilibram com isso)</span></label></div>
     <label>Nível estimado (convidados ou quem tiver poucos votos)</label>
     <select id="f-nivel"><option value="">—</option>${NIVEIS.map((n) => `<option value="${n.v}" ${Number(p.nivel) === n.v ? 'selected' : ''}>${n.nome}</option>`).join('')}</select>
+    <div id="f-sinc"></div>
     <div class="linha" style="margin-top:14px">
       <button class="prim" id="f-gravar">${edit ? 'Guardar' : '＋ Adicionar'}</button><button id="f-cancel">Cancelar</button>
       ${edit ? `<label style="margin:0"><input type="checkbox" id="f-ativo" ${p.ativo !== false ? 'checked' : ''} style="width:auto"> Ativo</label>` : ''}
@@ -2250,6 +2251,9 @@ function fichaJogador(sec, edit, cartas) {
     ${edit && !edit.convidado ? `<h3>Votos recebidos <span class="mute">(só tu vês)</span></h3>${votosRecebidosHTML(edit.id, cartas)}` : ''}`);
   const g = (id) => f.querySelector('#' + id);
   if (!edit) g('f-nome').focus();
+  // Mesmo jogador noutra liga (p. ex. fixo aqui e convidado na Futebolada semanal): fica junto nas estatísticas de todas as ligas.
+  let sincEscolhido = () => undefined;
+  campoSinc(g('f-sinc'), p, esc).then((fn) => (sincEscolhido = fn)).catch(() => {});
   g('f-cancel').onclick = fechar;
   g('f-gravar').onclick = async (e) => {
     const nome = g('f-nome').value.trim();
@@ -2258,6 +2262,9 @@ function fichaJogador(sec, edit, cartas) {
     const { alias: _a, fotoPropria: _f, ...base } = p;
     const d = { ...base, nome, alcunha: g('f-alc').value.trim(), convidado: g('f-conv').checked, soGR: g('f-sogr').checked, nivel: g('f-nivel').value ? Number(g('f-nivel').value) : null };
     if (edit) d.ativo = g('f-ativo').checked; else d.ativo = true;
+    const sc = sincEscolhido();
+    if (sc === null) delete d.sinc;
+    else if (sc) { const { foto, ...sinc } = sc; d.sinc = sinc; if (foto && !d.foto) d.foto = foto; }
     const fl = g('f-foto').files[0];
     if (fl) d.foto = await fotoParaDataURL(fl);
     await DB.savePlayer(d);

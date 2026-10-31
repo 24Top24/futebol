@@ -325,6 +325,45 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
   document.getElementById('ld-copiar').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado ✔'); } catch { document.getElementById('ld-link').select(); } };
 }
 
+// Jogadores de uma liga, incluindo os convidados (para sincronizar com eles).
+async function jogadoresDaLiga(lid) {
+  const db = DB.para(lid);
+  const [jog, segredo] = await Promise.all([db.listPlayers().catch(() => []), db.getSegredo('partilha').catch(() => null)]);
+  const conv = segredo?.chave ? await db.listPart(segredo.chave, 'convidados').catch(() => []) : [];
+  return [...jog.map((x) => ({ id: x.id, nome: x.nome || '?', foto: x.foto || '' })), ...conv.map((x) => ({ id: x.id, nome: x.nome || '?', conv: true, foto: x.foto || '' }))]
+    .sort((a, c) => a.nome.localeCompare(c.nome, 'pt'));
+}
+
+// Campo "É o mesmo jogador noutra liga" (ficha do jogador, admin): escolhe a liga e o jogador de lá.
+// Devolve uma função que dá o `sinc` escolhido ({ liga, id, nome, foto }), null = nenhum, undefined = não mexer (ainda a carregar).
+export async function campoSinc(el, p, esc) {
+  const liga = ligaGuardada();
+  if (liga === TODAS) return () => undefined;
+  const outras = (await asMinhasLigas().catch(() => [])).filter((l) => (l.id || null) !== (liga || null));
+  if (!outras.length) return () => undefined;
+  const atual = p.sinc ? (p.sinc.liga ?? '') : '-';
+  el.innerHTML = `<label>🔗 É o mesmo jogador noutra liga?</label>
+    <select class="s-liga"><option value="-">Não</option>${outras.map((l) => `<option value="${esc(l.id ?? '')}" ${atual === (l.id ?? '') ? 'selected' : ''}>${esc(l.nome || LIGA_PRINCIPAL.nome)}</option>`).join('')}</select>
+    <select class="s-jog" hidden style="margin-top:6px"></select>`;
+  const sl = el.querySelector('.s-liga'), sj = el.querySelector('.s-jog');
+  let lista = [], pronto = true;
+  const carregar = async () => {
+    sj.hidden = sl.value === '-'; if (sj.hidden) return;
+    pronto = false; sj.innerHTML = '<option>a carregar…</option>';
+    lista = await jogadoresDaLiga(sl.value || null);
+    const primeiro = (p.nome || '').toLowerCase().split(' ')[0];
+    sj.innerHTML = '<option value="">— escolhe o jogador —</option>' + lista.map((x) => `<option value="${esc(x.id)}" ${p.sinc?.id === x.id || (!p.sinc && primeiro && x.nome.toLowerCase().startsWith(primeiro)) ? 'selected' : ''}>${esc(x.nome)}${x.conv ? ' (convidado)' : ''}</option>`).join('');
+    pronto = true;
+  };
+  sl.onchange = carregar; await carregar();
+  return () => {
+    if (sl.value === '-') return null;
+    if (!pronto) return undefined;
+    const x = lista.find((y) => y.id === sj.value);
+    return x ? { liga: sl.value || null, id: x.id, nome: x.nome, foto: x.foto } : undefined;
+  };
+}
+
 // 🧑‍🤝‍🧑 Jogadores desta liga (admin): apagar (por engano) e sincronizar com o mesmo jogador noutra liga — p. ex. o Alex é fixo aqui e
 // convidado na Futebolada semanal. Sincronizado = a mesma pessoa no "Todas as ligas" e nas estatísticas globais; a foto copia-se
 // de lá. A carta e os votos continuam a ser de cada liga.
@@ -356,11 +395,7 @@ async function gerirJogadores(el, liga, { esc, toast, refazer }) {
       <div class="linha" style="margin-top:6px"><button class="peq prim s-ok">Sincronizar</button>${p.sinc ? '<button class="peq s-tirar">Tirar sincronização</button>' : ''}</div></div>`;
     let lista = [];
     const carregar = async () => {
-      const lid = caixa.querySelector('.s-liga').value || null, db = DB.para(lid);
-      const [jog, segredo] = await Promise.all([db.listPlayers().catch(() => []), db.getSegredo('partilha').catch(() => null)]);
-      const conv = segredo?.chave ? await db.listPart(segredo.chave, 'convidados').catch(() => []) : [];
-      lista = [...jog.map((x) => ({ id: x.id, nome: x.nome || '?', foto: x.foto || '' })), ...conv.map((x) => ({ id: x.id, nome: x.nome || '?', conv: true, foto: x.foto || '' }))]
-        .sort((a, c) => a.nome.localeCompare(c.nome, 'pt'));
+      lista = await jogadoresDaLiga(caixa.querySelector('.s-liga').value || null);
       const primeiro = (p.nome || '').toLowerCase().split(' ')[0];
       caixa.querySelector('.s-jog').innerHTML = lista.map((x) => `<option value="${esc(x.id)}" ${primeiro && x.nome.toLowerCase().startsWith(primeiro) ? 'selected' : ''}>${esc(x.nome)}${x.conv ? ' (convidado)' : ''}</option>`).join('');
     };
