@@ -397,8 +397,8 @@ export async function jogosDeFora(p) {
 // se tiver várias), e ao fim de 3 jogos nesta liga passa a jogador com perfil próprio (promoverEmprestados).
 export const JOGOS_EMPRESTADO = 3;
 // Pessoas que se podem pedir emprestadas (não estão nesta liga): { pessoa, nome, ov, sinc }. Vazio se não se pode ler a lista.
-export async function paraEmprestar() {
-  const aqui = ligaGuardada() || 'fs'; if (aqui === TODAS) return [];
+export async function paraEmprestar(aqui = ligaGuardada() || 'fs') {
+  if (aqui === TODAS) return [];
   const ligas = await asMinhasLigas().catch(() => []);
   const nomeL = (k) => (k === 'fs' ? ligas.find((l) => l.id == null)?.nome || LIGA_PRINCIPAL.nome : ligas.find((l) => l.id === k)?.nome || '');
   return (await DB.listPessoas().catch(() => [])).filter((x) => !x.ligas?.[aqui]).map((x) => {

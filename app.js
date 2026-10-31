@@ -1,5 +1,5 @@
 import { DB, novoToken, novoPin } from './db.js?v=47';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=24';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=25';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=33';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -1597,7 +1597,34 @@ async function ctxAdmin() {
 
 // Carta de cada jogador para o seu perfil (sem votos individuais) + histórico mensal para as setas e o gráfico.
 // Corre sempre que o admin abre a app: o mês atual é atualizado, os anteriores ficam como estavam.
+// 🌍 O Rui (admin geral) faz, para TODAS as ligas, o que cada admin faz ao abrir a app: guarda a nota de cada pessoa nas
+// 👥 Contas e põe a lista dos emprestáveis no retrato dos moderadores — assim não depende de cada admin abrir a app.
+// No máximo uma vez por hora neste aparelho.
+async function notasDeTodasAsLigas() {
+  if (Date.now() - Number(lsGet('notas-todas') || 0) < 3600e3) return;
+  if (!(await DB.para(null).isAdmin(await DB.user()).catch(() => false))) return;
+  const ligas = [{ id: null }, ...(await DB.para(null).todasLigas().catch(() => []))];
+  const pessoas = await DB.listPessoas().catch(() => []);
+  for (const l of ligas) {
+    const db = DB.para(l.id), lk = l.id || 'fs';
+    try {
+      const [players, votes, jogos] = await Promise.all([db.listPlayers(), db.listVotes(), db.listJogosPub()]);
+      const reg = jogos.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
+      const cartas = calcularCartas(players.filter((p) => p.ativo !== false), votes, pontosConvivio(reg));
+      for (const x of pessoas) {
+        const c = cartas[x.ligas?.[lk]];
+        const v = c && !c.provisoria && !c.estimada ? c.overall : null;
+        if (v != null && x.notas?.[lk] !== v) await db.notaPessoa(x.id, v);
+      }
+      const K = (await db.getSegredo('partilha').catch(() => null))?.chave;
+      const r = K ? await db.getPart(K, 'dados', 'retrato').catch(() => null) : null;
+      if (r) await db.setPart(K, 'dados', 'retrato', { ...r, emprestaveis: await paraEmprestar(lk), ts: Date.now() });
+    } catch (e) { console.error('notas da liga', lk, e); }
+  }
+  lsSet('notas-todas', String(Date.now()));
+}
 async function publicarCartasPessoais() {
+  notasDeTodasAsLigas().catch((e) => console.error(e));
   promoverEmprestados().then((n) => n && toast(`${n} emprestado(s) passaram a jogador da liga ✔`)).catch((e) => console.error(e));
   const ativos = A.players.filter((p) => p.ativo !== false && !p.convidado);
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
