@@ -1,8 +1,8 @@
-import { DB, novoToken, novoPin } from './db.js?v=38';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto } from './ligas-ui.js?v=6';
+import { DB, novoToken, novoPin } from './db.js?v=40';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga } from './ligas-ui.js?v=9';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=30';
-import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=25';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
+import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=5';
 import { dnaJogo } from './conquistas.js?v=3';
@@ -2219,6 +2219,7 @@ function fichaJogador(sec, edit, cartas) {
     <label>Alcunha (como aparece)</label><input id="f-alc" value="${esc(p.alcunha)}">
     <label>Foto (guarda a do WhatsApp e escolhe-a aqui)</label><input id="f-foto" type="file" accept="image/*">
     <div class="linha" style="margin-top:10px"><label style="margin:0"><input type="checkbox" id="f-conv" ${p.convidado ? 'checked' : ''} style="width:auto"> Convidado (não vota nem é votado)</label></div>
+    <div class="linha" style="margin-top:6px"><label style="margin:0"><input type="checkbox" id="f-sogr" ${p.soGR ? 'checked' : ''} style="width:auto"> 🧤 Só joga à baliza <span class="mute">(fica GR o jogo todo e as equipas equilibram com isso)</span></label></div>
     <label>Nível estimado (convidados ou quem tiver poucos votos)</label>
     <select id="f-nivel"><option value="">—</option>${NIVEIS.map((n) => `<option value="${n.v}" ${Number(p.nivel) === n.v ? 'selected' : ''}>${n.nome}</option>`).join('')}</select>
     <div class="linha" style="margin-top:14px">
@@ -2234,7 +2235,7 @@ function fichaJogador(sec, edit, cartas) {
     if (!nome) return toast('Falta o nome');
     e.target.disabled = true;
     const { alias: _a, fotoPropria: _f, ...base } = p;
-    const d = { ...base, nome, alcunha: g('f-alc').value.trim(), convidado: g('f-conv').checked, nivel: g('f-nivel').value ? Number(g('f-nivel').value) : null };
+    const d = { ...base, nome, alcunha: g('f-alc').value.trim(), convidado: g('f-conv').checked, soGR: g('f-sogr').checked, nivel: g('f-nivel').value ? Number(g('f-nivel').value) : null };
     if (edit) d.ativo = g('f-ativo').checked; else d.ativo = true;
     const fl = g('f-foto').files[0];
     if (fl) d.foto = await fotoParaDataURL(fl);
@@ -2473,9 +2474,12 @@ function secEquipas(el, X = A.ctxEq) {
   const pid = (id) => X.players.find((p) => p.id === id);
   const nm = (id) => esc(nomeDe(pid(id) || { nome: '?' }));
   const sel = [...A.sel].filter(pid);
-  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))} <small class="mute">${ovElo(p.id)}</small></button>`;
+  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))}${p.soGR ? ' <span title="Só joga à baliza">🧤</span>' : ''} <small class="mute">${ovElo(p.id)}</small></button>`;
   const opts = (vazio) => `<option value="">${vazio}</option>` + sel.map((id) => `<option value="${id}">${nm(id)}</option>`).join('');
-  const nOpc = R.separar.length + R.juntar.length + Object.keys(R.cor).filter((id) => A.sel.has(id)).length;
+  // 🧤 Só joga à baliza NESTE jogo: por defeito o que está no plantel (players.soGR); aqui troca-se só para este jogo (R.gr).
+  R.gr ||= {};
+  const soGR = (id) => (id in R.gr ? R.gr[id] : !!pid(id)?.soGR);
+  const nOpc = R.separar.length + R.juntar.length + Object.keys(R.cor).filter((id) => A.sel.has(id)).length + Object.keys(R.gr).filter((id) => A.sel.has(id)).length;
 
   el.innerHTML = `
     <p class="mute">Toca nos que vão jogar (da sondagem do WhatsApp).</p>
@@ -2486,6 +2490,7 @@ function secEquipas(el, X = A.ctxEq) {
     <details class="opcao" id="d-conv"><summary><b>+ Novo convidado</b></summary>
       <label>Nome (ex.: Amigo do Boni)</label><input id="c-nome">
       <label>Nota provisória: <b id="c-nv">60</b>/100</label><input id="c-nota" type="range" min="0" max="100" value="60">
+      <label style="margin-top:6px"><input type="checkbox" id="c-sogr" style="width:auto"> 🧤 Só joga à baliza</label>
       <button class="prim" id="c-add" style="margin-top:8px">Adicionar e selecionar</button>
       <p class="mute">Fica guardado para reaproveitar noutros jogos.</p></details>
     <details class="opcao" ${nOpc ? 'open' : ''}><summary><b>Opções (opcional)</b> ${nOpc ? `<span class="tag">${nOpc} ativas</span>` : '<span class="mute">por defeito nada</span>'}</summary>
@@ -2496,6 +2501,9 @@ function secEquipas(el, X = A.ctxEq) {
       <label>Juntar na mesma equipa</label>
       <div class="linha"><select id="j1" style="width:auto">${opts('—')}</select><select id="j2" style="width:auto">${opts('—')}</select><select id="j3" style="width:auto">${opts('(opcional)')}</select><button class="peq" id="j-add">Adicionar</button></div>
       ${R.juntar.map((g, i) => `<div class="linha"><span>🤝 ${g.map(nm).join(' + ')}</span><button class="peq" data-rj="${i}">✕</button></div>`).join('')}
+      <label>🧤 Só joga à baliza (neste jogo)</label>
+      <div class="chips">${sel.map((id) => `<button class="chip ${soGR(id) ? 'on' : ''}" data-sogr="${id}">${soGR(id) ? '🧤 ' : ''}${nm(id)}</button>`).join('')}</div>
+      <p class="mute" style="font-size:12px;margin-top:4px">Fica na baliza o jogo todo. Com dois, fica um em cada equipa; com um, a equipa dele leva jogadores de campo um pouco mais fracos (e conta mais a stamina, porque não descansam na baliza).</p>
       <label>Só trouxe camisola…</label>
       <div class="cores">${sel.map((id) => `<div class="linha"><span style="flex:1">${nm(id)}</span>
         ${['', 'B', 'P'].map((c) => `<button class="peq ${(R.cor[id] || '') === c ? 'on' : ''}" data-cor="${id}" data-c="${c}">${c === 'B' ? '⚪' : c === 'P' ? '⚫' : 'qualquer'}</button>`).join('')}</div>`).join('')}</div>`}
@@ -2516,7 +2524,7 @@ function secEquipas(el, X = A.ctxEq) {
   g('c-add').onclick = async () => {
     const nome = g('c-nome').value.trim();
     if (!nome) return toast('Falta o nome');
-    const id = await X.addConvidado({ nome, alcunha: '', foto: '', ativo: true, convidado: true, nota100: Number(g('c-nota').value), nivel: null });
+    const id = await X.addConvidado({ nome, alcunha: '', foto: '', ativo: true, convidado: true, nota100: Number(g('c-nota').value), nivel: null, ...(g('c-sogr').checked ? { soGR: true } : {}) });
     A.sel.add(id); pub(); secEquipas(el, X);
   };
   g('s-add')?.addEventListener('click', () => {
@@ -2531,6 +2539,7 @@ function secEquipas(el, X = A.ctxEq) {
   });
   el.querySelectorAll('[data-rs]').forEach((b) => (b.onclick = () => { R.separar.splice(b.dataset.rs, 1); pub(); secEquipas(el, X); }));
   el.querySelectorAll('[data-rj]').forEach((b) => (b.onclick = () => { R.juntar.splice(b.dataset.rj, 1); pub(); secEquipas(el, X); }));
+  el.querySelectorAll('[data-sogr]').forEach((b) => (b.onclick = () => { const id = b.dataset.sogr; R.gr[id] = !soGR(id); pub(); secEquipas(el, X); }));
   el.querySelectorAll('[data-cor]').forEach((b) => (b.onclick = () => {
     if (b.dataset.c) R.cor[b.dataset.cor] = b.dataset.c; else delete R.cor[b.dataset.cor];
     pub(); secEquipas(el, X);
@@ -2551,11 +2560,13 @@ function secEquipas(el, X = A.ctxEq) {
       separar: R.separar.filter((p) => p.every((x) => A.sel.has(x))),
       juntar: R.juntar.map((gr) => gr.filter((x) => A.sel.has(x))).filter((gr) => gr.length > 1),
       cor: Object.fromEntries(Object.entries(R.cor).filter(([id]) => A.sel.has(id))),
+      // Quem só joga à baliza (players/{id}.soGR, marcado no plantel): o gerador põe-no a GR e equilibra com isso.
+      soGR: [...A.sel].filter(soGR),
     };
     const anteriores = [...X.games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 3).map((x) => [x.brancos || [], x.pretos || []]);
     const ops = gerarEquipas(ids, A.usarElo && X.elo ? aplicarForma(cartas, X.elo) : cartas, anteriores, 3, restr);
     if (!ops.length) return (g('res').innerHTML = '<p class="opcao">Não há nenhuma divisão que cumpra todas as opções. Tira alguma.</p>');
-    if (VV) { VV.opcoes = ops.map((o) => ({ A: o.A, B: o.B, ovA: o.ovA, ovB: o.ovB })); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
+    if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
     mostrar(ops);
   };
   // Depois de ver as equipas: afinar a nota dos convidados (0–100) e voltar a gerar.
@@ -2588,6 +2599,14 @@ function secEquipas(el, X = A.ctxEq) {
   const estrelas = (ov) => { const n = Math.max(0.5, Math.min(5, Math.round(((ov ?? 0) / 20) * 2) / 2));
     return '<span class="on">' + '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '') + '</span>' + '★'.repeat(5 - Math.ceil(n)); };
   const melhorGR = (eq) => eq.reduce((m, id) => ((cartas[id]?.stats.gr ?? 0) > (cartas[m]?.stats.gr ?? 0) ? id : m), eq[0]);
+  // GR fixo (só joga à baliza, ranking.js): o.grFixo = { A, B } na opção; no jogo fica { B: brancos, P: pretos }.
+  // 🧤 GR = fixo (o jogo todo na baliza); 🧤 sozinho = melhor GR de uma equipa que roda (só informativo).
+  const fixoDe = (o, eq) => (eq === o.A ? o.grFixo?.A : o.grFixo?.B) || null;
+  const marcaGR = (o, eq, id) => (id === fixoDe(o, eq) ? '🧤 GR' : !fixoDe(o, eq) && id === melhorGR(eq) ? '🧤' : '');
+  const grFixoJogo = (o) => (o.grFixo?.A || o.grFixo?.B ? { B: o.grFixo.A || null, P: o.grFixo.B || null } : null);
+  const opcaoPub = (o) => ({ A: o.A, B: o.B, ovA: o.ovA, ovB: o.ovB, ...(o.grFixo ? { grFixo: o.grFixo } : {}) });
+  const textoEquipas = (titulo, o, nomes, lado) => `⚽ ${titulo}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id] + (id === fixoDe(o, o.A) ? ' 🧤 GR' : '')).join('\n')}`
+    + `\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id] + (id === fixoDe(o, o.B) ? ' 🧤 GR' : '')).join('\n')}${lado?.B ? `\n\n${textoLado(lado)}` : ''}`;
   // Imagem 1080×1350 do cartão (para o WhatsApp), desenhada em canvas.
   async function imagemJogo(o, nomes, data, lado = null) {
     const W = 1080, H = 1350, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -2627,13 +2646,13 @@ function secEquipas(el, X = A.ctxEq) {
     }
     c.fillStyle = '#ffffff22'; c.fillRect(80, y + 4, W - 160, 2);
     y += 64;
-    const gA = melhorGR(o.A), gB = melhorGR(o.B);
     for (let k = 0; k < Math.max(o.A.length, o.B.length); k++) {
-      if (o.A[k]) txt(nomes[o.A[k]] + (o.A[k] === gA ? ' 🧤' : ''), 90, y, 40, '#fff', 'left', 700);
-      if (o.B[k]) txt((o.B[k] === gB ? '🧤 ' : '') + nomes[o.B[k]], W - 90, y, 40, '#fff', 'right', 700);
+      const mA = o.A[k] && marcaGR(o, o.A, o.A[k]), mB = o.B[k] && marcaGR(o, o.B, o.B[k]);
+      if (o.A[k]) txt(nomes[o.A[k]] + (mA ? ' ' + mA : ''), 90, y, 40, '#fff', 'left', 700);
+      if (o.B[k]) txt((mB ? mB + ' ' : '') + nomes[o.B[k]], W - 90, y, 40, '#fff', 'right', 700);
       y += lado?.B ? 53 : 56;
     }
-    txt('🧤 = melhor guarda-redes da equipa', W / 2, H - 22, 24, '#6b7280', 'center', 600);
+    txt(grFixoJogo(o) ? '🧤 GR = só joga à baliza · 🧤 = melhor GR da equipa' : '🧤 = melhor guarda-redes da equipa', W / 2, H - 22, 24, '#6b7280', 'center', 600);
     return new Promise((ok) => cv.toBlob(ok, 'image/png'));
   }
   function cartaoJogo(o) {
@@ -2643,15 +2662,15 @@ function secEquipas(el, X = A.ctxEq) {
       return `<div class="fl${a.k === 'gr' ? ' gr' : ''}"><b class="${d > 1 ? 'ganha' : ''}">${vA == null ? '–' : Math.round(vA)}</b>${barra(vA, 'esq', d > 1)}
         <span>${a.k === 'gr' ? '🧤 GR' : a.ab}</span>${barra(vB, 'dir', d < -1)}<b class="${d < -1 ? 'ganha' : ''}">${vB == null ? '–' : Math.round(vB)}</b></div>`;
     };
-    const plantel = (eq) => { const g1 = melhorGR(eq);
-      return eq.map((id) => `<div>${nm(id)}${id === g1 ? ' <span title="Melhor GR da equipa">🧤</span>' : ''} <small class="mute">${ovElo(id)}</small></div>`).join(''); };
+    const plantel = (eq) => eq.map((id) => { const m = marcaGR(o, eq, id);
+      return `<div>${nm(id)}${m ? ` <span title="${m === '🧤' ? 'Melhor GR da equipa' : 'Só joga à baliza: GR o jogo todo'}">${m}</span>` : ''} <small class="mute">${ovElo(id)}</small></div>`; }).join('');
     return `<div class="cjogo">
       <div class="ftopo">
         <div class="fequipa">${LOGO.B}<div class="fnome">BRANCOS</div><div class="frat">${o.ovA.toFixed(0)}</div><div class="festr">${estrelas(o.ovA)}</div></div>
         <div class="fvs">VS</div>
         <div class="fequipa">${LOGO.P}<div class="fnome">PRETOS</div><div class="frat">${o.ovB.toFixed(0)}</div><div class="festr">${estrelas(o.ovB)}</div></div>
       </div>
-      <div class="fbarras">${AREAS.map(linha).join('')}<div class="mute fnota">🧤 GR só informativo — não conta para equilibrar</div></div>
+      <div class="fbarras">${AREAS.map(linha).join('')}<div class="mute fnota">${grFixoJogo(o) ? '🧤 GR fixo o jogo todo — já conta para equilibrar (a outra equipa roda na baliza)' : '🧤 GR só informativo — não conta para equilibrar'}</div></div>
       <div class="fplant"><div>${plantel(o.A)}</div><div>${plantel(o.B)}</div></div>
     </div>`;
   }
@@ -2662,7 +2681,8 @@ function secEquipas(el, X = A.ctxEq) {
     ligarAjuste();
     el.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => {
       const o = ops[b.dataset.tr]; [o.A, o.B] = [o.B, o.A]; [o.ovA, o.ovB] = [o.ovB, o.ovA];
-      if (VV) X.publicar({ opcoes: ops.map((x) => ({ A: x.A, B: x.B, ovA: x.ovA, ovB: x.ovB })) });
+      if (o.grFixo) o.grFixo = { A: o.grFixo.B, B: o.grFixo.A };
+      if (VV) X.publicar({ opcoes: ops.map(opcaoPub) });
       mostrar(ops);
     }));
     if (VV) return el.querySelectorAll('[data-k]').forEach((b) => (b.onclick = async () => {
@@ -2673,7 +2693,8 @@ function secEquipas(el, X = A.ctxEq) {
       const dataJ = VV.data || hojeLocal(), outros = (X.games || []).filter((x) => x.id !== VV.gameId);
       const desafios = atribuirDesafios({ id: VV.gameId, brancos: o.A, pretos: o.B, criado }, outros, { relogio: X.relogio || [] });
       const desafiosMes = completarDesafiosMes(dataJ.slice(0, 7), [...o.A, ...o.B], outros, { relogio: X.relogio || [] });
-      const id = await X.saveGame({ data: dataJ, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes }, VV.gameId || undefined);
+      const grFixo = grFixoJogo(o);
+      const id = await X.saveGame({ data: dataJ, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes, ...(grFixo ? { grFixo } : {}) }, VV.gameId || undefined);
       Object.assign(VV, { escolhida: k, gameId: id, partilhado: null });
       VV.ladoInicio = ladoInicio;
       await X.publicar({ escolhida: k, gameId: id, partilhado: null, nomes, ladoInicio });   // o marcador começa com o lado sorteado
@@ -2684,7 +2705,7 @@ function secEquipas(el, X = A.ctxEq) {
       const data = X.vivo?.data || hojeLocal();
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
       const ladoInicio = sortearLado();
-      const texto = `⚽ Equipas de hoje\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}\n\n${textoLado(ladoInicio)}`;
+      const texto = textoEquipas('Equipas de hoje', o, nomes, ladoInicio);
       // Primeiro a partilha (o telemóvel só a deixa abrir logo a seguir ao toque), depois guarda.
       let png = null;
       try { png = await imagemJogo(o, nomes, data, ladoInicio); } catch (e) { console.error(e); }
@@ -2692,7 +2713,8 @@ function secEquipas(el, X = A.ctxEq) {
       // Desafios do jogo (1 a 3 por convocado, sem repetir entre jogadores nem do jogo anterior) — desafios.js.
       const criado = Date.now(), desafios = atribuirDesafios({ brancos: o.A, pretos: o.B, criado }, X.games || [], { relogio: X.relogio || [] });
       const desafiosMes = completarDesafiosMes(data.slice(0, 7), [...o.A, ...o.B], X.games || [], { relogio: X.relogio || [] });   // só os que ainda não têm o do mês
-      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes });
+      const grFixo = grFixoJogo(o);
+      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes, ...(grFixo ? { grFixo } : {}) });
       // Confirmação: as equipas ficam como as do próximo jogo; daqui vai-se direto para o marcador.
       g('res').innerHTML = `<div class="opcao" style="text-align:center"><h3 style="margin:4px 0">✅ Equipas escolhidas</h3>
         ${cartaoJogo(o)}
@@ -2727,7 +2749,7 @@ function secEquipas(el, X = A.ctxEq) {
       if (X.teste) { v.partilhado = { nome: nomeDe(X.eu), ts: Date.now() }; await X.publicar({ partilhado: v.partilhado }); toast('🧪 Teste: fica marcado como enviado (nada foi enviado)'); return escolhidas(o); }
       const data = v.data || hojeLocal();
       const nomes = Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))]));
-      const texto = `⚽ Equipas de ${diaPT(data)}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id]).join('\n')}\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id]).join('\n')}${v.ladoInicio?.B ? `\n\n${textoLado(v.ladoInicio)}` : ''}`;
+      const texto = textoEquipas(`Equipas de ${diaPT(data)}`, o, nomes, v.ladoInicio);
       let png = null;
       try { png = await imagemJogo(o, nomes, data, v.ladoInicio); } catch (e) { console.error(e); }
       await partilharWhatsApp(png, texto, `equipas-${data}.png`);
@@ -2788,13 +2810,14 @@ async function paginaColab(K, mod = null) {
     const VV = A.vivo;
     if (mod && VV?.gameId && VV.opcoes?.[VV.escolhida]) {
       const o = VV.opcoes[VV.escolhida], n = (id) => ({ id, nome: VV.nomes?.[id] || retrato.jogadores.find((p) => p.id === id)?.alias || retrato.jogadores.find((p) => p.id === id)?.nome || id });
-      return { id: VV.gameId, data: VV.data, brancos: o.A.map(n), pretos: o.B.map(n), ladoInicio: VV.ladoInicio };
+      const grFixo = o.grFixo?.A || o.grFixo?.B ? { B: o.grFixo.A || null, P: o.grFixo.B || null } : null;
+      return { id: VV.gameId, data: VV.data, brancos: o.A.map(n), pretos: o.B.map(n), ladoInicio: VV.ladoInicio, grFixo };
     }
     const todas = [...(await DB.listPart(K, 'games')), ...(await DB.listGames().catch(() => []))];
     const g = (A.vivo?.gameId && todas.find((x) => x.id === A.vivo.gameId)) || todas.sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
     if (!g) return null;
     const n = (id) => ({ id, nome: g.nomes?.[id] || id });
-    return { id: g.id, data: g.data, brancos: (g.brancos || []).map(n), pretos: (g.pretos || []).map(n), ladoInicio: g.ladoInicio };
+    return { id: g.id, data: g.data, brancos: (g.brancos || []).map(n), pretos: (g.pretos || []).map(n), ladoInicio: g.ladoInicio, grFixo: g.grFixo || null };
   };
   if (A.colabTab === 'marc') {
     let carregarJa = A.carregarJa; A.carregarJa = false;
@@ -2980,6 +3003,7 @@ if (new URLSearchParams(location.search).has('partilha')) history.replaceState(n
   else if (lg) { DB.usarLiga(lg); NOME_LIGA = (await DB.getLiga(lg).catch(() => null))?.nome || null; if (!NOME_LIGA) { DB.usarLiga(null); try { localStorage.removeItem('liga'); } catch {} } }
   if (!MODO_TODAS) { const cfg = await DB.getConfigLiga().catch(() => null); aplicarTema(temaEscolhido(DB.ligaAtual()) || cfg?.cor); if (cfg?.nome && DB.ligaAtual()) NOME_LIGA = cfg.nome; }
 }
+montarSeletorLiga();   // escolher a liga no topo do menu (só a quem está em 2+ ligas)
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;

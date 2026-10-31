@@ -8,6 +8,10 @@ const minuto = (ms) => `${Math.floor(ms / 60000) + 1}'`;
 const outra = (e) => (e === 'B' ? 'P' : 'B');
 const DUR = [6, 5, 4, 3, 2, 1];
 const PARTES = { pd: 'Pé direito', pe: 'Pé esquerdo', cab: 'Cabeça', out: 'Outro', pen: 'Penálti' };
+// Aviso de troca de GR (bip, vibração e a janela a abrir sozinha). Rui 31/10: no telemóvel é chato → interruptor no START,
+// guardado neste telemóvel, desligado por defeito. Desligado, o tempo de cada turno continua visível e as trocas registam-se à mão.
+const LS_AVISO = 'futebol-marcador-aviso-gr';
+const avisoGR = () => { try { return localStorage.getItem(LS_AVISO) === '1'; } catch { return false; } };
 // Dia de hoje na hora de Portugal (toISOString é UTC: entre a meia-noite e a 1h dava o dia anterior).
 export const hojeLocal = () => new Date().toLocaleDateString('sv-SE');
 
@@ -28,6 +32,8 @@ export function campoLados(lado, nomes = {}) {
 function novoJogo(eq) {
   return { gameId: eq?.id || '', data: eq?.data || hojeLocal(), brancos: eq?.brancos || [], pretos: eq?.pretos || [],
     ladoInicio: eq?.ladoInicio?.B ? eq.ladoInicio : sortear(),
+    // GR fixo (quem só joga à baliza): { B: id|null, P: id|null }. Essa equipa não roda: ele fica na baliza o jogo todo.
+    grFixo: eq?.grFixo || null,
     minTurno: 6, rondas: 2, fase: 'prep', inicioEpoch: 0, fimEpoch: 0, pausadoEm: 0, pausaTotal: 0,
     eventos: [], penaltis: [], baliza: {}, turnos: [], enviado: false, origem: 'telemovel' };
 }
@@ -39,6 +45,7 @@ const nome = (j, id) => [...j.brancos, ...j.pretos].find((p) => p.id === id)?.no
 const golos = (j, e) => j.eventos.filter((x) => x.equipa === e).length;
 const decorrido = (j, agora = Date.now()) =>
   j.fase === 'prep' ? 0 : (j.fase === 'fim' ? j.fimEpoch : j.pausadoEm || agora) - j.inicioEpoch - j.pausaTotal;
+const fixoDe = (j, e) => j.grFixo?.[e] || null;
 function proximoGR(j, e) {
   const l = jogs(j, e); const i = l.findIndex((p) => p.id === j.baliza[e]?.atual);
   return l[(i + 1) % l.length].id;
@@ -108,7 +115,10 @@ export function paginaMarcador(opts) {
   }
 
   function renderPrep() {
-    const gr = (e) => j.baliza[e]?.atual || jogs(j, e)[0]?.id;
+    const gr = (e) => fixoDe(j, e) || j.baliza[e]?.atual || jogs(j, e)[0]?.id;
+    const selGR = (e, ps) => fixoDe(j, e)
+      ? `<div class="opcao" style="margin:0">🧤 <b>${esc(nome(j, fixoDe(j, e)))}</b> <span class="mute">— só joga à baliza: fica o jogo todo, sem turnos</span></div><input type="hidden" id="m-gr${e}" value="${fixoDe(j, e)}">`
+      : `<select id="m-gr${e}">${ps.map((p) => `<option value="${p.id}" ${gr(e) === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>`;
     const ou = opts.outro?.();
     el.innerHTML = `
       <h2>⚽ Marcador do jogo</h2>
@@ -125,9 +135,10 @@ export function paginaMarcador(opts) {
       <button class="peq" id="m-lados" style="width:100%;margin-top:6px">⇄ Trocar lados</button>
       <label>Minutos por turno de GR</label><div class="linha">${DUR.map((m) => `<button class="peq ${j.minTurno === m ? 'on' : ''}" data-min="${m}">${m}</button>`).join('')}</div>
       <label>Rondas de baliza</label><div class="linha">${[2, 3].map((r) => `<button class="peq ${j.rondas === r ? 'on' : ''}" data-ron="${r}">${r}</button>`).join('')}
-        <span class="mute">${j.rondas * j.brancos.length * j.minTurno} min de jogo</span></div>
-      <label>1.º GR ⚪</label><select id="m-grB">${j.brancos.map((p) => `<option value="${p.id}" ${gr('B') === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
-      <label>1.º GR ⚫</label><select id="m-grP">${j.pretos.map((p) => `<option value="${p.id}" ${gr('P') === p.id ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select>
+        <span class="mute">${j.rondas * jogs(j, fixoDe(j, 'B') ? 'P' : 'B').length * j.minTurno} min de jogo</span></div>
+      <label>${fixoDe(j, 'B') ? 'GR' : '1.º GR'} ⚪</label>${selGR('B', j.brancos)}
+      <label>${fixoDe(j, 'P') ? 'GR' : '1.º GR'} ⚫</label>${selGR('P', j.pretos)}
+      <label style="margin-top:14px"><input type="checkbox" id="m-aviso" ${avisoGR() ? 'checked' : ''} style="width:auto"> ⏰ Aviso de troca de GR <span class="mute">(bip, vibração e pergunta quem vai; fica guardado neste telemóvel)</span></label>
       <button class="prim" id="m-start" style="width:100%;margin-top:16px;padding:16px;font-size:20px">START GAME</button>
       <p class="mute">O ecrã fica ligado durante o jogo. No fim o jogo é enviado para o site.</p>` : ''}`;
     el.querySelector('#m-eq').onclick = carregar;
@@ -138,11 +149,12 @@ export function paginaMarcador(opts) {
     el.querySelector('#m-lados')?.addEventListener('click', () => {
       j.ladoInicio = { B: j.ladoInicio?.B === 'balnearios' ? 'oposto' : 'balnearios' }; salvar(); render();
     });
+    el.querySelector('#m-aviso')?.addEventListener('change', (e) => { try { localStorage.setItem(LS_AVISO, e.target.checked ? '1' : '0'); } catch {} });
     el.querySelectorAll('[data-min]').forEach((b) => (b.onclick = () => { j.minTurno = Number(b.dataset.min); salvar(); render(); }));
     el.querySelectorAll('[data-ron]').forEach((b) => (b.onclick = () => { j.rondas = Number(b.dataset.ron); salvar(); render(); }));
     el.querySelector('#m-start')?.addEventListener('click', () => {
-      j.baliza = { B: { atual: el.querySelector('#m-grB').value, inicio: 0, expirou: false, dur: j.minTurno },
-                   P: { atual: el.querySelector('#m-grP').value, inicio: 0, expirou: false, dur: j.minTurno } };
+      j.baliza = { B: { atual: el.querySelector('#m-grB').value, inicio: 0, expirou: false, dur: j.minTurno, ...(fixoDe(j, 'B') ? { fixo: true } : {}) },
+                   P: { atual: el.querySelector('#m-grP').value, inicio: 0, expirou: false, dur: j.minTurno, ...(fixoDe(j, 'P') ? { fixo: true } : {}) } };
       if (ou && !confirm(`${ou.nome} já está a marcar. Começar outro registo mesmo assim? (fica duplicado)`)) return;
       // A data do jogo é o dia em que começa (não o dia em que se fizeram as equipas).
       j.fase = 'jogo'; j.inicioEpoch = Date.now(); j.data = hojeLocal(); salvar(); bipDesbloquear(); ecraInteiro(); pedirEcraLigado(); render();
@@ -161,6 +173,7 @@ export function paginaMarcador(opts) {
       <div class="mplacar">${['B', 'P'].map((e) => `<button class="mgolo ${e === 'B' ? 'branco' : 'preto'}" data-golo="${e}">${golos(j, e)}${j.ladoInicio?.B && emBaixo(j.ladoInicio) === e ? '<small class="mlado">🚪 lado dos balneários</small>' : ''}</button>`).join('')}</div>
       <div class="mplacar">${['B', 'P'].map((e) => {
         const b = j.baliza[e]; const resta = b.dur * 60000 - (t - b.inicio);
+        if (b.fixo) return `<div class="mgr">🧤 ${esc(nome(j, b.atual))}<b>GR fixo</b></div>`;
         return `<button class="mgr ${b.expirou || resta < 30000 ? 'alerta' : ''}" data-gr="${e}">🧤 ${esc(nome(j, b.atual))}<b>${b.expirou ? 'TROCA!' : mmss(resta)}</b></button>`;
       }).join('')}</div>
       <div class="linha" style="margin:10px 0">
@@ -277,10 +290,11 @@ export function paginaMarcador(opts) {
       const t = decorrido(j);
       for (const e of ['B', 'P']) {
         const b = j.baliza[e];
-        if (!b) continue;
-        if (!b.expirou && b.dur * 60000 - (t - b.inicio) <= 0) { b.expirou = true; salvar(); bip(); ultimoAlarme[e] = Date.now(); mudou = true; }
-        else if (b.expirou && Date.now() - (ultimoAlarme[e] || 0) > 15000) { bip(); ultimoAlarme[e] = Date.now(); }
-        if (b.expirou && !modal && !abertos.has(`${e}-${b.inicio}`)) { abertos.add(`${e}-${b.inicio}`); modal = { tipo: 'gr', e }; mudou = true; }
+        if (!b || b.fixo) continue;
+        const aviso = avisoGR();
+        if (!b.expirou && b.dur * 60000 - (t - b.inicio) <= 0) { b.expirou = true; salvar(); if (aviso) bip(); ultimoAlarme[e] = Date.now(); mudou = true; }
+        else if (aviso && b.expirou && Date.now() - (ultimoAlarme[e] || 0) > 15000) { bip(); ultimoAlarme[e] = Date.now(); }
+        if (aviso && b.expirou && !modal && !abertos.has(`${e}-${b.inicio}`)) { abertos.add(`${e}-${b.inicio}`); modal = { tipo: 'gr', e }; mudou = true; }
       }
     }
     // Redesenhar tudo a cada segundo trocava os botões debaixo do dedo (toques perdidos):
@@ -291,7 +305,7 @@ export function paginaMarcador(opts) {
     const t = decorrido(j), tp = el.querySelector('#m-tempo');
     if (tp && !j.pausadoEm) tp.textContent = mmss(t);
     el.querySelectorAll('[data-gr]').forEach((bt) => {
-      const b = j.baliza[bt.dataset.gr]; if (!b) return;
+      const b = j.baliza[bt.dataset.gr]; if (!b || b.fixo) return;
       const resta = b.dur * 60000 - (t - b.inicio);
       bt.querySelector('b').textContent = b.expirou ? 'TROCA!' : mmss(resta);
       bt.classList.toggle('alerta', b.expirou || resta < 30000);

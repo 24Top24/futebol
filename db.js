@@ -55,7 +55,7 @@ function demoDb() {
     async entrarGoogle() { throw new Error('No modo de demonstração não há contas Google'); },
     async desligarGoogle() {}, async contaAdmin() {}, async listContas() { return []; }, async apagarConta() {},
     // Ligas: no demo só existe a principal.
-    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
+    usarLiga() {}, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
     async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
@@ -236,6 +236,8 @@ async function fireDb() {
     ligaAtual: () => LIGA,
     getLiga: (id) => getRaiz('ligas', id),
     // Ligas desta pessoa (com login Google): as que administra e aquelas em que é membro (+ a principal, se tem conta lá).
+    // O Rui (admin global) vê todas as ligas.
+    async todasLigas() { return listRaiz('ligas').catch(() => []); },
     async minhasLigas() {
       const u = await atual();
       if (!u || u.isAnonymous) return [];
@@ -255,15 +257,16 @@ async function fireDb() {
     },
     // O Rui autoriza uma pessoa (pelo uid da sua conta Google) a criar ligas: autorizados/{uid} = { max, criadas }.
     listAutorizados: () => listRaiz('autorizados'),
-    autorizar: (uid, nome, max = 2) => setDoc(doc(db, 'autorizados', uid), { max, criadas: 0, nome: nome || null, ts: Date.now() }, { merge: true }),
+    autorizar: (uid, nome, max = 2) => setDoc(doc(db, 'autorizados', uid), { max, ...(nome ? { nome } : {}) }, { merge: true }),   // só mexe no máximo (não no contador)
     desautorizar: (uid) => deleteDoc(doc(db, 'autorizados', uid)),
     async meuLimite() { const u = await atual(); if (!u || u.isAnonymous) return null; return getRaiz('autorizados', u.uid).catch(() => null); },
     // Cria uma liga: a pessoa fica admin e jogador dela (players/{pid} com o seu nome). Num lote só, com o contador de ligas.
     async criarLiga(id, { nome, meuNome, dia = null, local = null }) {
       const u = await atual();
       if (!u || u.isAnonymous) throw new Error('Precisas de entrar com o Google');
-      const a = await getRaiz('autorizados', u.uid);
-      if (!a) throw new Error('Ainda não estás autorizado a criar ligas — pede ao Rui');
+      // Qualquer pessoa com conta Google pode criar até 2 ligas: o contador abre-se na primeira (o Rui pode subir o máximo).
+      let a = await getRaiz('autorizados', u.uid);
+      if (!a) { a = { max: 2, criadas: 0, ts: Date.now() }; await setDoc(doc(db, 'autorizados', u.uid), a); }
       if ((a.criadas || 0) >= (a.max || 0)) throw new Error(`Já criaste ${a.criadas} liga(s), o máximo`);
       const pid = novoToken(10), b = writeBatch(db), agora = Date.now();
       b.set(doc(db, 'ligas', id), { nome, criador: u.uid, admins: [u.uid], dia, local, ts: agora });

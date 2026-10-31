@@ -179,7 +179,11 @@ export const textoLado = (l) => (l?.B ? `🚪 Lado dos balneários: ${l.B === 'b
 export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) {
   const N = ids.length, metade = Math.floor(N / 2);
   if (N < 2) return [];
-  const { separar = [], juntar = [], cor = {} } = restr;
+  const { juntar = [], cor = {} } = restr;
+  // Guarda-redes fixos (só jogam na baliza, Rui 31/10): soGR = ids marcados no plantel. Com dois, ficam um em cada equipa.
+  const fixos = (restr.soGR || []).filter((id) => ids.includes(id));
+  const separar = [...(restr.separar || []), ...(fixos.length >= 2 ? [[fixos[0], fixos[1]]] : [])];
+  const fixo = new Set(fixos.slice(0, 2));
   // O GR não conta para equilibrar (decisão do Rui, 14/10): overall recalculado sem a área GR
   // (mantendo ajustes feitos ao overall, como a forma/Elo).
   const semGR = AREAS.filter((a) => a.k !== 'gr');
@@ -191,6 +195,31 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
   };
   const val = (id, k) => (k === 'ov' ? ovSemGR(cartas[id]) : (cartas[id]?.stats[k] ?? 6) * 10);
   const somar = (eq, k) => eq.reduce((s, id) => s + val(id, k), 0);
+  // Força de uma equipa = jogadores em campo + quem está na baliza (Rui, 31/10).
+  //  - com GR fixo: o GR vale pela nota de guarda-redes; os de campo nunca descansam na baliza, por isso a stamina pesa:
+  //    cada um conta 85 % + 15 % × stamina/10 (quem tem stamina 10 conta tudo; stamina 4 perde ~9 %);
+  //  - sem GR fixo: todos rodam ((n−1) em campo, descansam na baliza); a nota de GR deles conta, mas pouco (metade puxada
+  //    para um GR "normal" de 60), para não decidir as equipas.
+  // Sem nenhum GR fixo no jogo, isto dá o mesmo resultado de sempre (o GR não conta: a parte da baliza é igual dos dois lados).
+  const comFixo = fixo.size > 0;
+  const comStamina = (id) => val(id, 'ov') * (0.85 + 0.15 * (val(id, 'sta') / 100));
+  const forca = (eq) => {
+    const g = eq.find((id) => fixo.has(id)), campo = eq.filter((id) => id !== g);
+    if (!comFixo) return somar(eq, 'ov');
+    if (g) return campo.reduce((s, id) => s + comStamina(id), 0) + val(g, 'gr');
+    const n = eq.length || 1;
+    return (somar(eq, 'ov') * (n - 1)) / n + 0.5 * (somar(eq, 'gr') / n) + 0.5 * 60;
+  };
+  // O melhor GR dos que rodam (o 2.º melhor dos 10, depois do fixo) deve ficar na equipa SEM GR fixo: assim, quando ele
+  // estiver na baliza, as duas equipas têm os dois melhores guarda-redes.
+  const melhorRoda = comFixo && fixo.size === 1 ? ids.filter((id) => !fixo.has(id)).sort((a, b) => val(b, 'gr') - val(a, 'gr'))[0] : null;
+  // Áreas (remate, passe…): só quem joga em campo; numa equipa que roda, conta (n−1)/n de cada um.
+  const somarCampo = (eq, k) => {
+    const g = eq.find((id) => fixo.has(id));
+    if (!comFixo) return somar(eq, k);
+    if (g) return somar(eq.filter((id) => id !== g), k);
+    return (somar(eq, k) * (eq.length - 1)) / (eq.length || 1);
+  };
   const ok = (A, B) => {
     const sA = new Set(A);
     if (separar.some(([a, b]) => sA.has(a) === sA.has(b))) return false;
@@ -203,13 +232,17 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     // ids[0] fica sempre do mesmo lado para não repetir divisões; as cores decidem-se aqui.
     const [A, B] = ok(A0, B0) ? [A0, B0] : ok(B0, A0) ? [B0, A0] : [null, null];
     if (!A) return;
-    let custo = 3 * Math.abs(somar(A, 'ov') - somar(B, 'ov'));
-    for (const a of semGR) custo += 0.5 * Math.abs(somar(A, a.k) - somar(B, a.k));
+    let custo = 3 * Math.abs(forca(A) - forca(B));
+    // Com GR fixo, a força (que já conta a baliza) manda: as áreas só desempatam (senão puxavam para igualar o campo e
+    // esqueciam que um lado tem um guarda-redes a sério).
+    for (const a of semGR) custo += (comFixo ? 0.1 : 0.5) * Math.abs(somarCampo(A, a.k) - somarCampo(B, a.k));
+    if (melhorRoda) { const comG = A.some((id) => fixo.has(id)) ? A : B; if (comG.includes(melhorRoda)) custo += 15; }   // preferência, não obrigação
     for (const [pa, pb] of anteriores) {
       const sA = new Set(A);
       if (Math.max(pa.filter((x) => sA.has(x)).length, pb.filter((x) => sA.has(x)).length) === metade) custo += 40;
     }
-    res.push({ A, B, custo, ovA: somar(A, 'ov') / A.length, ovB: somar(B, 'ov') / B.length });
+    res.push({ A, B, custo, ovA: comFixo ? forca(A) / A.length : somar(A, 'ov') / A.length, ovB: comFixo ? forca(B) / B.length : somar(B, 'ov') / B.length,
+      ...(comFixo ? { grFixo: { A: A.find((id) => fixo.has(id)) || null, B: B.find((id) => fixo.has(id)) || null } } : {}) });
   };
   const rec = (start, esc) => {
     if (esc.length === metade - 1) return avaliar([ids[0], ...esc]);

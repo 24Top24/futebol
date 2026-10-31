@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=38';
+import { DB } from './db.js?v=40';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -37,6 +37,9 @@ async function naLiga(id, fn) {
 // Ligas desta pessoa (com a Futebolada semanal sempre na lista). Cada uma: { id, nome, player, admin }.
 async function asMinhasLigas() {
   const ls = await naLiga(null, () => DB.minhasLigas());
+  // O Rui é admin global: vê todas as ligas (mesmo as que não são dele).
+  if (await naLiga(null, async () => DB.isAdmin(await DB.user())).catch(() => false))
+    for (const l of await naLiga(null, () => DB.todasLigas())) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, admin: true, global: true });
   if (!ls.some((l) => l.id == null)) ls.unshift({ id: null, player: null });
   const nomeFS = (await naLiga(null, () => DB.getConfigLiga().catch(() => null)))?.nome || LIGA_PRINCIPAL.nome;
   for (const l of ls) if (l.id == null) l.nome = nomeFS;
@@ -75,6 +78,27 @@ export async function dadosTodas() {
 }
 // "Eu" no modo todas as ligas = a pessoa ('u:<uid>').
 export async function euTodas() { const u = await DB.user(); return u ? 'u:' + u.uid : null; }
+
+// ---------- Seletor de liga (topo do menu no PC, topo da página no telemóvel) ----------
+// Só aparece a quem está em mais do que uma liga (com a conta Google). Mudar de liga recarrega a app nessa liga; "Todas" junta-as.
+export async function montarSeletorLiga() {
+  try {
+    if (!(await DB.user())) return;
+    const ligas = await asMinhasLigas();
+    if (ligas.length < 2) return;
+    const atual = ligaGuardada();
+    const html = `${ligas.map((l) => `<option value="${(l.id ?? '').replace(/"/g, '')}" ${(l.id || null) === (atual === TODAS ? '§' : atual) ? 'selected' : ''}>${(l.nome || l.id || LIGA_PRINCIPAL.nome).replace(/</g, '&lt;')}</option>`).join('')}
+      <option value="${TODAS}" ${atual === TODAS ? 'selected' : ''}>🌍 Todas as ligas</option>`;
+    if (!document.getElementById('sel-liga-css')) document.head.insertAdjacentHTML('beforeend', `<style id="sel-liga-css">
+      .sel-liga { font: inherit; font-size: 13px; font-weight: 700; color: var(--txt); background: var(--bg3); border: 1px solid var(--borda); border-radius: 10px; padding: 6px 8px; max-width: 100%; }
+      .sel-liga-nav { display: none; margin: -6px 2px 14px; } .sel-liga-topo { max-width: 46vw; margin-left: auto; }
+      @media (min-width: 900px) { .sel-liga-nav { display: block; } .sel-liga-topo { display: none; } }</style>`);
+    const marca = document.querySelector('#nav .marca'), topo = document.getElementById('ticket');
+    if (marca && !document.querySelector('.sel-liga-nav')) marca.insertAdjacentHTML('afterend', `<select class="sel-liga sel-liga-nav" aria-label="Liga">${html}</select>`);
+    if (topo && !document.querySelector('.sel-liga-topo')) topo.insertAdjacentHTML('beforebegin', `<select class="sel-liga sel-liga-topo" aria-label="Liga">${html}</select>`);
+    document.querySelectorAll('.sel-liga').forEach((el) => (el.onchange = () => mudarLiga(el.value || null)));
+  } catch (e) { console.error(e); }
+}
 
 // ---------- Votos aproveitados entre ligas ----------
 // Quando voto num colega numa liga, a mesma nota vai para as outras ligas onde estamos os dois (ligados por conta Google).
@@ -162,7 +186,7 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
     linhas.push(`<tr><td>${esc(nomeL(l))}</td><td>${esc(nomeEpoca(e))}</td><td>${x.j}</td><td>${x.v}-${x.e}-${x.d}</td><td>${x.g}</td><td>${x.a}</td></tr>`);
   }
   const cartas = await asMinhasCartas().catch(() => ({ por: [], geral: null }));
-  const podeCriar = limite && (limite.criadas || 0) < (limite.max || 0);
+  const podeCriar = !limite || (limite.criadas || 0) < (limite.max || 0);   // qualquer pessoa com conta Google cria até 2
   const ativa = (id) => (id || null) === (atual || null);
 
   $app.innerHTML = `
@@ -189,12 +213,12 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
         : '<p class="mute">Ainda sem jogos nas tuas ligas.</p>'}
     </section>
     <section class="cartao"><h3>➕ Criar uma liga</h3>
-      ${podeCriar ? `<p class="mute">Ficas administrador: crias os jogadores e os PINs, fazes as equipas e registas os jogos, como na Futebolada semanal. Podes criar mais ${limite.max - (limite.criadas || 0)}.</p>
+      ${podeCriar ? `<p class="mute">Ficas administrador: crias os jogadores e os PINs, fazes as equipas e registas os jogos, como na Futebolada semanal. Podes criar mais ${limite ? limite.max - (limite.criadas || 0) : MAX_LIGAS_EXTRA}.</p>
         <label>Nome da liga</label><input id="lg-nome" maxlength="60" placeholder="ex.: Futebol de segunda">
         <label>O teu nome nessa liga</label><input id="lg-eu" maxlength="30" value="${esc(u.displayName || '')}">
         <label>Cores</label><select id="lg-cor">${Object.entries(TEMAS).map(([k, t]) => `<option value="${k}">${esc(t.nome)}</option>`).join('')}</select>
         <button class="prim" id="lg-criar" style="margin-top:8px">Criar liga</button>`
-        : `<p class="mute">${limite ? `Já criaste ${limite.criadas} liga(s), o máximo (${MAX_LIGAS_EXTRA}).` : 'Só o Rui autoriza quem pode criar ligas. Pede-lhe.'}</p>`}
+        : `<p class="mute">Já criaste ${limite.criadas} liga(s), o máximo (${limite.max}). Se precisares de mais, pede ao Rui.</p>`}
     </section>
     ${souRui ? '<section class="cartao"><h3>⌚ O meu relógio</h3><div id="lg-rel"><p class="mute">A carregar…</p></div></section>' : ''}
     <div id="lg-rui"></div>`;
@@ -243,18 +267,16 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
   document.getElementById('ld-copiar').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado ✔'); } catch { document.getElementById('ld-link').select(); } };
 }
 
-// O Rui escolhe quem pode criar ligas (entre quem já ligou a conta Google), até 2 cada.
+// O Rui (admin global) vê quantas ligas cada pessoa criou e pode dar mais.
 async function autorizacoes(el, { esc, toast, refazer }) {
-  const [contas, aut, players] = await Promise.all([DB.listContas(), DB.listAutorizados(), DB.listPlayers()]);
-  const nome = (c) => players.find((p) => p.id === c.player)?.nome || c.email || c.id;
-  el.innerHTML = `<section class="cartao"><h3>🔑 Quem pode criar ligas</h3>
-    <p class="mute">Só aparecem jogadores com a conta Google ligada. Cada autorizado cria no máximo ${MAX_LIGAS_EXTRA} ligas.</p>
-    ${contas.length ? contas.map((c) => { const a = aut.find((x) => x.id === c.id);
-      return `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div><b>${esc(nome(c))}</b>${a ? ` <small class="mute">${a.criadas || 0}/${a.max} criadas</small>` : ''}</div>
-        ${a ? `<button class="peq perigo" data-desaut="${esc(c.id)}">Tirar autorização</button>` : `<button class="peq prim" data-aut="${esc(c.id)}">Autorizar</button>`}</div>`; }).join('')
-      : '<p class="mute">Ainda ninguém ligou a conta Google.</p>'}</section>`;
-  el.querySelectorAll('[data-aut]').forEach((b) => (b.onclick = async () => { const c = contas.find((x) => x.id === b.dataset.aut); await naLiga(null, () => DB.autorizar(c.id, nome(c), MAX_LIGAS_EXTRA)); toast('Autorizado ✔'); refazer(); }));
-  el.querySelectorAll('[data-desaut]').forEach((b) => (b.onclick = async () => { await naLiga(null, () => DB.desautorizar(b.dataset.desaut)); refazer(); }));
+  const [contas, aut, players, ligas] = await Promise.all([DB.listContas(), DB.listAutorizados(), DB.listPlayers(), DB.todasLigas()]);
+  const nome = (uid) => { const c = contas.find((x) => x.id === uid); return players.find((p) => p.id === c?.player)?.nome || c?.email || aut.find((x) => x.id === uid)?.nome || uid.slice(0, 6) + '…'; };
+  el.innerHTML = `<section class="cartao"><h3>🌍 Todas as ligas <small class="mute">(só tu vês — admin global)</small></h3>
+    ${ligas.length ? ligas.map((l) => `<div class="opcao"><b>${esc(l.nome || l.id)}</b> <small class="mute">criada por ${esc(nome(l.criador || ''))}${l.publico ? ' · pública' : ' · privada'}</small></div>`).join('') : '<p class="mute">Ainda não há outras ligas.</p>'}
+    <h4>Ligas criadas por pessoa</h4><p class="mute">Qualquer pessoa com conta Google pode criar até 2. Podes dar mais a quem precisar.</p>
+    ${aut.length ? aut.map((a) => `<div class="opcao linha" style="justify-content:space-between;align-items:center"><div><b>${esc(nome(a.id))}</b> <small class="mute">${a.criadas || 0}/${a.max} criadas</small></div>
+      <button class="peq" data-mais="${esc(a.id)}">+1 liga</button></div>`).join('') : '<p class="mute">Ninguém criou ligas ainda.</p>'}</section>`;
+  el.querySelectorAll('[data-mais]').forEach((b) => (b.onclick = async () => { const a = aut.find((x) => x.id === b.dataset.mais); await naLiga(null, () => DB.autorizar(a.id, a.nome, (a.max || 2) + 1)); toast('Feito ✔'); refazer(); }));
 }
 
 // ⌚ O relógio do Rui liga-se sozinho às ligas dele com a chave do relógio (a do Admin → Relógio). Aqui só se veem os relógios.
