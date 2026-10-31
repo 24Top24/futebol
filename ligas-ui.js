@@ -392,6 +392,16 @@ export async function jogosDeFora(p) {
   return out;
 }
 
+// Muda o nome de um jogador (ou convidado do link) de uma liga.
+async function renomear(lk, id, nome) {
+  const db = DB.para(lk === 'fs' ? null : lk);
+  const q = (await db.listPlayers().catch(() => [])).find((z) => z.id === id);
+  if (q) { if (q.nome !== nome) { const { id: _, alias: _a, fotoPropria: _f, ...d } = q; await db.savePlayer({ ...d, id, nome }); } return; }
+  const K = (await db.getSegredo('partilha').catch(() => null))?.chave;
+  const c = K ? (await db.listPart(K, 'convidados').catch(() => [])).find((z) => z.id === id) : null;
+  if (c && c.nome !== nome) { const { id: _, ...d } = c; await db.setPart(K, 'convidados', id, { ...d, nome }); }
+}
+
 // ---------- 🔁 Emprestado (Rui, 31/10) ----------
 // Num jogo, um convidado pode ser alguém de outra liga: entra como convidado "emprestado", só com a nota geral que tem lá (a média,
 // se tiver várias), e ao fim de 3 jogos nesta liga passa a jogador com perfil próprio (promoverEmprestados).
@@ -417,16 +427,23 @@ export async function promoverEmprestados() {
   const K = (await DB.getSegredo('partilha').catch(() => null))?.chave;
   const conv = K ? await DB.listPart(K, 'convidados').catch(() => []) : [];
   const players = await DB.listPlayers().catch(() => []);
-  const lista = [...players.filter((p) => p.emprestado && p.convidado), ...conv.filter((c) => c.emprestado && c.ativo !== false && !players.some((p) => p.id === c.id))];
+  // emprestados, e convidados que já são uma pessoa das 👥 Contas (p. ex. o Alexandre, convidado na Futebolada semanal):
+  // ao 3.º jogo nesta liga entram no plantel como os outros (votam e são votados). Convidados soltos ficam convidados.
+  const lk = ligaGuardada() || 'fs', pessoas = await DB.listPessoas().catch(() => []);
+  const pessoaDe = (id) => pessoas.find((x) => x.ligas?.[lk] === id);
+  const ligado = (c) => c.emprestado || pessoaDe(c.id);
+  const lista = [...players.filter((p) => p.convidado && ligado(p)), ...conv.filter((c) => ligado(c) && c.ativo !== false && !players.some((p) => p.id === c.id))];
   let feitos = 0;
   for (const p of lista) {
     if (nJogos(p.id) < JOGOS_EMPRESTADO) continue;
-    const { id, emprestado, convidado: _c, alias: _a, fotoPropria: _f, ...d } = p;
+    const { id, emprestado, convidado: _c, alias: _a, fotoPropria: _f, promovido: _p, ...d } = p;
+    const x = pessoas.find((y) => y.id === emprestado?.pessoa) || pessoaDe(id);
     try {
-      await DB.savePlayer({ ...d, id, convidado: false, ativo: true, desde: { emprestado: emprestado.pessoa, ts: Date.now() } });
+      await DB.savePlayer({ ...d, id, ...(x?.nome ? { nome: x.nome } : {}), convidado: false, ativo: true, desde: { ...(emprestado ? { emprestado: emprestado.pessoa } : {}), ts: Date.now() } });
       const c = conv.find((y) => y.id === id); if (c) { const { id: _i, ...cd } = c; await DB.setPart(K, 'convidados', id, { ...cd, ativo: false, promovido: true }).catch(() => {}); }
-      const x = (await DB.listPessoas().catch(() => [])).find((y) => y.id === emprestado.pessoa);
-      if (x) { await DB.ligarPessoa(x.id, id).catch(() => {}); const [al, aid] = ancora(x, ligaGuardada() || 'fs'); if (aid) await DB.pinPessoa(id, al, aid).catch(() => {}); }
+      // o PIN é o que a pessoa já tem (numa liga das novas). Na Futebolada semanal o PIN é sempre próprio: o admin gera-o e as
+      // outras ligas da pessoa passam a apontar para ele quando se abrem as 👥 Contas.
+      if (x) { await DB.ligarPessoa(x.id, id).catch(() => {}); const [al, aid] = ancora(x, lk); if (aid && lk !== 'fs') await DB.pinPessoa(id, al, aid).catch(() => {}); }
       feitos++;
     } catch (e) { console.error(e); }
   }
@@ -634,6 +651,9 @@ export async function paginaContas(el, { esc, toast, titulo }) {
           const db = DB.para(lk === 'fs' ? null : lk), q = (await db.listPlayers().catch(() => [])).find((z) => z.id === id);
           if (q && !q.sinc) { const { id: _, alias: _a, fotoPropria: _f, ...d } = q; await db.savePlayer({ ...d, id, sinc: { liga: al === 'fs' ? null : al, id: aid, nome: x.nome } }); }
         }
+        // o mesmo nome em todas as ligas (Rui, 31/10): o "Alex (fontes)" passa a "Alexandre Gomes" também onde era convidado
+        const nome = x.conv && !y.conv ? y.nome : x.nome;
+        for (const [lk, id] of ent) await renomear(lk, id, nome).catch((e) => console.error(e));
         toast('Juntadas ✔'); refazer();
       } catch (e) { console.error(e); toast('Não deu para juntar'); }
     };
