@@ -58,7 +58,7 @@ function demoDb() {
     usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async importarPessoa() {}, async pessoasComConta() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
-    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async tirarMembro() {}, async setLiga() {},
+    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async tirarMembro() {}, async setLiga() {},
     async mudarPin(id, pin) {
       if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
       const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
@@ -174,13 +174,22 @@ async function fireDb() {
     async isAdmin(u) { if (!u) return false; try { await getDocs(Cl('votes')); return true; } catch { return false; } },
     // Numa liga das novas, a pessoa é a mesma em todas as ligas: o nome a mostrar, a foto e o alias vêm do seu perfil da
     // Futebolada semanal (ligado pela conta Google: membros/ da liga ↔ membros/ da raiz). Só a carta e os votos são da liga.
-    listPlayers: async () => { const L0 = await list('players'); if (!L()) return L0; const m = await mapaPartilhado(L()); if (!m.n) return L0;
-      return L0.map((p) => { const r = m.players[m.liga[p.id]]; return r ? { ...p, foto: r.foto || p.foto || '', ...(r.alcunha ? { alcunha: r.alcunha } : {}) } : p; }); },
+    // Também vale para quem o admin sincronizou com um jogador da Futebolada semanal (players.sinc com liga null): a foto vem de lá;
+    // o nome fica o desta liga (pode ser outro, p. ex. "Alex (Fontes)").
+    listPlayers: async () => { const L0 = await list('players'); if (!L()) return L0; const m = await mapaPartilhado(L());
+      return L0.map((p) => {
+        const r = m.players[m.liga[p.id]], s = !r && p.sinc && !p.sinc.liga ? m.players[p.sinc.id] : null;
+        if (s) return { ...p, foto: p.foto || s.foto || '' };
+        return r ? { ...p, foto: r.foto || p.foto || '', ...(r.alcunha ? { alcunha: r.alcunha } : {}) } : p; }); },
     async savePlayer(p) { const id = p.id || novoToken(10); const { id: _, ...d } = p; await setDoc(D('players', id), d); return id; },
     deletePlayer: (id) => deleteDoc(D('players', id)),
-    listPerfis: async () => { const L0 = await list('perfis'); if (!L()) return L0; const m = await mapaPartilhado(L()); if (!m.n) return L0;
+    // Nota de fora: a nota geral de cada jogador noutras ligas (ver ligas-ui.js → publicarNotasFora).
+    listFora: () => list('fora'),
+    setFora: (id, d) => setDoc(D('fora', id), d),
+    listPerfis: async () => { const L0 = await list('perfis'); if (!L()) return L0; const m = await mapaPartilhado(L());
       const meus = Object.fromEntries(L0.map((x) => [x.id, x]));
-      for (const [pl, raiz] of Object.entries(m.liga)) { const r = m.perfis[raiz]; if (r) meus[pl] = { ...r, ...(meus[pl] || {}), id: pl, foto: meus[pl]?.foto || r.foto || '', alias: meus[pl]?.alias || r.alias || '' }; }
+      const ligados = { ...Object.fromEntries((await list('players').catch(() => [])).filter((p) => p.sinc?.id && !p.sinc.liga).map((p) => [p.id, p.sinc.id])), ...m.liga };
+      for (const [pl, raiz] of Object.entries(ligados)) { const r = m.perfis[raiz]; if (r) meus[pl] = { ...r, ...(meus[pl] || {}), id: pl, foto: meus[pl]?.foto || r.foto || '', alias: meus[pl]?.alias || r.alias || '' }; }
       return Object.values(meus); },
     savePerfil: (id, d) => setDoc(D('perfis', id), d),
     listClaims: () => list('claims'),

@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=43';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc } from './ligas-ui.js?v=19';
+import { DB, novoToken, novoPin } from './db.js?v=44';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora } from './ligas-ui.js?v=20';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -1572,10 +1572,13 @@ async function recarregar() {
 async function ctxAdmin() {
   const K = (await DB.getSegredo('partilha'))?.chave;
   const conv = K ? (await DB.listPart(K, 'convidados')).map((c) => ({ ...c, convidado: true, ativo: c.ativo !== false })) : [];
-  const players = [...A.players, ...conv];
+  const ps0 = [...A.players, ...conv];
+  // Quem ainda não tem carta cá (convidado, carta provisória) joga com a nota que tem nas outras ligas.
+  const players = comNotaFora(ps0, calcularCartas(ps0.filter((p) => p.ativo !== false), A.votes, A.conv), await notasFora());
+  const cartasEq = calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv);
   return {
-    players, cartas: calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv), games: A.games,
-    elo: calcularElo((await DB.listResultados()).map((r) => JSON.parse(r.json || '{}').jogo), calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv)),
+    players, cartas: cartasEq, games: A.games,
+    elo: calcularElo((await DB.listResultados()).map((r) => JSON.parse(r.json || '{}').jogo), cartasEq),
     relogio: [((await DB.getSegredo('perfil')) || {}).eu].filter(Boolean),   // quem tem relógio (por agora o Rui) → desafios ⌚
     async addConvidado(d) { const id = await DB.savePlayer(d); await recarregar(); A.ctxEq = await ctxAdmin(); return id; },
     async notaConvidado(id, n) {
@@ -1597,6 +1600,7 @@ async function ctxAdmin() {
 async function publicarCartasPessoais() {
   const ativos = A.players.filter((p) => p.ativo !== false && !p.convidado);
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
+  publicarNotasFora(cartas, A.players).catch((e) => console.error(e));   // a nota geral de cada um para as outras ligas onde joga
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
   const brutos = (await DB.listResultados()).map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
@@ -1680,9 +1684,12 @@ async function publicarRetrato() {
   if (!K) return;
   // Os moderadores (com PIN) leem a chave em moderacao/chave para fazer equipas e marcar sem o link.
   if ((await DB.getModeracao('chave').catch(() => null))?.chave !== K) await DB.setModeracao('chave', { chave: K });
-  const ativos = A.players.filter((p) => p.ativo !== false);
+  const fora = await notasFora();
+  const ativos0 = A.players.filter((p) => p.ativo !== false);
+  const ativos = comNotaFora(ativos0, calcularCartas(ativos0, A.votes, A.conv), fora);
   const cartas = calcularCartas(ativos, A.votes, A.conv);
-  await DB.setPart(K, 'dados', 'retrato', { ts: Date.now(), jogadores: ativos.map((p) => ({
+  // fora: a nota de fora dos convidados do link (não estão no plantel), já feita — o moderador não lê as outras ligas.
+  await DB.setPart(K, 'dados', 'retrato', { ts: Date.now(), fora, jogadores: ativos.map((p) => ({
     id: p.id, nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '', convidado: !!p.convidado,
     notaConvidado: p.notaConvidado || null, nota100: p.nota100 ?? null, overall: cartas[p.id]?.overall ?? null, stats: cartas[p.id]?.stats || {},
   })) });
@@ -2247,6 +2254,7 @@ function fichaJogador(sec, edit, cartas) {
     <div class="linha" style="margin-top:14px">
       <button class="prim" id="f-gravar">${edit ? 'Guardar' : '＋ Adicionar'}</button><button id="f-cancel">Cancelar</button>
       ${edit ? `<label style="margin:0"><input type="checkbox" id="f-ativo" ${p.ativo !== false ? 'checked' : ''} style="width:auto"> Ativo</label>` : ''}
+      ${edit ? '<button class="perigo" id="f-apagar" style="margin-left:auto">🗑 Apagar</button>' : ''}
     </div>
     ${edit && !edit.convidado ? `<h3>Votos recebidos <span class="mute">(só tu vês)</span></h3>${votosRecebidosHTML(edit.id, cartas)}` : ''}`);
   const g = (id) => f.querySelector('#' + id);
@@ -2255,6 +2263,16 @@ function fichaJogador(sec, edit, cartas) {
   let sincEscolhido = () => undefined;
   campoSinc(g('f-sinc'), p, esc).then((fn) => (sincEscolhido = fn)).catch(() => {});
   g('f-cancel').onclick = fechar;
+  // Apagar (enganos): os jogos já registados ficam; os votos nele deixam de contar. Numa liga, tira também a ligação da conta.
+  if (edit) g('f-apagar').onclick = async () => {
+    if (!confirm(`Apagar ${nomeDe(edit)}? Os jogos já registados ficam; os votos nele deixam de contar.`)) return;
+    try {
+      const liga = DB.ligaAtual();
+      if (liga) for (const m of (await DB.listMembros(liga).catch(() => [])).filter((x) => x.player === edit.id)) await DB.tirarMembro(liga, m.uid).catch(() => {});
+      await DB.deletePlayer(edit.id);
+      fechar(); await recarregar(); toast('Apagado ✔'); secJogadores(sec);
+    } catch (e) { console.error(e); toast('Não deu para apagar (sem permissão?)'); }
+  };
   g('f-gravar').onclick = async (e) => {
     const nome = g('f-nome').value.trim();
     if (!nome) return toast('Falta o nome');
@@ -2265,9 +2283,11 @@ function fichaJogador(sec, edit, cartas) {
     const sc = sincEscolhido();
     if (sc === null) delete d.sinc;
     else if (sc) { const { foto, ...sinc } = sc; d.sinc = sinc; if (foto && !d.foto) d.foto = foto; }
-    const fl = g('f-foto').files[0];
-    if (fl) d.foto = await fotoParaDataURL(fl);
-    await DB.savePlayer(d);
+    try {
+      const fl = g('f-foto').files[0];
+      if (fl) d.foto = await fotoParaDataURL(fl);
+      await DB.savePlayer(d);
+    } catch (err) { console.error(err); e.target.disabled = false; return toast('Não deu para gravar (sem permissão?)'); }
     fechar();
     await recarregar(); toast(edit ? 'Guardado' : `${nome} adicionado ✔`); secJogadores(sec);
   };
@@ -2867,7 +2887,7 @@ async function paginaColab(K, mod = null) {
     const base = retrato.jogadores.map((p) => ({ ...p, ativo: true }));
     const players = [...base, ...conv.filter((c) => !base.some((b) => b.id === c.id))];
     const cartas = Object.fromEntries(retrato.jogadores.map((p) => [p.id, { overall: p.overall, stats: p.stats || {} }]));
-    for (const c of conv) { const n = notaDe(c) ?? 6; cartas[c.id] = { overall: Math.round(n * 10), stats: Object.fromEntries(AREAS.map((a) => [a.k, n])), estimada: true }; }
+    for (const c of conv) { const n = retrato.fora?.[c.id] != null ? retrato.fora[c.id] / 10 : notaDe(c) ?? 6; cartas[c.id] = { overall: Math.round(n * 10), stats: Object.fromEntries(AREAS.map((a) => [a.k, n])), estimada: true }; }
     // Elo também para quem faz equipas sem ser admin: a partir dos jogos fechados (públicos, sem saúde).
     const [jogosPub, estado] = await Promise.all([DB.listJogosPub().catch(() => []), DB.getPublic('estado').catch(() => null)]);
     const fechados = jogosPub.map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');

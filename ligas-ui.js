@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=43';
+import { DB } from './db.js?v=44';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -324,6 +324,43 @@ function definicoesLiga(el, cfg, atual, { esc, toast, refazer }) {
   gerirJogadores(el, atual, { esc, toast, refazer });
   document.getElementById('ld-copiar').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('Link copiado ✔'); } catch { document.getElementById('ld-link').select(); } };
 }
+
+// ---------- Nota de fora (Rui, 31/10) ----------
+// Quem joga numa liga onde ainda não tem carta (convidado ou carta provisória) entra nas equipas com a nota geral que tem nas
+// outras ligas — a média, se forem várias. Da liga de origem só sai esse número (nunca a carta nem os votos) e só o admin da
+// liga onde ele joga o lê; os moderadores recebem-no já aplicado, no retrato.
+// Quem é o mesmo: a conta Google (membros/ das duas ligas) ou o "sincronizar com outra liga" (players.sinc, de qualquer dos lados).
+// O admin de cada liga publica as notas da sua liga quando abre a app → <liga onde joga>/fora/{jogador}__{origem}.
+export async function publicarNotasFora(cartas, players) {
+  const origem = DB.ligaAtual() || null, o = origem || 'fs';
+  const ov = (id) => { const c = cartas[id]; return c && !c.provisoria && !c.estimada && c.overall != null ? c.overall : null; };
+  const alvos = new Map();   // '<liga>|<jogador lá>' → ov
+  const por = (liga, player, v) => { if (v != null && player) alvos.set((liga || '') + '|' + player, v); };
+  for (const p of players) if (p.sinc?.id && (p.sinc.liga || null) !== origem) por(p.sinc.liga, p.sinc.id, ov(p.id));
+  const aqui = Object.fromEntries((await DB.listMembros(origem).catch(() => [])).map((m) => [m.uid, m.player]));
+  for (const l of await asMinhasLigas().catch(() => [])) {
+    const lid = l.id || null; if (lid === origem) continue;
+    for (const q of await DB.para(lid).listPlayers().catch(() => [])) if (q.sinc?.id && (q.sinc.liga || null) === origem) por(lid, q.id, ov(q.sinc.id));
+    for (const m of await DB.listMembros(lid).catch(() => [])) if (aqui[m.uid]) por(lid, m.player, ov(aqui[m.uid]));
+  }
+  // Só escreve o que mudou desde a última vez (neste aparelho).
+  let feito = {}; try { feito = JSON.parse(lsGet('fora-pub') || '{}'); } catch {}
+  for (const [k, v] of alvos) {
+    const [lid, player] = k.split('|'), chave = `${k}|${o}`;
+    if (feito[chave] === v) continue;
+    try { await DB.para(lid || null).setFora(`${player}__${o}`, { player, liga: o, ov: v, ts: Date.now() }); feito[chave] = v; } catch (e) { console.error(e); }
+  }
+  lsSet('fora-pub', JSON.stringify(feito));
+}
+// Nota de fora de cada jogador desta liga (média das ligas de origem). { id: ov }
+export async function notasFora() {
+  const por = {};
+  for (const f of await DB.listFora().catch(() => [])) if (typeof f.ov === 'number') (por[f.player] ||= []).push(f.ov);
+  return Object.fromEntries(Object.entries(por).map(([id, v]) => [id, Math.round(v.reduce((a, b) => a + b, 0) / v.length)]));
+}
+// Põe a nota de fora (como nota100) em quem ainda não tem carta nesta liga: convidado, ou carta provisória/estimada.
+export const comNotaFora = (players, cartas, fora) => players.map((p) => fora[p.id] != null && (p.convidado || cartas[p.id]?.provisoria || cartas[p.id]?.estimada)
+  ? { ...p, nota100: fora[p.id], fora: true } : p);
 
 // Jogadores de uma liga, incluindo os convidados (para sincronizar com eles).
 async function jogadoresDaLiga(lid) {
