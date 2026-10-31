@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=45';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas } from './ligas-ui.js?v=21';
+import { DB, novoToken, novoPin } from './db.js?v=46';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas } from './ligas-ui.js?v=22';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -2467,7 +2467,7 @@ async function secVotacao(el) {
   });
   const feitos = linhas.filter((l) => l.n >= total).length;
   const pins = Object.fromEntries((await DB.listPins()).map((x) => [x.id, x]));
-  const semPin = votantes.filter((p) => !pins[p.id]);
+  const semPin = votantes.filter((p) => !pins[p.id] && !p.temPin && !p.pinEm);
   el.innerHTML = `
     <div class="opcao">
       <b>Votação 🟢 sempre aberta</b>
@@ -2484,11 +2484,12 @@ async function secVotacao(el) {
     <h3>${linhas.filter((l) => l.c).length} já começaram · ${feitos}/${votantes.length} terminaram</h3>
     ${linhas.map(({ p, c, n }) => `<div class="jog">${foto(p)}<div class="info"><b>${esc(nomeDe(p))}</b>
       <small>${c ? `${n}/${total} ${n >= total ? '✅' : ''}` : 'ainda não votou'}${nomeDe(p) !== p.nome ? ` · ${esc(p.nome)}` : ''}</small></div>
-      ${!pins[p.id] ? '<small class="mute">sem PIN</small>' : pins[p.id].pin
+      ${p.pinEm && !pins[p.id]?.h ? '<small class="mute" title="É a mesma pessoa de outra liga: usa o PIN que já tinha (👥 Contas)">🌍 PIN da conta</small>'
+        : !pins[p.id] ? (p.temPin ? '<small class="mute" title="Já entrou: o PIN só o administrador geral vê">🔒 já entrou</small>' : '<small class="mute">sem PIN</small>') : pins[p.id].pin
         ? `<code style="font-size:16px;margin-right:6px">${esc(pins[p.id].pin)}</code>
           <a class="btn peq" target="_blank" title="Enviar o PIN no WhatsApp" href="https://wa.me/?text=${encodeURIComponent(msgPin(p, pins[p.id].pin))}">💬</a>`
         : '<small class="mute" title="Escolhido pelo jogador — não fica guardado">🔒 escolhido</small>'}
-      ${pins[p.id] ? `<button class="peq" data-resetpin="${p.id}">Reset</button>` : ''}
+      ${(pins[p.id] || p.temPin) && !p.pinEm ? `<button class="peq" data-resetpin="${p.id}">Reset</button>` : ''}
       </div>`).join('')}`;
   document.getElementById('pins-gerar')?.addEventListener('click', async () => {
     for (const p of semPin) await DB.definirPin(p.id, novoPin());

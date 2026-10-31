@@ -58,7 +58,7 @@ function demoDb() {
     usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async importarPessoa() {}, async pessoasComConta() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
-    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async listPessoas() { return []; }, async minhaPessoa() { return null; }, async savePessoa() {}, async apagarPessoa() {}, async ligarPessoa() {}, async novaPessoa() {}, async tirarMembro() {}, async setLiga() {},
+    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async listPessoas() { return []; }, async minhaPessoa() { return null; }, async savePessoa() {}, async apagarPessoa() {}, async ligarPessoa() {}, async novaPessoa() {}, async pinPessoa() {}, async listLigacoes() { return []; }, async definirUsado() {}, async tirarMembro() {}, async setLiga() {},
     async mudarPin(id, pin) {
       if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
       const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
@@ -198,8 +198,12 @@ async function fireDb() {
     // PIN: as regras só aceitam a ligação se h = sha256(PIN certo + id).
     async ligar(id, pin) {
       const uid = await this.uid();
-      try { await setDoc(D('ligacoes', uid), { player: id, h: await sha256hex(pin + id), ts: Date.now() }); }
+      // A mesma pessoa noutra liga (👥 Contas) usa o PIN que já tinha: o de players.pinEm (o hash leva o id de lá).
+      const ref = L() ? (await get('players', id).catch(() => null))?.pinEm : null;
+      try { await setDoc(D('ligacoes', uid), { player: id, h: await sha256hex(pin + (ref?.id || id)), ts: Date.now() }); }
       catch (e) { throw new Error('PIN errado'); }
+      // 1.ª entrada: o admin da liga deixa de ver este PIN (só o Rui).
+      if (L() && !ref) await setDoc(D('pins', id), { usado: true }, { merge: true }).catch(() => {});
     },
     // Ligação válida = consigo ler o meu voto (as regras confirmam o PIN atual).
     async ligacaoOk(id) { try { await this.uid(); await getDoc(D('votes', id)); return true; } catch { return false; } },
@@ -385,14 +389,27 @@ async function fireDb() {
     apagarConta: (uid) => deleteDoc(doc(db, 'contas', uid)),
     // O próprio muda o PIN: no mesmo lote, o PIN (só o hash) e a ligação deste browser.
     async mudarPin(id, pin) {
+      if (L() && (await get('players', id).catch(() => null))?.pinEm) throw new Error('O PIN é o mesmo em todas as ligas: muda-o na tua primeira liga');
       const uid = await this.uid(), h = await sha256hex(pin + id), b = writeBatch(db);
-      b.set(D('pins', id), { h });
+      b.set(D('pins', id), L() ? { h, usado: true } : { h });
       b.set(D('ligacoes', uid), { player: id, h, ts: Date.now() });
       await b.commit();
     },
     // Admin: PINs (aleatórios guardam 'pin' para reenviar; os escolhidos pelo jogador só têm 'h').
-    listPins: () => list('pins'),
-    definirPin: async (id, pin) => setDoc(D('pins', id), { h: await sha256hex(pin + id), pin }),
+    // Numa liga, o admin só lê os PINs ainda por usar (o Rui lê todos).
+    listPins: async () => { try { return await list('pins'); } catch { if (!L()) throw new Error('Sem permissão');
+      return (await getDocs(fs.query(Cl('pins'), fs.where('usado', '==', false)))).docs.map((d) => ({ id: d.id, ...d.data() })); } },
+    async definirPin(id, pin) {
+      await setDoc(D('pins', id), L() ? { h: await sha256hex(pin + id), pin, usado: false } : { h: await sha256hex(pin + id), pin });
+      await setDoc(D('players', id), { temPin: true }, { merge: true }).catch(() => {});
+    },
+    // 👥 Contas: o jogador desta liga usa o PIN que a pessoa já tem noutra liga (lk = 'fs' ou o id da liga; oid = o jogador de lá).
+    async pinPessoa(id, lk, oid) {
+      await setDoc(D('pins', id), { liga: lk, id: oid, usado: true });
+      await setDoc(D('players', id), { pinEm: { liga: lk, id: oid }, temPin: true }, { merge: true });
+    },
+    listLigacoes: () => list('ligacoes'),
+    definirUsado: (id, usado) => setDoc(D('pins', id), { usado }, { merge: true }),
     // Carta de cada um (sem votos individuais) + histórico mensal: escreve o admin, lê só o próprio (PIN).
     // Tickets (problemas reportados): qualquer pessoa cria (com login anónimo); só o admin lê.
     async novoTicket(d) { await this.uid(); const id = novoToken(12); await setDoc(doc(db, 'tickets', id), d); return id; },

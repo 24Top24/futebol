@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB, novoPin } from './db.js?v=45';
+import { DB, novoPin } from './db.js?v=46';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -422,9 +422,20 @@ export async function campoSinc(el, p, esc) {
   };
 }
 // Depois de gravar o jogador: fica na lista 👥 Contas (a pessoa escolhida, ou uma pessoa nova se é um jogador novo).
+// Com uma pessoa que já existe, o jogador não ganha PIN novo: usa o que a pessoa já tinha (o admin desta liga não o vê).
 export async function registarPessoa(id, nome, pessoa, novo) {
-  if (pessoa) return DB.ligarPessoa(pessoa, id);
-  if (novo) return DB.novaPessoa(nome, id);
+  if (!pessoa) return novo ? DB.novaPessoa(nome, id) : null;
+  await DB.ligarPessoa(pessoa, id);
+  const x = (await DB.listPessoas().catch(() => [])).find((y) => y.id === pessoa);
+  const [al, aid] = ancora(x, ligaGuardada() || 'fs');
+  if (aid) await DB.pinPessoa(id, al, aid);
+}
+// Onde vive o PIN da pessoa: o da Futebolada semanal; senão o que o Rui fixou (pinEm); senão a 1.ª outra liga.
+function ancora(x, menos) {
+  const e = Object.entries(x?.ligas || {}).filter(([k]) => k !== menos);
+  if (x?.ligas?.fs && menos !== 'fs') return ['fs', x.ligas.fs];
+  if (x?.pinEm) { const [k, id] = x.pinEm.split('|'); if (k !== menos && x.ligas?.[k] === id) return [k, id]; }
+  return e[0] || [];
 }
 
 // ---------- 👥 Contas (só o Rui) ----------
@@ -469,27 +480,39 @@ async function juntarContas() {
     }
     for (const outro of ids.slice(1)) { await DB.apagarPessoa(outro).catch(() => {}); r.apagadas++; }
   }
+  r.pins = await acertarPins(ligas, nos);
   return r;
 }
 
-// PIN igual em todas as ligas da pessoa. pin = o novo PIN; sem pin, usa o que já tem (o da Futebolada semanal, ou o de outra liga).
-// Só se consegue copiar um PIN que foi dado pelo admin (o que o próprio mudou só se guarda cifrado) — aí tem de se dar um novo.
-async function acertarPin(x, pin, cachePins = {}) {
-  const pinsDe = async (lk) => (cachePins[lk] ||= Object.fromEntries((await DB.para(lk === 'fs' ? null : lk).listPins().catch(() => [])).map((q) => [q.id, q])));
-  const ent = Object.entries(x.ligas || {});
-  if (!pin) {
-    for (const [lk, id] of [...ent.filter(([k]) => k === 'fs'), ...ent.filter(([k]) => k !== 'fs')]) {
-      const q = (await pinsDe(lk))[id]; if (q?.pin) { pin = q.pin; break; } if (q?.h && lk === 'fs') return { feito: 0, falta: true };
+// PIN: cada pessoa tem um só, onde já o tinha (âncora); nas outras ligas o jogador aponta para ele (pins/{id} = { liga, id }).
+// E os PINs das ligas ficam marcados "usado" quando o jogador já entrou (o admin da liga deixa de os ver; só o Rui).
+async function acertarPins(ligas, nos) {
+  let apontados = 0;
+  const pins = {}, entrou = {};
+  for (const l of ligas) {
+    const lk = l.id || 'fs', db = DB.para(l.id || null);
+    pins[lk] = Object.fromEntries((await db.listPins().catch(() => [])).map((q) => [q.id, q]));
+    if (lk === 'fs') continue;
+    const [lig, mem] = await Promise.all([db.listLigacoes().catch(() => []), DB.listMembros(l.id).catch(() => [])]);
+    entrou[lk] = new Set([...lig.map((x) => x.player), ...mem.map((x) => x.player)]);
+    for (const [id, q] of Object.entries(pins[lk])) if (!('usado' in q)) await db.definirUsado?.(id, entrou[lk].has(id)).catch(() => {});
+  }
+  for (const x of await DB.listPessoas()) {
+    const ent = Object.entries(x.ligas || {}).filter(([lk, id]) => nos[lk + '|' + id] && !nos[lk + '|' + id].conv);
+    if (ent.length < 2) continue;
+    // âncora = onde a pessoa já tem PIN próprio (de preferência a Futebolada semanal)
+    const proprio = ([lk, id]) => pins[lk]?.[id] && !pins[lk][id].liga;
+    const [al, aid] = ent.find(([k]) => k === 'fs' && proprio(['fs', x.ligas.fs])) || ent.find((e) => x.pinEm === e.join('|') && proprio(e)) || ent.find(proprio) || [];
+    if (!aid) continue;
+    if (x.pinEm !== al + '|' + aid) { const { id: _, ...d } = x; await DB.savePessoa(x.id, { ...d, pinEm: al + '|' + aid, ts: Date.now() }).catch(() => {}); }
+    for (const [lk, id] of ent) {
+      if (lk === al || lk === 'fs') continue;
+      const q = pins[lk]?.[id];
+      if (q?.liga === al && q.id === aid) continue;
+      try { await DB.para(lk).pinPessoa(id, al, aid); apontados++; } catch (e) { console.error(e); }
     }
-    if (!pin) return { feito: 0, falta: ent.length > 1 };
   }
-  let feito = 0;
-  for (const [lk, id] of ent) {
-    const q = (await pinsDe(lk))[id];
-    if (q?.pin === pin) continue;
-    try { await DB.para(lk === 'fs' ? null : lk).definirPin(id, pin); feito++; } catch (e) { console.error(e); }
-  }
-  return { feito, pin };
+  return apontados;
 }
 
 export async function paginaContas(el, { esc, toast, titulo }) {
@@ -501,9 +524,6 @@ export async function paginaContas(el, { esc, toast, titulo }) {
   const nomeL = (k) => (k === 'fs' ? ligas.find((l) => l.id == null)?.nome || LIGA_PRINCIPAL.nome : ligas.find((l) => l.id === k)?.nome || '(liga apagada)');
   const nomes = {};
   await Promise.all(ligas.map(async (l) => { for (const x of await jogadoresDaLiga(l.id || null)) nomes[(l.id || 'fs') + '|' + x.id] = x.nome + (x.conv ? ' (convidado)' : ''); }));
-  // PIN igual em todas as ligas: copia o que já existe para as ligas onde falta ou é outro.
-  const cache = {}; let pinsCopiados = 0, semPin = 0;
-  for (const x of pessoas) if (Object.keys(x.ligas || {}).length > 1) { const a = await acertarPin(x, null, cache); pinsCopiados += a.feito; if (a.falta) semPin++; }
   pessoas.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'));
   const linha = (x) => `<div class="opcao" data-p="${esc(x.id)}"><div class="linha" style="justify-content:space-between;align-items:center;gap:6px">
       <div style="min-width:0"><b>${esc(x.nome || '?')}</b> ${x.uid ? '<small title="Tem conta Google: entra sozinho em todas as ligas">🔐 Google</small>' : ''}</div>
@@ -511,8 +531,8 @@ export async function paginaContas(el, { esc, toast, titulo }) {
       <div class="chips" style="margin-top:4px">${Object.entries(x.ligas || {}).map(([lk, id]) => `<span class="tag">🏆 ${esc(nomeL(lk))}: ${esc(nomes[lk + '|' + id] || '?')}</span>`).join('')}</div>
       <div data-caixa="${esc(x.id)}"></div></div>`;
   el.innerHTML = `<section class="cartao"><h3>👥 Contas — todas as pessoas de todas as ligas</h3>
-    <p class="mute">Cada pessoa aparece uma vez, com o jogador que tem em cada liga. Com a conta Google entra sozinha em todas (sem PIN); o PIN é o mesmo em todas as ligas. Ao criar um jogador numa liga, escolhe-se a pessoa desta lista.</p>
-    ${r ? `<p class="mute">Agora: ${r.novas} novas, ${r.mudadas} atualizadas, ${r.apagadas} juntadas${pinsCopiados ? `, ${pinsCopiados} PINs acertados` : ''}${semPin ? ` · ${semPin} com PIN diferente que o próprio mudou (dá-lhes um 🔑 PIN novo)` : ''}.</p>` : '<p class="mute">Não deu para juntar tudo agora (vê a consola).</p>'}
+    <p class="mute">Cada pessoa aparece uma vez, com o jogador que tem em cada liga. Com a conta Google entra sozinha em todas (sem PIN); o PIN é o mesmo em todas as ligas (o que já tinha). O admin de cada liga só vê um PIN até a pessoa entrar a 1.ª vez — depois só tu. Ao criar um jogador numa liga, escolhe-se a pessoa desta lista.</p>
+    ${r ? `<p class="mute">Agora: ${r.novas} novas, ${r.mudadas} atualizadas, ${r.apagadas} juntadas${r.pins ? `, ${r.pins} jogadores passaram a usar o PIN que já tinham` : ''}.</p>` : '<p class="mute">Não deu para juntar tudo agora (vê a consola).</p>'}
     ${r?.conflitos.length ? `<p class="mute">⚠️ ${esc(r.conflitos.join('; '))}</p>` : ''}
     <input id="ct-busca" placeholder="Procurar pessoa…" style="margin:6px 0">
     <div id="ct-lista">${pessoas.map(linha).join('')}</div></section>`;
@@ -522,8 +542,10 @@ export async function paginaContas(el, { esc, toast, titulo }) {
     const x = pessoas.find((y) => y.id === b.dataset.pin);
     const pin = prompt(`PIN novo para ${x.nome} (4 algarismos), igual em todas as ligas:`, novoPin());
     if (!pin) return; if (!/^\d{4}$/.test(pin)) return toast('O PIN tem 4 algarismos');
-    const a = await acertarPin(x, pin);
-    toast(`PIN ${pin} em ${Object.keys(x.ligas || {}).length} liga(s) ✔`); if (!a.feito) toast('Já era esse');
+    const [al, aid] = ancora(x, null);
+    if (!aid) return toast('Esta pessoa não tem jogador em nenhuma liga');
+    try { await DB.para(al === 'fs' ? null : al).definirPin(aid, pin); toast(`PIN ${pin} ✔ — vale em todas as ligas dela`); }
+    catch (e) { console.error(e); toast('Não deu para mudar o PIN'); }
   }));
   el.querySelectorAll('[data-juntar]').forEach((b) => (b.onclick = () => {
     const x = pessoas.find((y) => y.id === b.dataset.juntar);
