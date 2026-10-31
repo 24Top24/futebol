@@ -398,8 +398,11 @@ async function fireDb() {
     },
     // Admin: PINs (aleatórios guardam 'pin' para reenviar; os escolhidos pelo jogador só têm 'h').
     // Numa liga, o admin só lê os PINs ainda por usar (o Rui lê todos).
-    listPins: async () => { try { return await list('pins'); } catch { if (!L()) throw new Error('Sem permissão');
-      return (await getDocs(fs.query(Cl('pins'), fs.where('usado', '==', false)))).docs.map((d) => ({ id: d.id, ...d.data() })); } },
+    // (um PIN que aponta para outra liga tem { liga, id: jogador de lá }: esse id vem como 'ref', o 'id' é sempre o do documento)
+    listPins: async () => {
+      const ler = (q) => q.docs.map((d) => ({ ...d.data(), ...(d.data().liga ? { ref: d.data().id } : {}), id: d.id }));
+      try { return ler(await getDocs(Cl('pins'))); } catch { if (!L()) throw new Error('Sem permissão');
+        return ler(await getDocs(fs.query(Cl('pins'), fs.where('usado', '==', false)))); } },
     async definirPin(id, pin) {
       await setDoc(D('pins', id), L() ? { h: await sha256hex(pin + id), pin, usado: false } : { h: await sha256hex(pin + id), pin });
       await setDoc(D('players', id), { temPin: true }, { merge: true }).catch(() => {});

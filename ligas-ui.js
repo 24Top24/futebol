@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB, novoPin } from './db.js?v=47';
+import { DB, novoPin } from './db.js?v=48';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -589,7 +589,7 @@ async function acertarPins(ligas, nos) {
     for (const [lk, id] of ent) {
       if (lk === al || lk === 'fs') continue;
       const q = pins[lk]?.[id];
-      if (q?.liga === al && q.id === aid) continue;
+      if (q?.liga === al && q.ref === aid) continue;
       try { await DB.para(lk).pinPessoa(id, al, aid); apontados++; } catch (e) { console.error(e); }
     }
   }
