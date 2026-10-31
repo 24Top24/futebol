@@ -58,7 +58,7 @@ function demoDb() {
     usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async importarPessoa() {}, async pessoasComConta() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
-    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async tirarMembro() {}, async setLiga() {},
+    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async listPessoas() { return []; }, async minhaPessoa() { return null; }, async savePessoa() {}, async apagarPessoa() {}, async ligarPessoa() {}, async novaPessoa() {}, async tirarMembro() {}, async setLiga() {},
     async mudarPin(id, pin) {
       if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
       const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
@@ -211,9 +211,36 @@ async function fireDb() {
       const u = await atual();
       if (!u || u.isAnonymous) return null;
       // Numa liga extra, o jogador desta pessoa é o do seu documento de membro (ligas/{id}/membros/{uid}).
-      if (L()) { try { const m = await getRaiz('ligas', L(), 'membros', u.uid); return m ? { ...m, uid: u.uid, email: u.email } : null; } catch { return null; } }
-      try { const c = await getRaiz('contas', u.uid); return c ? { ...c, uid: u.uid, email: c.email || u.email } : null; } catch { return null; }
+      // Sem ligação nesta liga mas a pessoa (👥 Contas) tem cá jogador: entra sozinha, sem PIN.
+      if (L()) { try { const m = (await getRaiz('ligas', L(), 'membros', u.uid)) || (await this.entrarPorPessoa(u).catch(() => null)); return m ? { ...m, uid: u.uid, email: u.email } : null; } catch { return null; } }
+      try { const c = (await getRaiz('contas', u.uid)) || (await this.entrarPorPessoa(u).catch(() => null)); return c ? { ...c, uid: u.uid, email: c.email || u.email } : null; } catch { return null; }
     },
+    // 👥 Contas: o registo global de pessoas — pessoas/{id} = { nome, uid (Google) | null, ligas: { 'fs' | <liga>: jogador }, ultimaLiga, ts }.
+    async minhaPessoa() {
+      const u = await atual(); if (!u || u.isAnonymous) return null;
+      const q = await getDocs(fs.query(collection(db, 'pessoas'), fs.where('uid', '==', u.uid)));
+      return q.docs[0] ? { id: q.docs[0].id, ...q.docs[0].data() } : null;
+    },
+    async entrarPorPessoa(u) {
+      const p = await this.minhaPessoa(), lk = L() || 'fs', player = p?.ligas?.[lk];
+      if (!player) return null;
+      const b = writeBatch(db), agora = Date.now();
+      if (L()) {
+        b.set(doc(db, 'ligas', L(), 'membros', u.uid), { uid: u.uid, player, pessoa: p.id, ts: agora });
+        b.set(doc(db, 'filiacoes', `${L()}_${u.uid}`), { uid: u.uid, liga: L(), player, ts: agora });
+      } else {
+        b.set(doc(db, 'contas', u.uid), { player, pessoa: p.id, email: u.email || null, ts: agora });
+        b.set(doc(db, 'membros', u.uid), { uid: u.uid, player, ts: agora });
+      }
+      await b.commit();
+      return { uid: u.uid, player };
+    },
+    listPessoas: () => listRaiz('pessoas'),
+    savePessoa: (id, d) => setDoc(doc(db, 'pessoas', id), d),
+    apagarPessoa: (id) => deleteDoc(doc(db, 'pessoas', id)),
+    // Admin de uma liga: junta a sua liga a uma pessoa (só mexe na chave desta liga) ou cria a pessoa de um jogador novo.
+    ligarPessoa: (id, player) => setDoc(doc(db, 'pessoas', id), { ligas: { [L() || 'fs']: player }, ultimaLiga: L() || 'fs', ts: Date.now() }, { merge: true }),
+    async novaPessoa(nome, player) { const id = novoToken(12); await setDoc(doc(db, 'pessoas', id), { nome, uid: null, ligas: { [L() || 'fs']: player }, ultimaLiga: L() || 'fs', ts: Date.now() }); return id; },
     async ligarGoogle(id) {
       const u = await atual(), prov = new au.GoogleAuthProvider();
       const lig = u ? await get('ligacoes', u.uid).catch(() => null) : null;

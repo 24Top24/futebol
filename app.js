@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=44';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora } from './ligas-ui.js?v=20';
+import { DB, novoToken, novoPin } from './db.js?v=45';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas } from './ligas-ui.js?v=21';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=31';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -2282,11 +2282,13 @@ function fichaJogador(sec, edit, cartas) {
     if (edit) d.ativo = g('f-ativo').checked; else d.ativo = true;
     const sc = sincEscolhido();
     if (sc === null) delete d.sinc;
-    else if (sc) { const { foto, ...sinc } = sc; d.sinc = sinc; if (foto && !d.foto) d.foto = foto; }
+    else if (sc) { const { foto, pessoa: _p, ...sinc } = sc; if (sinc.id) d.sinc = sinc; if (foto && !d.foto) d.foto = foto; }
     try {
       const fl = g('f-foto').files[0];
       if (fl) d.foto = await fotoParaDataURL(fl);
-      await DB.savePlayer(d);
+      const novoId = await DB.savePlayer(d);
+      // 👥 Contas: a pessoa escolhida passa a ter este jogador nesta liga; um jogador novo sem pessoa fica como pessoa nova.
+      await registarPessoa(novoId, nome, sc?.pessoa, !edit && !sc?.id).catch((err) => console.error(err));
     } catch (err) { console.error(err); e.target.disabled = false; return toast('Não deu para gravar (sem permissão?)'); }
     fechar();
     await recarregar(); toast(edit ? 'Guardado' : `${nome} adicionado ✔`); secJogadores(sec);
@@ -3038,7 +3040,7 @@ async function paginaJogo(el) {
 const NAV = { '': 'inicio', '#': 'inicio', '#jogos': 'jogos', '#jogadores': 'jogadores', '#cartas': 'jogadores', '#tabela': 'tabela', '#eu': 'eu', '#admin': 'admin',
   '#votar': 'eu', '#jogo': 'mod' };
 const PRINCIPAIS = ['', '#', '#jogos', '#jogadores', '#cartas', '#tabela', '#eu', '#admin', '#jogo'];
-const PAI = { '#votar': '#eu', '#definicoes': '#eu', '#ligas': '#definicoes' };
+const PAI = { '#votar': '#eu', '#definicoes': '#eu', '#ligas': '#definicoes', '#contas': '#ligas' };
 const paiDe = (h) => PAI[h] || (h.startsWith('#jogador=') ? '#jogadores' : h.startsWith('#jogo=') ? '#jogos' : h.startsWith('#votar=') ? '#' : '#');
 // Profundidade dentro da app, guardada no histórico: o ← só volta atrás se viemos de uma página da app.
 // Veio de "Partilhar → Futebolada": tira o ?partilha=1 do endereço (o ficheiro espera na cache até o perfil o ler).
@@ -3105,6 +3107,7 @@ async function rota() {
     if (h === '#tabela') return await paginaTabela();
     if (h === '#definicoes') return await paginaDefinicoes();
     if (h === '#ligas') return await paginaLigas($app, { esc, toast, titulo, htmlCarta });
+    if (h === '#contas') return await paginaContas($app, { esc, toast, titulo });
     if (h.startsWith('#liga=') || h.startsWith('#entrar=')) { if (!(await abrirConvite(decodeURIComponent(h.split('=')[1])))) $app.innerHTML = vazio('🤷', 'Esta liga não existe (ou o link está errado).'); return; }
     // No modo "todas as ligas" só se vê: votar, o perfil e a administração são de uma liga.
     if (MODO_TODAS && (h === '#eu' || h === '#votar' || h.startsWith('#votar=') || h === '#admin' || h === '#jogo'))

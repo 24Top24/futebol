@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB } from './db.js?v=44';
+import { DB, novoPin } from './db.js?v=45';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -58,6 +58,12 @@ async function asMinhasLigas() {
     return [{ id: null, nome: nomeFS, publica: true }, ...pub.map((l) => ({ ...l, publica: true }))];
   }
   const ls = await naLiga(null, (db) => db.minhasLigas());
+  // + as ligas onde a pessoa (👥 Contas) tem jogador, mesmo que ainda não as tenha aberto
+  const pessoa = await DB.minhaPessoa().catch(() => null);
+  for (const [lk, player] of Object.entries(pessoa?.ligas || {})) {
+    if (lk === 'fs' || ls.some((l) => l.id === lk)) continue;
+    const d = await DB.getLiga(lk).catch(() => null); if (d) ls.push({ id: lk, ...d, player });
+  }
   // O Rui é admin global: vê todas as ligas (mesmo as que não são dele).
   if (await naLiga(null, async (db) => db.isAdmin(await DB.user())).catch(() => false))
     for (const l of await naLiga(null, (db) => db.todasLigas())) if (!ls.some((x) => x.id === l.id)) ls.push({ ...l, admin: true, global: true });
@@ -271,6 +277,7 @@ export async function paginaLigas($app, { esc, toast, titulo, htmlCarta }) {
         <button class="prim" id="lg-criar" style="margin-top:8px">Criar liga</button>`
         : `<p class="mute">Já criaste ${limite.criadas} liga(s), o máximo (${limite.max}). Se precisares de mais, pede ao Rui.</p>`}
     </section>
+    ${souRui ? '<section class="cartao"><h3>👥 Contas</h3><p class="mute">Todas as pessoas de todas as ligas: em que ligas está cada uma, a conta Google e o PIN igual em todas.</p><a class="btn prim" href="#contas">Abrir as contas</a></section>' : ''}
     ${souRui ? '<section class="cartao"><h3>⌚ O meu relógio</h3><div id="lg-rel"><p class="mute">A carregar…</p></div></section>' : ''}
     <div id="lg-rui"></div>`;
 
@@ -371,23 +378,31 @@ async function jogadoresDaLiga(lid) {
     .sort((a, c) => a.nome.localeCompare(c.nome, 'pt'));
 }
 
-// Campo "É o mesmo jogador noutra liga" (ficha do jogador, admin): escolhe a liga e o jogador de lá.
-// Devolve uma função que dá o `sinc` escolhido ({ liga, id, nome, foto }), null = nenhum, undefined = não mexer (ainda a carregar).
+// Campo "Quem é" (ficha do jogador, admin): a pessoa da lista 👥 Contas (o normal ao criar um jogador) ou, à mão, o mesmo
+// jogador noutra liga (p. ex. um convidado de lá). Devolve uma função que dá { liga, id, nome, foto, pessoa } (o sinc a gravar e a
+// pessoa), null = nenhum, undefined = não mexer (ainda a carregar).
 export async function campoSinc(el, p, esc) {
-  const liga = ligaGuardada();
+  const liga = ligaGuardada(), lk = liga || 'fs';
   if (liga === TODAS) return () => undefined;
-  const outras = (await asMinhasLigas().catch(() => [])).filter((l) => (l.id || null) !== (liga || null));
-  if (!outras.length) return () => undefined;
-  const atual = p.sinc ? (p.sinc.liga ?? '') : '-';
-  el.innerHTML = `<label>🔗 É o mesmo jogador noutra liga?</label>
-    <select class="s-liga"><option value="-">Não</option>${outras.map((l) => `<option value="${esc(l.id ?? '')}" ${atual === (l.id ?? '') ? 'selected' : ''}>${esc(l.nome || LIGA_PRINCIPAL.nome)}</option>`).join('')}</select>
+  const [ligas, pessoas] = await Promise.all([asMinhasLigas().catch(() => []), DB.listPessoas().catch(() => [])]);
+  const outras = ligas.filter((l) => (l.id || null) !== (liga || null));
+  const nomeL = (k) => (k === 'fs' ? ligas.find((l) => l.id == null)?.nome || LIGA_PRINCIPAL.nome : ligas.find((l) => l.id === k)?.nome || '?');
+  const minha = pessoas.find((x) => p.id && x.ligas?.[lk] === p.id);
+  const livres = pessoas.filter((x) => !x.ligas?.[lk] || x === minha).sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'));
+  if (!outras.length && !livres.length) return () => undefined;
+  const atual = minha ? 'p:' + minha.id : p.sinc ? 'l:' + (p.sinc.liga ?? '') : '-';
+  el.innerHTML = `<label>👥 Quem é? <span class="mute">(a mesma pessoa noutras ligas: entra sem PIN com o Google, o PIN é o mesmo)</span></label>
+    <select class="s-liga"><option value="-">${p.id ? 'Ninguém noutra liga' : 'Pessoa nova'}</option>
+      ${livres.length ? `<optgroup label="👥 Contas">${livres.map((x) => `<option value="p:${esc(x.id)}" ${atual === 'p:' + x.id ? 'selected' : ''}>${esc(x.nome || '?')} — ${esc(Object.keys(x.ligas || {}).filter((k) => k !== lk).map(nomeL).join(', '))}</option>`).join('')}</optgroup>` : ''}
+      ${outras.length ? `<optgroup label="Um jogador de outra liga (p. ex. convidado)">${outras.map((l) => `<option value="l:${esc(l.id ?? '')}" ${atual === 'l:' + (l.id ?? '') && !minha ? 'selected' : ''}>${esc(l.nome || LIGA_PRINCIPAL.nome)}</option>`).join('')}</optgroup>` : ''}
+    </select>
     <select class="s-jog" hidden style="margin-top:6px"></select>`;
   const sl = el.querySelector('.s-liga'), sj = el.querySelector('.s-jog');
   let lista = [], pronto = true;
   const carregar = async () => {
-    sj.hidden = sl.value === '-'; if (sj.hidden) return;
+    sj.hidden = !sl.value.startsWith('l:'); if (sj.hidden) return;
     pronto = false; sj.innerHTML = '<option>a carregar…</option>';
-    lista = await jogadoresDaLiga(sl.value || null);
+    lista = await jogadoresDaLiga(sl.value.slice(2) || null);
     const primeiro = (p.nome || '').toLowerCase().split(' ')[0];
     sj.innerHTML = '<option value="">— escolhe o jogador —</option>' + lista.map((x) => `<option value="${esc(x.id)}" ${p.sinc?.id === x.id || (!p.sinc && primeiro && x.nome.toLowerCase().startsWith(primeiro)) ? 'selected' : ''}>${esc(x.nome)}${x.conv ? ' (convidado)' : ''}</option>`).join('');
     pronto = true;
@@ -395,10 +410,145 @@ export async function campoSinc(el, p, esc) {
   sl.onchange = carregar; await carregar();
   return () => {
     if (sl.value === '-') return null;
+    if (sl.value.startsWith('p:')) {
+      const x = pessoas.find((y) => y.id === sl.value.slice(2)); if (!x) return undefined;
+      // o sinc aponta para o jogador dela na Futebolada semanal (ou na primeira liga onde está)
+      const [ol, oid] = Object.entries(x.ligas || {}).find(([k]) => k === 'fs') || Object.entries(x.ligas || {}).find(([k]) => k !== lk) || [];
+      return { pessoa: x.id, ...(oid ? { liga: ol === 'fs' ? null : ol, id: oid, nome: x.nome || '' } : {}) };
+    }
     if (!pronto) return undefined;
     const x = lista.find((y) => y.id === sj.value);
-    return x ? { liga: sl.value || null, id: x.id, nome: x.nome, foto: x.foto } : undefined;
+    return x ? { liga: sl.value.slice(2) || null, id: x.id, nome: x.nome, foto: x.foto } : undefined;
   };
+}
+// Depois de gravar o jogador: fica na lista 👥 Contas (a pessoa escolhida, ou uma pessoa nova se é um jogador novo).
+export async function registarPessoa(id, nome, pessoa, novo) {
+  if (pessoa) return DB.ligarPessoa(pessoa, id);
+  if (novo) return DB.novaPessoa(nome, id);
+}
+
+// ---------- 👥 Contas (só o Rui) ----------
+// Todas as pessoas de todas as ligas num só sítio: quem é quem (pela conta Google, pelo "sincronizar" ou juntadas à mão), em que
+// ligas está e com que jogador, e o PIN igual em todas. Abrir a página junta sozinha o que já se sabe.
+async function juntarContas() {
+  const ligas = await asMinhasLigas();
+  const nos = {}, pai = {}, uidDe = {}, pessoaDe = {}, porUid = {};
+  const add = (k) => { if (!(k in pai)) pai[k] = k; };
+  const raiz = (k) => { while (pai[k] !== k) k = pai[k] = pai[pai[k]]; return k; };
+  const unir = (a, b) => { add(a); add(b); pai[raiz(a)] = raiz(b); };
+  for (const l of ligas) {
+    const lid = l.id || null, lk = lid || 'fs', db = DB.para(lid);
+    const [todos, players, membros] = await Promise.all([jogadoresDaLiga(lid), db.listPlayers().catch(() => []), DB.listMembros(lid).catch(() => [])]);
+    for (const x of todos) { const k = lk + '|' + x.id; add(k); nos[k] = { lk, id: x.id, nome: x.nome, conv: !!x.conv }; }
+    for (const p of players) if (p.sinc?.id) unir(lk + '|' + p.id, (p.sinc.liga || 'fs') + '|' + p.sinc.id);
+    for (const m of membros) { const k = lk + '|' + m.player; add(k); uidDe[k] = m.uid; if (porUid[m.uid]) unir(k, porUid[m.uid]); else porUid[m.uid] = k; }
+  }
+  const pessoas = await DB.listPessoas();
+  for (const x of pessoas) {
+    const ks = Object.entries(x.ligas || {}).map(([lk, id]) => lk + '|' + id).filter((k) => nos[k]);
+    ks.forEach((k, i) => { pessoaDe[k] ??= x.id; if (i) unir(ks[0], k); if (x.uid) uidDe[k] ??= x.uid; });
+  }
+  const grupos = {};
+  for (const k of Object.keys(pai)) if (nos[k]) (grupos[raiz(k)] ||= []).push(k);
+  const r = { novas: 0, mudadas: 0, apagadas: 0, conflitos: [] };
+  const porId = Object.fromEntries(pessoas.map((x) => [x.id, x]));
+  const usadas = new Set();
+  for (const ks of Object.values(grupos)) {
+    if (!ks.some((k) => !nos[k].conv)) continue;   // convidados soltos (amigos de alguém) não são contas
+    ks.sort((a, b) => (nos[a].conv - nos[b].conv) || (a.startsWith('fs|') ? -1 : b.startsWith('fs|') ? 1 : 0));
+    const ligasP = {};
+    for (const k of ks) { const { lk, id } = nos[k]; if (ligasP[lk] && ligasP[lk] !== id) r.conflitos.push(`${nos[k].nome} (2 jogadores na mesma liga)`); else ligasP[lk] = id; }
+    const ids = [...new Set(ks.map((k) => pessoaDe[k]).filter((x) => x && !usadas.has(x)))];
+    const id = ids[0] || ('p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+    usadas.add(id);
+    const uid = ks.map((k) => uidDe[k]).find(Boolean) || null;
+    const novo = { nome: nos[ks.find((k) => k.startsWith('fs|')) || ks[0]].nome, uid, ligas: ligasP, ultimaLiga: 'fs' };
+    const velho = porId[id];
+    if (!velho || JSON.stringify([velho.nome, velho.uid || null, velho.ligas]) !== JSON.stringify([novo.nome, novo.uid, novo.ligas])) {
+      await DB.savePessoa(id, { ...novo, nome: velho?.nome || novo.nome, ts: Date.now() }); velho ? r.mudadas++ : r.novas++;
+    }
+    for (const outro of ids.slice(1)) { await DB.apagarPessoa(outro).catch(() => {}); r.apagadas++; }
+  }
+  return r;
+}
+
+// PIN igual em todas as ligas da pessoa. pin = o novo PIN; sem pin, usa o que já tem (o da Futebolada semanal, ou o de outra liga).
+// Só se consegue copiar um PIN que foi dado pelo admin (o que o próprio mudou só se guarda cifrado) — aí tem de se dar um novo.
+async function acertarPin(x, pin, cachePins = {}) {
+  const pinsDe = async (lk) => (cachePins[lk] ||= Object.fromEntries((await DB.para(lk === 'fs' ? null : lk).listPins().catch(() => [])).map((q) => [q.id, q])));
+  const ent = Object.entries(x.ligas || {});
+  if (!pin) {
+    for (const [lk, id] of [...ent.filter(([k]) => k === 'fs'), ...ent.filter(([k]) => k !== 'fs')]) {
+      const q = (await pinsDe(lk))[id]; if (q?.pin) { pin = q.pin; break; } if (q?.h && lk === 'fs') return { feito: 0, falta: true };
+    }
+    if (!pin) return { feito: 0, falta: ent.length > 1 };
+  }
+  let feito = 0;
+  for (const [lk, id] of ent) {
+    const q = (await pinsDe(lk))[id];
+    if (q?.pin === pin) continue;
+    try { await DB.para(lk === 'fs' ? null : lk).definirPin(id, pin); feito++; } catch (e) { console.error(e); }
+  }
+  return { feito, pin };
+}
+
+export async function paginaContas(el, { esc, toast, titulo }) {
+  titulo('👥 Contas');
+  if (!(await DB.para(null).isAdmin(await DB.user()).catch(() => false))) { el.innerHTML = '<p class="centro">Só o administrador geral vê as contas.</p>'; return; }
+  el.innerHTML = '<p class="mute centro">A juntar as pessoas de todas as ligas…</p>';
+  const r = await juntarContas().catch((e) => { console.error(e); return null; });
+  const [pessoas, ligas] = await Promise.all([DB.listPessoas(), asMinhasLigas()]);
+  const nomeL = (k) => (k === 'fs' ? ligas.find((l) => l.id == null)?.nome || LIGA_PRINCIPAL.nome : ligas.find((l) => l.id === k)?.nome || '(liga apagada)');
+  const nomes = {};
+  await Promise.all(ligas.map(async (l) => { for (const x of await jogadoresDaLiga(l.id || null)) nomes[(l.id || 'fs') + '|' + x.id] = x.nome + (x.conv ? ' (convidado)' : ''); }));
+  // PIN igual em todas as ligas: copia o que já existe para as ligas onde falta ou é outro.
+  const cache = {}; let pinsCopiados = 0, semPin = 0;
+  for (const x of pessoas) if (Object.keys(x.ligas || {}).length > 1) { const a = await acertarPin(x, null, cache); pinsCopiados += a.feito; if (a.falta) semPin++; }
+  pessoas.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'));
+  const linha = (x) => `<div class="opcao" data-p="${esc(x.id)}"><div class="linha" style="justify-content:space-between;align-items:center;gap:6px">
+      <div style="min-width:0"><b>${esc(x.nome || '?')}</b> ${x.uid ? '<small title="Tem conta Google: entra sozinho em todas as ligas">🔐 Google</small>' : ''}</div>
+      <div class="linha" style="gap:4px;flex:none"><button class="peq" data-pin="${esc(x.id)}" title="Dar um PIN novo, igual em todas as ligas">🔑 PIN</button><button class="peq" data-juntar="${esc(x.id)}" title="É a mesma pessoa que outra da lista">🔗 Juntar</button></div></div>
+      <div class="chips" style="margin-top:4px">${Object.entries(x.ligas || {}).map(([lk, id]) => `<span class="tag">🏆 ${esc(nomeL(lk))}: ${esc(nomes[lk + '|' + id] || '?')}</span>`).join('')}</div>
+      <div data-caixa="${esc(x.id)}"></div></div>`;
+  el.innerHTML = `<section class="cartao"><h3>👥 Contas — todas as pessoas de todas as ligas</h3>
+    <p class="mute">Cada pessoa aparece uma vez, com o jogador que tem em cada liga. Com a conta Google entra sozinha em todas (sem PIN); o PIN é o mesmo em todas as ligas. Ao criar um jogador numa liga, escolhe-se a pessoa desta lista.</p>
+    ${r ? `<p class="mute">Agora: ${r.novas} novas, ${r.mudadas} atualizadas, ${r.apagadas} juntadas${pinsCopiados ? `, ${pinsCopiados} PINs acertados` : ''}${semPin ? ` · ${semPin} com PIN diferente que o próprio mudou (dá-lhes um 🔑 PIN novo)` : ''}.</p>` : '<p class="mute">Não deu para juntar tudo agora (vê a consola).</p>'}
+    ${r?.conflitos.length ? `<p class="mute">⚠️ ${esc(r.conflitos.join('; '))}</p>` : ''}
+    <input id="ct-busca" placeholder="Procurar pessoa…" style="margin:6px 0">
+    <div id="ct-lista">${pessoas.map(linha).join('')}</div></section>`;
+  el.querySelector('#ct-busca').oninput = (e) => { const q = e.target.value.toLowerCase(); el.querySelectorAll('#ct-lista > [data-p]').forEach((d) => (d.hidden = q && !d.textContent.toLowerCase().includes(q))); };
+  const refazer = () => paginaContas(el, { esc, toast, titulo });
+  el.querySelectorAll('[data-pin]').forEach((b) => (b.onclick = async () => {
+    const x = pessoas.find((y) => y.id === b.dataset.pin);
+    const pin = prompt(`PIN novo para ${x.nome} (4 algarismos), igual em todas as ligas:`, novoPin());
+    if (!pin) return; if (!/^\d{4}$/.test(pin)) return toast('O PIN tem 4 algarismos');
+    const a = await acertarPin(x, pin);
+    toast(`PIN ${pin} em ${Object.keys(x.ligas || {}).length} liga(s) ✔`); if (!a.feito) toast('Já era esse');
+  }));
+  el.querySelectorAll('[data-juntar]').forEach((b) => (b.onclick = () => {
+    const x = pessoas.find((y) => y.id === b.dataset.juntar);
+    const caixa = [...el.querySelectorAll('[data-caixa]')].find((c) => c.dataset.caixa === x.id);
+    const outras = pessoas.filter((y) => y.id !== x.id && !Object.keys(y.ligas || {}).some((k) => x.ligas?.[k]));
+    caixa.innerHTML = `<label>É a mesma pessoa que…</label><select class="j-sel">${outras.map((y) => `<option value="${esc(y.id)}">${esc(y.nome)} — ${esc(Object.keys(y.ligas || {}).map(nomeL).join(', '))}</option>`).join('')}</select>
+      <button class="peq prim j-ok" style="margin-top:6px">Juntar</button>`;
+    if (!outras.length) { caixa.innerHTML = '<p class="mute">Não há ninguém para juntar (as outras pessoas já estão nas mesmas ligas).</p>'; return; }
+    caixa.querySelector('.j-ok').onclick = async () => {
+      const y = pessoas.find((z) => z.id === caixa.querySelector('.j-sel').value);
+      if (!y) return;
+      try {
+        await DB.savePessoa(x.id, { nome: x.nome, uid: x.uid || y.uid || null, ligas: { ...y.ligas, ...x.ligas }, ultimaLiga: 'fs', ts: Date.now() });
+        await DB.apagarPessoa(y.id);
+        // o "Todas as ligas" e a nota de fora juntam pelo sinc: o jogador de cada liga aponta para o da Futebolada semanal (ou o 1.º)
+        const ent = Object.entries({ ...y.ligas, ...x.ligas }), [al, aid] = ent.find(([k]) => k === 'fs') || ent[0];
+        for (const [lk, id] of ent) {
+          if (lk === al) continue;
+          const db = DB.para(lk === 'fs' ? null : lk), q = (await db.listPlayers().catch(() => [])).find((z) => z.id === id);
+          if (q && !q.sinc) { const { id: _, alias: _a, fotoPropria: _f, ...d } = q; await db.savePlayer({ ...d, id, sinc: { liga: al === 'fs' ? null : al, id: aid, nome: x.nome } }); }
+        }
+        toast('Juntadas ✔'); refazer();
+      } catch (e) { console.error(e); toast('Não deu para juntar'); }
+    };
+  }));
 }
 
 // 🧑‍🤝‍🧑 Jogadores desta liga (admin): apagar (por engano) e sincronizar com o mesmo jogador noutra liga — p. ex. o Alex é fixo aqui e
