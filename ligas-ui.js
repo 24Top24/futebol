@@ -4,7 +4,7 @@
 //                  as minhas cartas (por liga + geral), estatísticas por liga e época, criar liga e (Rui) quem pode criar.
 //  #liga=<id>    — link de convite: abre a liga; o jogador escolhe o seu nome e entra com o PIN (como sempre).
 // A liga ativa guarda-se no telemóvel (localStorage 'liga'): vazio = Futebolada semanal, '*' = todas juntas.
-import { DB, novoPin } from './db.js?v=46';
+import { DB, novoPin } from './db.js?v=47';
 import { historico } from './conquistas.js?v=3';
 import { LIGA_PRINCIPAL, TEMAS, aplicarTema, temaEscolhido, escolherTema, epocaAtual, epocaDoJogo, nomeEpoca, idLiga, MAX_LIGAS_EXTRA } from './ligas.js?v=2';
 
@@ -350,6 +350,10 @@ export async function publicarNotasFora(cartas, players) {
     for (const q of await DB.para(lid).listPlayers().catch(() => [])) if (q.sinc?.id && (q.sinc.liga || null) === origem) por(lid, q.id, ov(q.sinc.id));
     for (const m of await DB.listMembros(lid).catch(() => [])) if (aqui[m.uid]) por(lid, m.player, ov(aqui[m.uid]));
   }
+  // + a nota de cada pessoa nesta liga, no registo 👥 Contas (para outra liga a poder pedir emprestada só com a nota)
+  for (const x of await DB.listPessoas().catch(() => [])) {
+    const v = ov(x.ligas?.[o]); if (v != null && x.notas?.[o] !== v) await DB.notaPessoa(x.id, v).catch((e) => console.error(e));
+  }
   // Só escreve o que mudou desde a última vez (neste aparelho).
   let feito = {}; try { feito = JSON.parse(lsGet('fora-pub') || '{}'); } catch {}
   for (const [k, v] of alvos) {
@@ -386,6 +390,47 @@ export async function jogosDeFora(p) {
     for (const j of js) { try { out.push({ ...j, id: lk + '~' + j.id, json: JSON.stringify(trocarIds(JSON.parse(j.json || '{}'), { [id]: p.id })) }); } catch {} }
   }
   return out;
+}
+
+// ---------- 🔁 Emprestado (Rui, 31/10) ----------
+// Num jogo, um convidado pode ser alguém de outra liga: entra como convidado "emprestado", só com a nota geral que tem lá (a média,
+// se tiver várias), e ao fim de 3 jogos nesta liga passa a jogador com perfil próprio (promoverEmprestados).
+export const JOGOS_EMPRESTADO = 3;
+// Pessoas que se podem pedir emprestadas (não estão nesta liga): { pessoa, nome, ov, sinc }. Vazio se não se pode ler a lista.
+export async function paraEmprestar() {
+  const aqui = ligaGuardada() || 'fs'; if (aqui === TODAS) return [];
+  const ligas = await asMinhasLigas().catch(() => []);
+  const nomeL = (k) => (k === 'fs' ? ligas.find((l) => l.id == null)?.nome || LIGA_PRINCIPAL.nome : ligas.find((l) => l.id === k)?.nome || '');
+  return (await DB.listPessoas().catch(() => [])).filter((x) => !x.ligas?.[aqui]).map((x) => {
+    const notas = Object.entries(x.notas || {}).filter(([k]) => k !== aqui).map(([, v]) => v);
+    const [al, aid] = ancora(x, aqui);
+    return { pessoa: x.id, nome: x.nome || '?', ov: notas.length ? Math.round(notas.reduce((a, b) => a + b, 0) / notas.length) : null,
+      ligas: Object.keys(x.ligas || {}).map(nomeL).filter(Boolean).join(', '), conv: !!x.conv,
+      sinc: aid ? { liga: al === 'fs' ? null : al, id: aid, nome: x.nome || '' } : null };
+  }).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+}
+// Ao 3.º jogo nesta liga o emprestado passa a jogador com perfil próprio (o mesmo id: os jogos ficam dele). Corre quando o admin
+// abre a app. Os do link do moderador (partilha/convidados) passam para o plantel e saem da lista de convidados.
+export async function promoverEmprestados() {
+  const jogos = (await DB.listJogosPub().catch(() => [])).map((r) => { try { return JSON.parse(r.json || '{}'); } catch { return {}; } }).filter((j) => j.fase === 'fim');
+  const nJogos = (id) => jogos.filter((j) => [...(j.brancos || []), ...(j.pretos || [])].some((x) => x.id === id)).length;
+  const K = (await DB.getSegredo('partilha').catch(() => null))?.chave;
+  const conv = K ? await DB.listPart(K, 'convidados').catch(() => []) : [];
+  const players = await DB.listPlayers().catch(() => []);
+  const lista = [...players.filter((p) => p.emprestado && p.convidado), ...conv.filter((c) => c.emprestado && c.ativo !== false && !players.some((p) => p.id === c.id))];
+  let feitos = 0;
+  for (const p of lista) {
+    if (nJogos(p.id) < JOGOS_EMPRESTADO) continue;
+    const { id, emprestado, convidado: _c, alias: _a, fotoPropria: _f, ...d } = p;
+    try {
+      await DB.savePlayer({ ...d, id, convidado: false, ativo: true, desde: { emprestado: emprestado.pessoa, ts: Date.now() } });
+      const c = conv.find((y) => y.id === id); if (c) { const { id: _i, ...cd } = c; await DB.setPart(K, 'convidados', id, { ...cd, ativo: false, promovido: true }).catch(() => {}); }
+      const x = (await DB.listPessoas().catch(() => [])).find((y) => y.id === emprestado.pessoa);
+      if (x) { await DB.ligarPessoa(x.id, id).catch(() => {}); const [al, aid] = ancora(x, ligaGuardada() || 'fs'); if (aid) await DB.pinPessoa(id, al, aid).catch(() => {}); }
+      feitos++;
+    } catch (e) { console.error(e); }
+  }
+  return feitos;
 }
 
 // Jogadores de uma liga, incluindo os convidados (para sincronizar com eles).

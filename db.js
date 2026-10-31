@@ -58,7 +58,7 @@ function demoDb() {
     usarLiga() {}, para() { return this; }, ligaAtual: () => null, async getLiga() { return null; }, async minhasLigas() { return []; }, async todasLigas() { return []; }, async importarPessoa() {}, async pessoasComConta() { return []; }, async ligasPublicas() { return []; }, async getConfigLiga() { return { nome: 'Futebolada semanal', cor: 'vermelho', publico: true, raiz: true }; }, async setConfigLiga() {}, async ligarRelogio() { throw new Error('No modo de demonstração não há relógios'); }, async listRelogios() { return []; }, async desligarRelogio() {},
     async listAutorizados() { return []; }, async autorizar() {}, async desautorizar() {}, async meuLimite() { return null; },
     async criarLiga() { throw new Error('No modo de demonstração não há ligas'); }, async pedirEntrada() { throw new Error('No modo de demonstração não há ligas'); },
-    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async listPessoas() { return []; }, async minhaPessoa() { return null; }, async savePessoa() {}, async apagarPessoa() {}, async ligarPessoa() {}, async novaPessoa() {}, async pinPessoa() {}, async listLigacoes() { return []; }, async definirUsado() {}, async tirarMembro() {}, async setLiga() {},
+    async listPedidos() { return []; }, async aprovarPedido() {}, async recusarPedido() {}, async listMembros() { return []; }, async listFora() { return []; }, async setFora() {}, async listPessoas() { return []; }, async minhaPessoa() { return null; }, async savePessoa() {}, async apagarPessoa() {}, async ligarPessoa() {}, async novaPessoa() {}, async pinPessoa() {}, async notaPessoa() {}, async listLigacoes() { return []; }, async definirUsado() {}, async tirarMembro() {}, async setLiga() {},
     async mudarPin(id, pin) {
       if (!(await this.ligacaoOk(id))) throw new Error('Sem PIN');
       const h = await sha256hex(pin + id); (s.pins ||= {})[id] = { h }; s.ligacao = { player: id, h }; save();
@@ -244,6 +244,7 @@ async function fireDb() {
     apagarPessoa: (id) => deleteDoc(doc(db, 'pessoas', id)),
     // Admin de uma liga: junta a sua liga a uma pessoa (só mexe na chave desta liga) ou cria a pessoa de um jogador novo.
     ligarPessoa: (id, player) => setDoc(doc(db, 'pessoas', id), { ligas: { [L() || 'fs']: player }, ultimaLiga: L() || 'fs', ts: Date.now() }, { merge: true }),
+    notaPessoa: (id, ov) => setDoc(doc(db, 'pessoas', id), { notas: { [L() || 'fs']: ov }, ultimaLiga: L() || 'fs', ts: Date.now() }, { merge: true }),
     async novaPessoa(nome, player) { const id = novoToken(12); await setDoc(doc(db, 'pessoas', id), { nome, uid: null, ligas: { [L() || 'fs']: player }, ultimaLiga: L() || 'fs', ts: Date.now() }); return id; },
     async ligarGoogle(id) {
       const u = await atual(), prov = new au.GoogleAuthProvider();

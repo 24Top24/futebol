@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=46';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora } from './ligas-ui.js?v=23';
+import { DB, novoToken, novoPin } from './db.js?v=47';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=24';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=33';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
@@ -1571,7 +1571,7 @@ async function recarregar() {
 }
 async function ctxAdmin() {
   const K = (await DB.getSegredo('partilha'))?.chave;
-  const conv = K ? (await DB.listPart(K, 'convidados')).map((c) => ({ ...c, convidado: true, ativo: c.ativo !== false })) : [];
+  const conv = K ? (await DB.listPart(K, 'convidados')).filter((c) => !A.players.some((p) => p.id === c.id)).map((c) => ({ ...c, convidado: true, ativo: c.ativo !== false })) : [];
   const ps0 = [...A.players, ...conv];
   // Quem ainda não tem carta cá (convidado, carta provisória) joga com a nota que tem nas outras ligas.
   const players = comNotaFora(ps0, calcularCartas(ps0.filter((p) => p.ativo !== false), A.votes, A.conv), await notasFora());
@@ -1598,6 +1598,7 @@ async function ctxAdmin() {
 // Carta de cada jogador para o seu perfil (sem votos individuais) + histórico mensal para as setas e o gráfico.
 // Corre sempre que o admin abre a app: o mês atual é atualizado, os anteriores ficam como estavam.
 async function publicarCartasPessoais() {
+  promoverEmprestados().then((n) => n && toast(`${n} emprestado(s) passaram a jogador da liga ✔`)).catch((e) => console.error(e));
   const ativos = A.players.filter((p) => p.ativo !== false && !p.convidado);
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   publicarNotasFora(cartas, A.players).catch((e) => console.error(e));   // a nota geral de cada um para as outras ligas onde joga
@@ -2525,7 +2526,7 @@ function secEquipas(el, X = A.ctxEq) {
   const pid = (id) => X.players.find((p) => p.id === id);
   const nm = (id) => esc(nomeDe(pid(id) || { nome: '?' }));
   const sel = [...A.sel].filter(pid);
-  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))}${p.soGR ? ' <span title="Só joga à baliza">🧤</span>' : ''} <small class="mute">${ovElo(p.id)}</small></button>`;
+  const chip = (p) => `<button class="chip ${A.sel.has(p.id) ? 'on' : ''}" data-id="${p.id}">${foto(p)}${esc(nomeDe(p))}${p.soGR ? ' <span title="Só joga à baliza">🧤</span>' : ''}${p.emprestado ? ` <span title="Emprestado de outra liga: perfil próprio ao ${JOGOS_EMPRESTADO}.º jogo">🔁</span>` : ''} <small class="mute">${ovElo(p.id)}</small></button>`;
   const opts = (vazio) => `<option value="">${vazio}</option>` + sel.map((id) => `<option value="${id}">${nm(id)}</option>`).join('');
   // 🧤 Só joga à baliza NESTE jogo: por defeito o que está no plantel (players.soGR); aqui troca-se só para este jogo (R.gr).
   R.gr ||= {};
@@ -2544,6 +2545,9 @@ function secEquipas(el, X = A.ctxEq) {
       <label style="margin-top:6px"><input type="checkbox" id="c-sogr" style="width:auto"> 🧤 Só joga à baliza</label>
       <button class="prim" id="c-add" style="margin-top:8px">Adicionar e selecionar</button>
       <p class="mute">Fica guardado para reaproveitar noutros jogos.</p></details>
+    <details class="opcao" id="d-emp"><summary><b>🔁 Jogador de outra liga</b> <span class="mute">(emprestado)</span></summary>
+      <p class="mute">Entra só com a nota geral que tem nas outras ligas. Ao ${JOGOS_EMPRESTADO}.º jogo aqui passa a ter perfil próprio nesta liga.</p>
+      <div id="emp-cx"><p class="mute">A carregar…</p></div></details>
     <details class="opcao" ${nOpc ? 'open' : ''}><summary><b>Opções (opcional)</b> ${nOpc ? `<span class="tag">${nOpc} ativas</span>` : '<span class="mute">por defeito nada</span>'}</summary>
       ${sel.length < 2 ? '<p class="mute">Seleciona primeiro os jogadores.</p>' : `
       <label>Não juntar na mesma equipa</label>
@@ -2572,6 +2576,21 @@ function secEquipas(el, X = A.ctxEq) {
   document.getElementById('limpar').onclick = () => { A.sel.clear(); A.restr = null; pub(); secEquipas(el, X); };
   const g = (id) => document.getElementById(id);
   g('c-nota').oninput = (e) => (g('c-nv').textContent = e.target.value);
+  // 🔁 Emprestado: alguém de outra liga (👥 Contas), só com a nota geral de lá.
+  g('d-emp').ontoggle = async () => {
+    if (!g('d-emp').open || g('emp-sel')) return;
+    const L = (await paraEmprestar().catch(() => [])).filter((x) => !X.players.some((p) => p.emprestado?.pessoa === x.pessoa));
+    g('emp-cx').innerHTML = L.length ? `<select id="emp-sel">${L.map((x, i) => `<option value="${i}">${esc(x.nome)}${x.conv ? ' (convidado)' : ''} — ${esc(x.ligas)}${x.ov != null ? ` · ${x.ov}` : ''}</option>`).join('')}</select>
+      <button class="prim" id="emp-add" style="margin-top:8px">Emprestar e selecionar</button>`
+      : '<p class="mute">Não há ninguém de outras ligas para emprestar (ou só o admin pode ver a lista).</p>';
+    g('emp-add')?.addEventListener('click', async () => {
+      const x = L[Number(g('emp-sel').value)]; if (!x) return;
+      const id = await X.addConvidado({ nome: x.nome, alcunha: '', foto: '', ativo: true, convidado: true, nota100: x.ov ?? 60, nivel: null,
+        emprestado: { pessoa: x.pessoa, ts: Date.now() }, ...(x.sinc ? { sinc: x.sinc } : {}) });
+      await DB.ligarPessoa(x.pessoa, id).catch(() => {});   // fica na pessoa (👥 Contas): o histórico junta-se
+      A.sel.add(id); toast(`${x.nome} emprestado ✔`); pub(); secEquipas(el, X);
+    });
+  };
   g('c-add').onclick = async () => {
     const nome = g('c-nome').value.trim();
     if (!nome) return toast('Falta o nome');
