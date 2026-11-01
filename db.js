@@ -141,13 +141,37 @@ async function fireDb() {
   // porque cada página voltava a ler jogadores, perfis, jogos e equipas inteiros. Qualquer gravação feita aqui (ou mudar de
   // sessão) apaga a memória toda — o que se grava vê-se logo; o que outros gravam aparece no máximo 2 min depois.
   const MEM = new Map(), MEM_MS = 120000;
-  const esquecer = () => MEM.clear();
+  // + guardadas no telemóvel entre aberturas da app (01/11, a quota voltou a esgotar só com uso normal: cada abertura lia
+  // tudo outra vez, e nas ligas novas também os jogadores/perfis/membros da raiz). Só as listas que mudam pouco; jogos e
+  // equipas só valem enquanto o jogo ao vivo dessa liga (aovivo/jogo) não mudar. Por conta (uid), porque as permissões mudam.
+  const LS_MS = { players: 15 * 60e3, perfis: 15 * 60e3, membros: 15 * 60e3, jogos: 10 * 60e3, games: 10 * 60e3 };
+  const LS_PRE = 'fsc:';
+  const lsC = { get: (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    limpar: () => { try { Object.keys(localStorage).filter((k) => k.startsWith(LS_PRE)).forEach((k) => localStorage.removeItem(k)); } catch {} } };
+  const esquecer = () => { MEM.clear(); lsC.limpar(); };
+  // Carimbo do jogo ao vivo da liga do caminho (ligas/<id>/jogos → ligas/<id>/aovivo/jogo): lido no máximo 1 vez por minuto.
+  const carimbo = async (path) => {
+    const pai = path.split('/').slice(0, -1).join('/'), k = 'carimbo:' + pai, m = MEM.get(k);
+    if (m && Date.now() - m.ts < 60000) return m.v;
+    const d = await getDoc(doc(db, ...(pai ? pai.split('/') : []), 'aovivo', 'jogo')).catch(() => null);
+    const x = d?.exists() ? d.data() : {}, v = `${x.fase || ''}|${x.ts || ''}|${x.gameId || ''}`;
+    MEM.set(k, { ts: Date.now(), v });
+    return v;
+  };
+  // Snapshot "de papel" com o que a app usa (docs, id, data(), ref).
+  const deLS = (path, L) => { const docs = L.map(([id, x]) => ({ id, data: () => structuredClone(x), exists: () => true, ref: doc(db, ...path.split('/'), id) })); return { docs, size: docs.length, empty: !docs.length }; };
   const getDocs = async (q) => {
     const k = q.type === 'collection' ? q.path : null;   // só coleções inteiras (as consultas com filtros vão sempre à rede)
     const m = k && MEM.get(k);
     if (m && Date.now() - m.ts < MEM_MS) return m.v;
+    const ttl = k && LS_MS[k.split('/').at(-1)];
+    const kl = ttl && LS_PRE + (auth.currentUser?.uid || '-') + ':' + k;
+    const sel = ttl && ['jogos', 'games'].includes(k.split('/').at(-1)) ? await carimbo(k) : '';
+    if (kl) { const x = lsC.get(kl); if (x && Date.now() - x.ts < ttl && x.sel === sel) { const v = deLS(k, x.L); MEM.set(k, { ts: Date.now(), v }); return v; } }
     const v = await fs.getDocs(q);
     if (k) MEM.set(k, { ts: Date.now(), v });
+    if (kl) lsC.set(kl, { ts: Date.now(), sel, L: v.docs.map((d) => [d.id, d.data()]) });
     return v;
   };
   const setDoc = (...a) => { esquecer(); return fs.setDoc(...a); };
@@ -160,7 +184,7 @@ async function fireDb() {
   let LIGA_APP = null;
   const listRaiz = async (...c) => (await getDocs(collection(db, ...c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const getRaiz = async (...c) => { const d = await getDoc(doc(db, ...c)); return d.exists() ? d.data() : null; };
-  au.onAuthStateChanged(auth, esquecer);   // outra sessão = outras permissões
+  au.onAuthStateChanged(auth, () => MEM.clear());   // outra sessão = outras permissões (a do telemóvel já é por conta: uid na chave)
   const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
   // Jogador de uma liga → jogador da Futebolada semanal da mesma pessoa (pelas contas Google), com os perfis da raiz. Guardado 5 min.
   const cacheMapa = {};

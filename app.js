@@ -1,12 +1,12 @@
-import { DB, novoToken, novoPin } from './db.js?v=52';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=34';
-import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=3';
+import { DB, novoToken, novoPin } from './db.js?v=53';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=35';
+import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=6';
-import { dnaJogo } from './conquistas.js?v=5';
-import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=4';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=7';
+import { dnaJogo } from './conquistas.js?v=6';
+import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
 
 const $app = document.getElementById('app');
@@ -230,7 +230,7 @@ async function paginaInicio() {
   // Votação (sempre aberta): nos colegas todos e, a quem jogou, ajustar as notas dos colegas do último jogo e avaliar esse jogo.
   const euId = lsGet('meu-perfil');
   const ultMeu = euId ? res.find((r) => [...(r.jogo.brancos || []), ...(r.jogo.pretos || [])].some((x) => x.id === euId)) : null;
-  const votar = `<section class="cartao votacao"><div class="v-cab"><span class="ic">🗳</span><div><b>Votação dos colegas</b><p>Sempre aberta. As notas fazem as equipas saírem equilibradas — só o Rui as vê.</p></div></div>
+  const votar = `<section class="cartao votacao"><div class="v-cab"><span class="ic">🗳</span><div><b>Votação dos colegas</b><p>Sempre aberta. As notas são secretas e servem para as equipas saírem equilibradas.</p></div></div>
     <div class="v-botoes"><a class="btn prim" href="#votar">Votar nos colegas</a>
       ${ultMeu ? `<a class="btn" href="#votar=${esc(ultMeu.id)}">Ajustar os do último jogo <small>${esc(dataDe(ultMeu.jogo).slice(0, 5))}</small></a>
         <a class="btn" href="#jogo=${esc(ultMeu.id)}&avaliar">⭐ Avaliar o último jogo</a>` : ''}</div></section>`;
@@ -634,8 +634,8 @@ async function paginaDefinicoes() {
     <button id="def-ticket"><span>🐞</span><div><b>Reportar um problema</b><small>Vai direto para o Rui, com o ecrã onde estavas.</small></div></button>
     <button id="def-instalar"><span>📲</span><div><b>Instalar a app</b><small>Fica no ecrã do telemóvel como uma app.</small></div></button>
     <a href="#ligas"><span>🏆</span><div><b>Ligas e épocas</b><small>As tuas ligas, criar uma liga e as tuas estatísticas por liga e época.</small></div></a>
-    <a href="#admin"><span>🔧</span><div><b>Administração</b><small>Só para o Rui (entra com a conta Google do administrador).</small></div></a></section>
-    <p class="mute" style="font-size:12px">Privacidade: as notas que dás só o organizador as vê; a idade, a altura, o peso e o pé com que marcas só tu (e o Rui) os vês.</p>`);
+    <a href="#admin"><span>🔧</span><div><b>Administração</b><small>Só para o administrador (entra com a conta Google).</small></div></a></section>
+    <p class="mute" style="font-size:12px">Privacidade: as notas que dás são secretas; a idade, a altura, o peso e o pé com que marcas são privados — os outros jogadores não os veem.</p>`);
   document.getElementById('def-ticket').onclick = abrirTicket;
   document.getElementById('def-instalar').onclick = () => document.getElementById('instalar').click();
 }
@@ -715,7 +715,7 @@ function pedirPin(p, todos) {
   const $app = document.getElementById('pub') || document.getElementById('app');
   $app.innerHTML = `<div class="fim"><div class="alvo" style="justify-content:center">${foto(p)}</div>
     <h2>${esc(p.nome)}, qual é o teu PIN?</h2>
-    <p class="mute">São 4 algarismos que o Rui te enviou em privado. Só pedimos uma vez neste telemóvel.</p>
+    <p class="mute">São os 4 algarismos que recebeste em privado. Só pedimos uma vez neste telemóvel.</p>
     <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="••••"
       style="font-size:28px;text-align:center;letter-spacing:10px;max-width:180px;margin:0 auto;display:block">
     <div class="linha" style="justify-content:center;margin-top:14px"><button id="pin-voltar">← Não sou eu</button><button class="prim" id="pin-ok">Entrar</button></div>
@@ -925,7 +925,7 @@ function blocoFisico(saude, treinos, meus, leitura) {
   if (!saude) return leitura ? '<p class="mute">Este jogador não ativou os dados físicos.</p>' : `<div class="opcao">
     <p>Podes guardar aqui os treinos do teu relógio (Garmin, Apple Watch, Wear OS, Samsung, Fitbit… ou à mão), o peso, a altura e como te sentiste em cada jogo.
       Isto entra nas tuas estatísticas individuais.</p>
-    <p class="mute" style="font-size:12px">São dados de saúde: só tu e o organizador (Rui) os veem — ele só os pode ler, não mexe em nada.
+    <p class="mute" style="font-size:12px">São dados de saúde e são privados: os outros jogadores não os veem (o administrador pode lê-los, mas não mexe em nada).
       Os ficheiros do relógio não são guardados, só o resumo. Podes apagar tudo quando quiseres.</p>
     <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="fs-ok" style="width:auto;margin-top:3px"> Aceito guardar os meus dados físicos e de saúde para isto.</label>
     <button class="prim" id="fs-ativar" style="margin-top:8px">Ativar</button></div>`;
@@ -1190,7 +1190,7 @@ function renderPerfil(el, p, d) {
     <div data-painel="jogos" ${A.pAba === 'jogos' ? '' : 'hidden'}>${painelJogos(p, d, meus, proprio)}</div>
     <div data-painel="stats" ${A.pAba === 'stats' ? '' : 'hidden'}>${painelStats(p, S, m, proprio)}</div>
     <div data-painel="conq" id="p-conq" ${A.pAba === 'conq' ? '' : 'hidden'}>${htmlConquistas(d.res, p.id, { proprio, fisPorJogo })}</div>
-    ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}>${Object.keys(fisPorJogo).length ? htmlHeatmap(somarGrelhas(Object.values(fisPorJogo).map((f) => f?.grelha)), 'Onde andaste (todos os jogos)') : ''}<div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 só tu e o Rui</span></div><div id="eu-form"></div>
+    ${proprio ? `<div data-painel="fis" ${A.pAba === 'fis' ? '' : 'hidden'}>${Object.keys(fisPorJogo).length ? htmlHeatmap(somarGrelhas(Object.values(fisPorJogo).map((f) => f?.grelha)), 'Onde andaste (todos os jogos)') : ''}<div class="cartao"><div class="cartao-tit">🩺 Dados físicos e relógio <span class="tag">🔒 privado</span></div><div id="eu-form"></div>
       ${blocoFisico(d.saude, d.treinos, meus.map((x) => ({ id: x.id, jogo: x.j })), false)}</div></div>` : ''}`;
   const mostrar = (k) => {
     A.pAba = k;
@@ -1305,7 +1305,7 @@ function painelGeral(p, d, meus, m, proprio, S, cartaVis, est) {
     if (m.pd || m.pe) linhas.push(['Pé com que marca', `${m.pd >= m.pe ? 'direito' : 'esquerdo'} <small class="mute">(dir. ${m.pd} · esq. ${m.pe}${m.cab ? ` · cabeça ${m.cab}` : ''})</small>`, 1]);
   }
   const ficha = `<section class="cartao"><div class="cartao-tit">Dados pessoais</div><table class="tficha">${linhas.filter(Boolean).map(([k, v, priv]) => `<tr><th>${k}${priv ? ' <span title="Só tu vês">🔒</span>' : ''}</th><td>${v}</td></tr>`).join('')}</table>
-    ${proprio ? `<p class="mute" style="font-size:12px;margin:8px 0 0">🔒 = só tu (e o Rui) vês.${d.saude ? '' : ' A idade, a altura e o peso aparecem quando ativares os dados físicos (separador 🔒 Físico).'} Para mudar a alcunha, a foto ou o PIN: <a href="#definicoes">⚙ Definições</a>.</p>` : ''}</section>`;
+    ${proprio ? `<p class="mute" style="font-size:12px;margin:8px 0 0">🔒 = privado (os outros jogadores não veem).${d.saude ? '' : ' A idade, a altura e o peso aparecem quando ativares os dados físicos (separador 🔒 Físico).'} Para mudar a alcunha, a foto ou o PIN: <a href="#definicoes">⚙ Definições</a>.</p>` : ''}</section>`;
   // Carta de jogador
   let carta = '';
   if (proprio) carta = `<section class="cartao">${d.carta}</section>`;
