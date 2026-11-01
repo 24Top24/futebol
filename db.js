@@ -95,7 +95,7 @@ function demoDb() {
     async saveGame(g) { const id = g.id || novoToken(10); const { id: _, ...d } = g; s.games[id] = d; save(); return id; },
     async deleteGame(id) { delete s.games[id]; save(); },
     async listGames() { return list('games'); },
-    async listResultados() { return list('resultados'); },
+    async listResultados() { return list('resultados'); }, async getFitResultado() { return null; }, async donosRelogios() { return {}; },
     async deleteResultado(id) { delete s.resultados[id]; save(); },
     async setChaveRelogio() {},
     async getSegredo(d) { return s.segredos[d] || null; },
@@ -163,7 +163,7 @@ async function fireDb() {
   const D = (...s) => doc(db, ...P(...s));
   const Cl = (...s) => collection(db, ...P(...s));
   const list = async (c) => (await getDocs(Cl(c))).docs.map((d) => ({ id: d.id, ...d.data() }));
-  const get = async (c, id) => { const d = await getDoc(D(c, id)); return d.exists() ? d.data() : null; };
+  const get = async (c, id, ...mais) => { const d = await getDoc(D(c, id, ...mais)); return d.exists() ? d.data() : null; };
   return {
     demo: false,
     async uid() { const u = (await atual()) || (await au.signInAnonymously(auth)).user; return u.uid; },
@@ -478,6 +478,9 @@ async function fireDb() {
     deleteGame: (id) => deleteDoc(D('games', id)),
     listGames: () => list('games'),
     listResultados: () => list('resultados'),
+    // ⌚ Relógios com Google: o fit (FC, GPS) de cada proposta está à parte (só o próprio e o admin leem); quem é cada uid.
+    getFitResultado: (id) => get('resultados', id, 'fit', 'dados'),
+    async donosRelogios() { const L0 = L() ? await listRaiz('ligas', L(), 'membros') : await listRaiz('contas'); return Object.fromEntries(L0.map((m) => [m.uid || m.id, m.player])); },
     deleteResultado: (id) => deleteDoc(D('resultados', id)),
     setChaveRelogio: (chave) => setDoc(D('segredos', 'relogio'), { chave }, { merge: true }),   // merge: guarda o dono (o relógio lê as ligas dele)
     getSegredo: (d) => get('segredos', d),

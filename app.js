@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=50';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=31';
+import { DB, novoToken, novoPin } from './db.js?v=51';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=32';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
@@ -1579,7 +1579,7 @@ async function ctxAdmin() {
   const cartasEq = calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv);
   return {
     players, cartas: cartasEq, games: A.games,
-    elo: calcularElo((await DB.listResultados()).map((r) => JSON.parse(r.json || '{}').jogo), cartasEq),
+    elo: calcularElo((await resultadosValidos()).validos.map((r) => JSON.parse(r.json || '{}').jogo), cartasEq),
     relogio: [((await DB.getSegredo('perfil')) || {}).eu].filter(Boolean),   // quem tem relógio (por agora o Rui) → desafios ⌚
     async addConvidado(d) { const id = await DB.savePlayer(d); await recarregar(); A.ctxEq = await ctxAdmin(); return id; },
     async notaConvidado(id, n) {
@@ -1635,9 +1635,10 @@ async function publicarCartasPessoais() {
   publicarNotasFora(cartas, A.players).catch((e) => console.error(e));   // a nota geral de cada um para as outras ligas onde joga
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
-  const brutos = (await DB.listResultados()).map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
+  const RV = await resultadosValidos();
+  const brutos = RV.validos.map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
   const elo = calcularElo(brutos.map((r) => r.jogo), cartas);
-  const fisicoDe = await resumosFisicos(brutos).catch((e) => { console.error(e); return {}; });
+  const fisicoDe = await resumosFisicos([...brutos, ...RV.fitExtra]).catch((e) => { console.error(e); return {}; });
   // Último jogo terminado e a carta de cada um com os votos de agora mas os pesos de ANTES desse jogo:
   // separa o que mudou por causa do peso dos votos (o jogo) do que mudou por notas novas/alteradas.
   const jogos = (await DB.listJogosPub()).map((x) => { try { return { id: x.id, ...JSON.parse(x.json || '{}') }; } catch { return null; } })
@@ -1676,6 +1677,30 @@ async function publicarCartasPessoais() {
     if (JSON.stringify(velho) === JSON.stringify(novo)) continue;   // nada mudou: não gasta escritas
     await DB.setMinhaCarta(p.id, { ...novo, ts: Date.now() });
   }
+}
+
+// ⌚ Relógios com Google (Rui, 01/11): cada jogador manda o seu jogo como proposta (relogio == dono == uid dele). Conta 1 por
+// jogo: o que o admin escolheu em Admin → Jogos (fica em jogos/{id}.de); os outros ficam fora das estatísticas.
+// O fit (FC, GPS) de TODAS as propostas está em fit/dados e é de quem o mandou (vai para o resumo físico dele).
+// Devolve { validos: documentos como os de sempre, porEscolher: propostas ainda sem escolha, fitExtra: [{ id, jogo, fit }] }.
+const eProposta = (r) => !!r.dono && r.relogio === r.dono;
+async function resultadosValidos() {
+  const [brutos, pubs] = await Promise.all([DB.listResultados(), DB.listJogosPub().catch(() => [])]);
+  const props = brutos.filter(eProposta);
+  if (!props.length) return { validos: brutos, porEscolher: [], fitExtra: [] };
+  const escolhidos = new Set(pubs.map((x) => x.de).filter(Boolean));
+  const donos = await DB.donosRelogios().catch(() => ({}));
+  const validos = brutos.filter((r) => !eProposta(r)), porEscolher = [], fitExtra = [];
+  for (const r of props) {
+    let jogo = null; try { jogo = JSON.parse(r.json || '{}').jogo; } catch {}
+    if (!jogo) continue;
+    let fit = null;
+    const f = await DB.getFitResultado(r.id).catch(() => null);
+    if (f?.json && donos[r.dono]) try { fit = { ...JSON.parse(f.json), dono: donos[r.dono] }; } catch {}
+    if (escolhidos.has(r.id)) validos.push({ ...r, json: JSON.stringify({ jogo, fit: fit || {} }) });
+    else { porEscolher.push({ ...r, jogo, quem: donos[r.dono] || null }); if (fit) fitExtra.push({ id: r.id, jogo, fit }); }
+  }
+  return { validos, porEscolher, fitExtra };
 }
 
 // Resumo físico de cada jogo de quem tem relógio (velocidade, zonas, sprints, heatmap em grelha) → minhacarta/{id}.fisico,
@@ -1950,7 +1975,8 @@ function htmlSaude(j, f, P, eu) {
 
 // ---------- Jogos (admin): lista compacta (data + resultado); tocar abre o editor para corrigir ----------
 async function secJogos(el) {
-  const [brutos, pubs] = await Promise.all([DB.listResultados(), DB.listJogosPub()]);
+  const [RV, pubs] = await Promise.all([resultadosValidos(), DB.listJogosPub()]);
+  const brutos = RV.validos;
   const res = brutos.map((r) => ({ id: r.id, bruto: r, ...JSON.parse(r.json || '{}') })).filter((r) => r.jogo)
     .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
   const P = { ...PERFIL0, ...((await DB.getSegredo('perfil')) || {}) };
@@ -1963,6 +1989,7 @@ async function secJogos(el) {
       <span class="mute jadm-info">${ORIG[j.origem || r.origem] || esc(j.origem || r.origem || '')}${nG ? ` · ${nG} golo${nG > 1 ? 's' : ''}` : ''}</span><span class="jr-seta">›</span></button>`;
   };
   el.innerHTML = `<div class="secbar"><div><h2>Jogos</h2><p class="mute">${res.length} registados · toca num jogo para corrigir o resultado, um minuto, um golo, uma assistência ou o guarda-redes.</p></div></div>
+    <div id="j-relogios"></div>
     <div id="j-abertos"></div>
     <section class="cartao lista-adm">${res.length ? res.map(linha).join('') : '<p class="mute" style="margin:0">Ainda não chegou nenhum jogo do relógio nem do marcador do telemóvel.</p>'}</section>
     <details class="cartao"><summary><b>⌚ Relógio e o meu perfil físico</b> <span class="mute">(para a análise de esforço dos teus jogos)</span></summary>
@@ -1973,6 +2000,25 @@ async function secJogos(el) {
         <label style="margin:0">Eu sou</label><select id="eu" style="width:auto"><option value="">—</option>${A.players.map((p) => `<option value="${p.id}" ${p.id === eu ? 'selected' : ''}>${esc(nomeDe(p))}</option>`).join('')}</select></div>
       <div class="linha" style="margin-top:8px"><input id="chave" placeholder="cola a chave do relógio" style="flex:1"><button id="gchave" class="peq">Guardar chave do relógio</button></div></details>`;
   el.querySelectorAll('[data-j]').forEach((b) => (b.onclick = () => editarJogo(res.find((r) => r.id === b.dataset.j), pubs.find((x) => x.id === b.dataset.j), P, eu, () => secJogos(el))));
+  // ---- ⌚ Jogos mandados pelos relógios (conta Google de cada um): por escolher. Com vários do mesmo jogo, escolhe-se 1.
+  const jaTem = new Set(res.map((r) => r.jogo?.gameId).filter(Boolean));
+  const grupos = {};
+  for (const r of RV.porEscolher) if (!r.gameId || !jaTem.has(r.gameId)) (grupos[r.gameId || r.id] ||= []).push(r);
+  const nomeQ = (r) => esc(nomeDe(A.players.find((p) => p.id === r.quem) || { nome: '?' }));
+  document.getElementById('j-relogios').innerHTML = Object.keys(grupos).length ? `<h3 style="margin-top:0">⌚ Dos relógios, por escolher (${Object.keys(grupos).length})
+      <span class="mute" style="text-transform:none;letter-spacing:0;font-weight:500">— só conta o que escolheres</span></h3>
+    ${Object.entries(grupos).map(([k, L]) => `<div class="cartao"><b>${esc(dataDe(L[0].jogo))}</b> <span class="tag">${L.length} relógio${L.length > 1 ? 's' : ''}</span>
+      ${L.map((r) => { const j = r.jogo, nG = (j.eventos || []).length;
+        return `<div class="linha" style="justify-content:space-between;margin-top:6px"><span>⌚ ${nomeQ(r)}: ${LOGO.B} <b>${marcaDe(j, 'B')} – ${marcaDe(j, 'P')}</b> ${LOGO.P}
+          <span class="mute">· ${nG} golo${nG === 1 ? '' : 's'}, ${(j.eventos || []).filter((e) => e.assist).length} assist.</span></span>
+          <button class="prim peq" data-escolher="${esc(r.id)}" >✅ Este é o certo</button></div>`; }).join('')}</div>`).join('')}` : '';
+  el.querySelectorAll('[data-escolher]').forEach((b) => (b.onclick = async () => {
+    const r = RV.porEscolher.find((x) => x.id === b.dataset.escolher); if (!r) return;
+    if (!confirm('Usar este resultado? Passa a contar e os outros relógios deste jogo ficam de fora.')) return;
+    b.disabled = true;
+    try { await DB.saveJogoPub(r.id, { de: r.id, ts: Date.now(), json: JSON.stringify(r.jogo) }); toast('Resultado escolhido ✔'); await recarregar(); secJogos(el); }
+    catch (e) { console.error(e); toast('Erro: ' + e.message); b.disabled = false; }
+  }));
   // ---- Jogos em aberto: equipas escolhidas sem resultado. Fechar = entra nas estatísticas, Elo e peso dos votos.
   const fechados = new Set(res.map((r) => r.jogo?.gameId).filter(Boolean));
   const abertos = [...A.games].filter((g) => !fechados.has(g.id)).sort((a, b) => (b.criado || 0) - (a.criado || 0));
@@ -2465,7 +2511,7 @@ async function secSaude(el) {
 // Elo (só o admin vê): a forma de cada um pelos resultados. É o que só existe aqui; a tabela completa (com o pé de todos)
 // fica fechada por baixo — o resto das estatísticas já está na Classificação pública.
 async function secEstatisticas(el) {
-  const res = (await DB.listResultados()).map((r) => JSON.parse(r.json || '{}'));
+  const res = (await resultadosValidos()).validos.map((r) => JSON.parse(r.json || '{}'));
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   const L = Object.values(calcularElo(res.map((r) => r.jogo), cartas)).sort((a, b) => b.elo - a.elo);
   el.innerHTML = `<div class="secbar"><div><h2>Elo</h2><p class="mute">Só tu vês. A forma de cada um pelos resultados — parte da carta e mexe com os jogos.</p></div></div>
