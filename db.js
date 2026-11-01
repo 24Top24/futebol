@@ -176,12 +176,23 @@ async function fireDb() {
     // Futebolada semanal (ligado pela conta Google: membros/ da liga ↔ membros/ da raiz). Só a carta e os votos são da liga.
     // Também vale para quem o admin sincronizou com um jogador da Futebolada semanal (players.sinc com liga null): a foto vem de lá;
     // o nome fica o desta liga (pode ser outro, p. ex. "Alex (Fontes)").
-    listPlayers: async () => { const L0 = await list('players'); if (!L()) return L0; const m = await mapaPartilhado(L());
+    // O nível (Fraco/Médio/Bom) que o admin dá a cada um não fica na ficha pública: está em segredos/niveis (só o admin lê;
+    // Rui, 01/11). Quem entrou com o Google tenta lê-lo; os outros nem tentam (dava "sem permissão").
+    listPlayers: async () => {
+      const u = await atual();
+      const [L1, nv] = await Promise.all([list('players'), u && !u.isAnonymous ? get('segredos', 'niveis').catch(() => null) : null]);
+      const L0 = nv ? L1.map((p) => (nv[p.id] != null ? { ...p, nivel: nv[p.id] } : p)) : L1;
+      if (!L()) return L0; const m = await mapaPartilhado(L());
       return L0.map((p) => {
         const r = m.players[m.liga[p.id]], s = !r && p.sinc && !p.sinc.liga ? m.players[p.sinc.id] : null;
         if (s) return { ...p, foto: p.foto || s.foto || '' };
         return r ? { ...p, foto: r.foto || p.foto || '', ...(r.alcunha ? { alcunha: r.alcunha } : {}) } : p; }); },
-    async savePlayer(p) { const id = p.id || novoToken(10); const { id: _, ...d } = p; await setDoc(D('players', id), d); return id; },
+    async savePlayer(p) {
+      const id = p.id || novoToken(10); const { id: _, nivel, ...d } = p;
+      await setDoc(D('players', id), d);
+      if (nivel !== undefined) await setDoc(D('segredos', 'niveis'), { [id]: nivel ?? fs.deleteField() }, { merge: true });
+      return id;
+    },
     deletePlayer: (id) => deleteDoc(D('players', id)),
     // Nota de fora: a nota geral de cada jogador noutras ligas (ver ligas-ui.js → publicarNotasFora).
     listFora: () => list('fora'),
