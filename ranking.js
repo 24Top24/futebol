@@ -174,6 +174,7 @@ export function tier(ov) {
 // Gera equipas equilibradas testando todas as divisões (126 com 10 jogadores).
 // anteriores: [[brancos],[pretos]] de jogos passados (penaliza repetir).
 // restr (opcional): { separar: [[a,b]], juntar: [[a,b,c]], cor: { id: 'B'|'P' } } — regras obrigatórias.
+// restr.A (equipas à mão, Rui 01/11): os Brancos já escolhidos (os outros são os Pretos); só se calcula o cartão (médias, GR fixo).
 // Devolve A = Brancos, B = Pretos.
 // Lado de início (Rui, 28/10): quem começa do lado dos balneários. Não há troca de campo, por isso fica para o jogo todo
 // e diz sempre quem ataca para que baliza (heatmap, sprints). Sorteado ao escolher as equipas.
@@ -221,6 +222,7 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     return media(g ? eq.filter((id) => id !== g) : eq, (id) => val(id, k)) * metade;
   };
   const ok = (A, B) => {
+    if (restr.A) return true;
     const sA = new Set(A);
     if (separar.some(([a, b]) => sA.has(a) === sA.has(b))) return false;
     if (juntar.some((g) => g.some((x) => sA.has(x) !== sA.has(g[0])))) return false;
@@ -251,6 +253,7 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     if (esc.length === metade - 1) return avaliar([ids[0], ...esc]);
     for (let i = start; i < N; i++) rec(i + 1, [...esc, ids[i]]);
   };
+  if (restr.A) { avaliar(restr.A.filter((id) => ids.includes(id))); return res; }
   rec(1, []);
   res.sort((a, b) => a.custo - b.custo);
   return res.slice(0, top);

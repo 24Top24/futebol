@@ -1,11 +1,11 @@
 import { DB, novoToken, novoPin } from './db.js?v=48';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=29';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=35';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=5';
-import { dnaJogo } from './conquistas.js?v=3';
+import { dnaJogo } from './conquistas.js?v=4';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=3';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
 
@@ -138,7 +138,7 @@ const lugares = (L, v, v2 = () => 0) => L.map((x) => 1 + L.filter((y) => v(y) > 
 function minutosJogados(res) {
   const M = {};
   for (const { jogo: j } of res) {
-    if (!j || j.fase !== 'fim' || j.semGolos || !(j.eventos || []).length) continue;
+    if (!j || j.fase !== 'fim' || j.semGolos || j.semTempo || !(j.eventos || []).length) continue;   // à mão: sem minutos verdadeiros
     const ult = Math.max(0, ...(j.eventos || []).map((e) => e.t || 0));
     const dur = Math.max(j.fimEpoch && j.inicioEpoch ? j.fimEpoch - j.inicioEpoch - (j.pausaTotal || 0) : 0, ult) / 60000;
     for (const x of [...(j.brancos || []), ...(j.pretos || [])]) M[x.id] = (M[x.id] || 0) + dur;
@@ -159,7 +159,8 @@ function marcadoresHTML(j) {
       if (!por.has(k)) por.set(k, { nm: (ag ? 'AG ' : '') + nome(ev.marcador), m: [] });
       por.get(k).m.push(`${minuto(ev.t)}'${ev.parte === 'pen' ? ' (pen.)' : ''}`);
     }
-    return [...por.values()].map((x) => `<div>${x.nm} ${x.m.join(', ')}</div>`).join('');
+    // registados à mão (semTempo): sem minutos, só quantos
+    return [...por.values()].map((x) => `<div>${x.nm} ${j.semTempo ? (x.m.length > 1 ? '×' + x.m.length : '') : x.m.join(', ')}</div>`).join('');
   };
   const B = lado('B'), P = lado('P');
   return B || P ? `<div class="mj-marc"><div>${B}</div><div class="bolinha">⚽</div><div>${P}</div></div>` : '';
@@ -388,7 +389,7 @@ async function paginaJogoPub(id) {
       const e = ev[g.dataset.g], k = ev.indexOf(e) + 1, B = ev.slice(0, k).filter((x) => x.equipa === 'B').length, P = k - B;
       $app.querySelectorAll('[data-g]').forEach((x) => x.classList.toggle('sel', x === g));
       det.classList.remove('mute');
-      det.innerHTML = `<b>${minuto(e.t)}'</b> ${e.equipa === 'B' ? LOGO.B : LOGO.P} ${e.tipo === 'autogolo' ? `Autogolo de ${lnk(e.marcador)}` : `⚽ ${lnk(e.marcador)}`}${parte(e) ? ` <small class="mute">(${parte(e)})</small>` : ''}${e.assist ? ` · 🅰️ ${lnk(e.assist)}` : ''} <span class="gdet-res">${B} – ${P}</span>`;
+      det.innerHTML = `${j.semTempo ? '' : `<b>${minuto(e.t)}'</b> `}${e.equipa === 'B' ? LOGO.B : LOGO.P} ${e.tipo === 'autogolo' ? `Autogolo de ${lnk(e.marcador)}` : `⚽ ${lnk(e.marcador)}`}${parte(e) ? ` <small class="mute">(${parte(e)})</small>` : ''}${e.assist ? ` · 🅰️ ${lnk(e.assist)}` : ''} <span class="gdet-res">${B} – ${P}</span>`;
     };
     g.onclick = mostrar;
     g.onkeydown = (k) => { if (k.key === 'Enter' || k.key === ' ') { k.preventDefault(); mostrar(); } };
@@ -642,7 +643,7 @@ const diaPT = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d.split('-').reverse
 const PES = ['pd', 'pe'];
 function linhasEventos(j, euId = null) {
   const nome = (id) => esc([...(j.brancos || []), ...(j.pretos || [])].find((x) => x.id === id)?.nome || '?');
-  return `${(j.eventos || []).map((ev) => `<div>${Math.floor(ev.t / 60000) + 1}' ${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte && (!PES.includes(ev.parte) || ev.marcador === euId) ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
+  return `${(j.eventos || []).map((ev) => `<div>${j.semTempo ? '' : `${Math.floor(ev.t / 60000) + 1}' `}${ev.equipa === 'B' ? '⚪' : '⚫'} ${ev.tipo === 'autogolo' ? `AG ${nome(ev.marcador)}` : nome(ev.marcador)}${ev.assist ? ` <span class="mute">(${nome(ev.assist)})</span>` : ''}${ev.parte && (!PES.includes(ev.parte) || ev.marcador === euId) ? ` <small class="mute">${PARTE[ev.parte]}</small>` : ''}</div>`).join('')}
     ${(j.penaltis || []).filter((pn) => pn.resultado !== 'golo').map((pn) => `<div class="mute">${Math.floor(pn.t / 60000) + 1}' ${pn.equipa === 'B' ? '⚪' : '⚫'} penálti de ${nome(pn.marcador)} ${pn.resultado === 'defendido' ? `defendido por ${nome(pn.gr)} 🧤` : 'falhado'}</div>`).join('')}`;
 }
 
@@ -1981,7 +1982,8 @@ async function secJogos(el) {
       <div class="equipas"><div class="eq branco"><h4>${LOGO.B} Brancos</h4>${(g.brancos || []).map((id) => nmG(g, id)).join('<br>')}</div>
         <div class="eq preto"><h4>${LOGO.P} Pretos</h4>${(g.pretos || []).map((id) => nmG(g, id)).join('<br>')}</div></div>
       <label>Dia em que se jogou</label><input type="date" class="pD" value="${esc(g.data || hojeLocal())}" style="width:auto">
-      <label>Resultado (opcional — deixa vazio se ninguém contou os golos)</label>
+      <label>Golos e assistências (opcional)</label><div class="gm"></div>
+      <label>Ou só o resultado (opcional — deixa vazio se ninguém contou os golos)</label>
       <div class="linha"><input type="number" min="0" class="pB" placeholder="⚪" style="width:70px"> – <input type="number" min="0" class="pP" placeholder="⚫" style="width:70px"></div>
       <div class="linha" style="margin-top:8px">
         <button class="prim peq" data-fechar="B">Fechar: ganhou ⚪</button>
@@ -1990,6 +1992,7 @@ async function secJogos(el) {
         <button class="peq perigo" data-apagar-g>Apagar (não se jogou)</button></div></details>`).join('')}` : '';
   el.querySelectorAll('[data-aberto]').forEach((box) => {
     const g = abertos.find((x) => x.id === box.dataset.aberto);
+    golosAMao(box, g.brancos || [], g.pretos || [], (id) => g.nomes?.[id] || nomeDe(A.players.find((p) => p.id === id) || { nome: '?' }));
     box.querySelectorAll('[data-fechar]').forEach((b) => (b.onclick = async () => {
       const K = (await DB.getSegredo('partilha'))?.chave;
       const nomeP = (id) => nomeDe(A.players.find((p) => p.id === id) || { nome: id });
@@ -2120,10 +2123,35 @@ function avaliacoesHTML(avs, jogadores) {
     ${ids.map((pid) => { const o = c[pid], sd = o[1] - o[-1]; return `<tr><td>${esc(jogadores.find((p) => p.id === pid)?.nome || '?')}</td><td>${o[1]}</td><td>${o[0]}</td><td>${o[-1]}</td><td class="${sd > 0 ? 'sobe' : sd < 0 ? 'desce' : ''}">${sd > 0 ? '+' : ''}${sd}</td></tr>`; }).join('')}</table>`;
 }
 
-// Fechar um jogo à mão (ninguém marcou): só o vencedor ou o resultado. Conta nas estatísticas, Elo e peso dos votos.
-// box tem .pD (dia em que se jogou), .pB e .pP (golos, opcionais). Usado no admin e pelos moderadores.
+// ⚽ Golos à mão (Rui, 01/11): depois do jogo, sem relógio nem marcador — quem marcou e quem assistiu, sem minutos.
+// Desenha em box .gm; a lista fica em box._golos (fecharManual lê-a).
+function golosAMao(box, eqB, eqP, nome) {
+  const cx = box.querySelector('.gm'); if (!cx) return;
+  const L = (box._golos ||= []);
+  const n = (e) => L.filter((x) => x.equipa === e).length;
+  const op = (ids, sel, vazio) => (vazio ? `<option value="">${vazio}</option>` : '') + ids.map((id) => `<option value="${esc(id)}" ${id === sel ? 'selected' : ''}>${esc(nome(id))}</option>`).join('');
+  const desenhar = () => {
+    cx.innerHTML = `${L.map((x, i) => { const eq = x.equipa === 'B' ? eqB : eqP;
+      return `<div class="linha" style="gap:6px;flex-wrap:nowrap;margin-bottom:6px"><span>${x.equipa === 'B' ? '⚪' : '⚫'}</span>
+        <select data-gm="${i}" data-c="marcador" style="flex:1;min-width:0" aria-label="Quem marcou">${op(eq, x.marcador)}</select>
+        <select data-gm="${i}" data-c="assist" style="flex:1;min-width:0" aria-label="Assistência">${op(eq.filter((id) => id !== x.marcador), x.assist, '🅰️ sem assist.')}</select>
+        <button class="peq perigo" data-gmx="${i}" aria-label="Apagar este golo">✕</button></div>`; }).join('')}
+      <div class="linha"><button class="peq" data-gmm="B">＋ Golo ⚪</button><button class="peq" data-gmm="P">＋ Golo ⚫</button>
+        ${L.length ? `<b style="margin-left:auto">⚪ ${n('B')} – ${n('P')} ⚫</b>` : ''}</div>`;
+    cx.querySelectorAll('[data-gm]').forEach((s) => (s.onchange = () => { L[s.dataset.gm][s.dataset.c] = s.value || null; if (s.dataset.c === 'marcador') desenhar(); }));
+    cx.querySelectorAll('[data-gmx]').forEach((b) => (b.onclick = () => { L.splice(Number(b.dataset.gmx), 1); desenhar(); }));
+    cx.querySelectorAll('[data-gmm]').forEach((b) => (b.onclick = () => { const e = b.dataset.gmm; L.push({ equipa: e, marcador: (e === 'B' ? eqB : eqP)[0], assist: null }); desenhar(); }));
+  };
+  desenhar();
+}
+
+// Fechar um jogo à mão (ninguém marcou): só o vencedor, o resultado, ou os golos (golosAMao). Conta nas estatísticas, Elo e peso dos votos.
+// box tem .pD (dia em que se jogou), .pB e .pP (golos, opcionais) e .gm (golos à mão). Usado no admin e pelos moderadores.
 async function fecharManual(box, g, venc, K, nomeP) {
-  const sB = box.querySelector('.pB').value, sP = box.querySelector('.pP').value, data = box.querySelector('.pD')?.value || g.data || hojeLocal();
+  const golos = (box._golos || []).filter((x) => x.marcador);
+  let sB = box.querySelector('.pB').value, sP = box.querySelector('.pP').value;
+  if (golos.length) { sB = String(golos.filter((x) => x.equipa === 'B').length); sP = String(golos.filter((x) => x.equipa === 'P').length); }
+  const data = box.querySelector('.pD')?.value || g.data || hojeLocal();
   const comPlacar = sB !== '' && sP !== '';
   if (comPlacar) {
     const pv = Number(sB) > Number(sP) ? 'B' : Number(sB) < Number(sP) ? 'P' : 'E';
@@ -2134,7 +2162,10 @@ async function fecharManual(box, g, venc, K, nomeP) {
   // O jogo fica datado pelo dia em que se jogou (inicioEpoch), não pelo dia em que se fizeram as equipas.
   const t0 = new Date(`${data}T21:00`).getTime();
   const jogo = { gameId: g.id, data, brancos: lado(g.brancos), pretos: lado(g.pretos), fase: 'fim', inicioEpoch: t0, fimEpoch: t0,
-    pausaTotal: 0, eventos: [], turnos: [], penaltis: [], vencedor: venc, ...(comPlacar ? { placar: { B: Number(sB), P: Number(sP) } } : { semGolos: true }), origem: 'manual' };
+    pausaTotal: 0, turnos: [], penaltis: [], vencedor: venc, origem: 'manual',
+    // com golos à mão: os golos contam (estatísticas, assistências), mas sem minutos (semTempo)
+    ...(golos.length ? { eventos: golos.map((x, i) => ({ t: i * 60000, tipo: 'golo', equipa: x.equipa, marcador: x.marcador, assist: x.assist || null, gr: null, parte: null })), semTempo: true }
+      : { eventos: [], ...(comPlacar ? { placar: { B: Number(sB), P: Number(sP) } } : { semGolos: true }) }) };
   const id = 'manual-' + g.id;
   try {
     await DB.saveResultado(id, { chave: K, gameId: g.id, ts: Date.now(), origem: 'manual', json: JSON.stringify({ jogo, fit: {} }) });
@@ -2598,6 +2629,7 @@ function secEquipas(el, X = A.ctxEq) {
     </details>
     ${X.elo && Object.keys(X.elo).length ? `<label style="margin:6px 0"><input type="checkbox" id="usar-elo" ${A.usarElo ? 'checked' : ''} style="width:auto"> Ajustar pela forma (Elo dos jogos registados, no máximo ±10 % da carta de cada um)</label>` : ''}
     <button class="prim" id="gerar" style="width:100%">Gerar equipas equilibradas</button>
+    <button id="a-mao" style="width:100%;margin-top:8px">✋ Escolher equipas manualmente</button>
     <div id="res"></div>`;
 
   const cont = () => (document.getElementById('cont').textContent = `${A.sel.size} selecionados`);
@@ -2656,6 +2688,32 @@ function secEquipas(el, X = A.ctxEq) {
     } catch { /* moderador/colaborador: sem permissão, vale só para estas equipas */ }
     el.querySelectorAll('.chip[data-id]').forEach((b) => { const sm = b.querySelector('small'); if (sm) sm.innerHTML = ovElo(b.dataset.id); });
   });
+  // ✋ Equipas à mão (Rui, 01/11): quem faz as equipas põe cada um nos ⚪ ou nos ⚫; a app só faz o cartão (médias, GR fixo)
+  // e segue o caminho normal (escolher, enviar para o grupo, marcador).
+  const cartasJogo = () => (A.usarElo && X.elo ? aplicarForma(cartas, X.elo) : cartas);
+  g('a-mao').onclick = () => {
+    const ids = [...A.sel];
+    if (ids.length < 2) return toast('Seleciona primeiro os jogadores');
+    A.mao ||= {};
+    for (const k of Object.keys(A.mao)) if (!A.sel.has(k)) delete A.mao[k];
+    const desenhar = () => {
+      const n = (c) => ids.filter((id) => A.mao[id] === c).length, falta = ids.filter((id) => !A.mao[id]).length;
+      g('res').innerHTML = `<div class="opcao"><b>✋ Equipas à mão</b> <span class="mute">— toca em ⚪ ou ⚫ para cada um</span>
+        ${ids.map((id) => `<div class="linha" style="justify-content:space-between"><span>${nm(id)}${soGR(id) ? ' 🧤' : ''} <small class="mute">${ovElo(id)}</small></span>
+          <span>${['B', 'P'].map((c) => `<button class="peq ${A.mao[id] === c ? 'on' : ''}" data-mao="${id}" data-c="${c}">${c === 'B' ? '⚪' : '⚫'}</button>`).join('')}</span></div>`).join('')}
+        <p class="mute">⚪ ${n('B')} · ⚫ ${n('P')}${falta ? ` · faltam ${falta}` : ''}${!falta && n('B') !== n('P') ? ' · equipas com números diferentes' : ''}</p>
+        <button class="prim" id="mao-ok" style="width:100%" ${falta || !n('B') || !n('P') ? 'disabled' : ''}>Ver o cartão destas equipas</button></div>`;
+      el.querySelectorAll('[data-mao]').forEach((b) => (b.onclick = () => { A.mao[b.dataset.mao] = b.dataset.c; desenhar(); }));
+      g('mao-ok').onclick = () => {
+        const ops = gerarEquipas(ids, cartasJogo(), [], 1, { soGR: ids.filter(soGR), A: ids.filter((id) => A.mao[id] === 'B') });
+        if (!ops.length) return toast('Não deu para montar estas equipas');
+        if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
+        mostrar(ops);
+      };
+    };
+    desenhar();
+    window.scrollTo(0, g('res').offsetTop - 60);
+  };
   g('gerar').onclick = () => {
     const ids = [...A.sel];
     if (ids.length < 4 || ids.length % 2) return toast('Escolhe um número par de jogadores (10)');
@@ -2667,7 +2725,7 @@ function secEquipas(el, X = A.ctxEq) {
       soGR: [...A.sel].filter(soGR),
     };
     const anteriores = [...X.games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 3).map((x) => [x.brancos || [], x.pretos || []]);
-    const ops = gerarEquipas(ids, A.usarElo && X.elo ? aplicarForma(cartas, X.elo) : cartas, anteriores, 3, restr);
+    const ops = gerarEquipas(ids, cartasJogo(), anteriores, 3, restr);
     if (!ops.length) return (g('res').innerHTML = '<p class="opcao">Não há nenhuma divisão que cumpra todas as opções. Tira alguma.</p>');
     if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
     mostrar(ops);
@@ -2854,9 +2912,10 @@ function secEquipas(el, X = A.ctxEq) {
       <button class="${v.partilhado ? '' : 'prim'}" id="partilhar" style="width:100%;margin-bottom:8px">📤 ${v.partilhado ? 'Enviar outra vez' : 'Enviar'} para o grupo (WhatsApp)</button>
       ${v.fase === 'fim' ? (X.teste ? '<p>🧪 Teste terminado (não foi registado).</p>' : '<p>✅ Jogo terminado e registado.</p>') : '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador</button>'}
       ${v.fase === 'fim' ? '' : '<button class="peq" id="refazer" style="margin-top:8px">Refazer equipas</button>'}
-      ${v.fase === 'fim' ? '' : `<details class="opcao" style="text-align:left;margin-top:10px"><summary><b>Ninguém marcou? Fechar só com o vencedor</b></summary>
+      ${v.fase === 'fim' ? '' : `<details class="opcao" style="text-align:left;margin-top:10px"><summary><b>Não se marcou? Registar à mão</b> <span class="mute">(golos, assistências ou só o vencedor)</span></summary>
         <label>Dia em que se jogou</label><input type="date" class="pD" value="${esc(v.data || hojeLocal())}" style="width:auto">
-        <label>Resultado (opcional)</label>
+        <label>Golos e assistências (opcional)</label><div class="gm"></div>
+        <label>Ou só o resultado (opcional)</label>
         <div class="linha"><input type="number" min="0" class="pB" placeholder="⚪" style="width:70px"> – <input type="number" min="0" class="pP" placeholder="⚫" style="width:70px"></div>
         <div class="linha" style="margin-top:8px"><button class="prim peq" data-fm="B">Ganhou ⚪</button><button class="peq" data-fm="E">Empate</button><button class="prim peq" data-fm="P">Ganhou ⚫</button></div></details>`}</div>`;
     g('partilhar').onclick = async () => {
@@ -2873,6 +2932,8 @@ function secEquipas(el, X = A.ctxEq) {
       escolhidas(o);
     };
     g('ir-marc')?.addEventListener('click', X.irMarcador);
+    const cxMao = g('res').querySelector('details .gm')?.closest('details');
+    if (cxMao) golosAMao(cxMao, o.A, o.B, (id) => nomeDe(pid(id) || { nome: '?' }));
     g('refazer')?.addEventListener('click', () => {
       if (!confirm('Refazer as equipas? As escolhidas deixam de valer (para todos).')) return;
       v.escolhida = null; X.publicar({ escolhida: null, partilhado: null }); v.partilhado = null;

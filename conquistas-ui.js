@@ -1,7 +1,7 @@
 // Ecrãs das conquistas e do físico (sessão equipas/golos). Os cálculos são do conquistas.js e do fisico.js (sessão
 // desenvolvimento); aqui só se desenha: destaques do jogo (Match DNA), medalhas, desafios, recordes, tendências,
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
-import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=3';
+import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=4';
 import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=3';
 import { ZONAS_VEL, LIM_KMH, tercos } from './fisico.js?v=2';
 

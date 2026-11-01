@@ -44,7 +44,9 @@ export function linhaJogo(j, pid) {
   const [parcId, parcN] = Object.entries(parc).sort((a, b) => b[1] - a[1])[0] || [null, 0];
   const minGR = Math.round(meusTurnos.reduce((s, t) => s + t.ate - t.de, 0) / MIN);
   const pens = (j.penaltis || []);
-  const t1 = meus.map((e) => e.t);
+  // Golos registados à mão depois do jogo (semTempo): sem minutos nem ordem verdadeiros — nada que dependa deles conta.
+  const st = !!j.semTempo;
+  const t1 = st ? [] : meus.map((e) => e.t);
   return {
     id: j.gameId || j.id || String(j.inicioEpoch), data: dataDoJogo(j), epoch: j.inicioEpoch || 0, eq, res, gm, gs, dif: gm - gs, reg: !j.semGolos,
     durMin: Math.round(dur / MIN), g: meus.length, a: ev.filter((e) => e.assist === pid && e.tipo !== 'autogolo').length,
@@ -53,9 +55,9 @@ export function linhaJogo(j, pid) {
     pen: pens.filter((p) => p.marcador === pid && p.resultado === 'golo').length, penF: pens.filter((p) => p.marcador === pid && p.resultado !== 'golo').length,
     penDef: pens.filter((p) => p.gr === pid && p.resultado === 'defendido').length,
     minGR, temGR: (j.turnos || []).length > 0, sofrGR: ev.filter((e) => e.equipa !== eq && grSofreu(j, e) === pid).length,
-    primeiro: ev[0]?.tipo !== 'autogolo' && ev[0]?.marcador === pid, ultimo: ev.at(-1)?.tipo !== 'autogolo' && ev.at(-1)?.marcador === pid,
-    decisivo: decisivo?.marcador === pid && decisivo?.tipo !== 'autogolo', decisivoAssist: decisivo?.assist === pid, empatou: empate?.marcador === pid && empate?.tipo !== 'autogolo',
-    virou: virou && res === 'V', pior, envolvidoTodos: gm >= 3 && nEnvolvido === gm, envolvido: gm ? nEnvolvido / gm : 0,
+    primeiro: !st && ev[0]?.tipo !== 'autogolo' && ev[0]?.marcador === pid, ultimo: !st && ev.at(-1)?.tipo !== 'autogolo' && ev.at(-1)?.marcador === pid,
+    decisivo: !st && decisivo?.marcador === pid && decisivo?.tipo !== 'autogolo', decisivoAssist: !st && decisivo?.assist === pid, empatou: !st && empate?.marcador === pid && empate?.tipo !== 'autogolo',
+    virou: !st && virou && res === 'V', pior: st ? 0 : pior, envolvidoTodos: gm >= 3 && nEnvolvido === gm, envolvido: gm ? nEnvolvido / gm : 0,
     rapido: t1.some((t, i) => i && t - t1[i - 1] <= 3 * MIN), cedo: t1.some((t) => t <= 3 * MIN), tarde: dur > 10 * MIN && t1.some((t) => t >= dur - 5 * MIN),
     goloGR: meus.some((e) => emGR(e.t)), assistGR: ev.some((e) => e.assist === pid && emGR(e.t)),
     parc: parcN >= 2 ? { nome: nome(parcId), n: parcN } : null,

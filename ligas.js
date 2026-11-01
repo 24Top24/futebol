@@ -1,7 +1,7 @@
 // Ligas e épocas (decisões do Rui, 29/10/2026 — ver LIGAS.md). Só cálculos e nomes; a base de dados está no db.js.
 // A liga principal ("Futebolada semanal") fica na raiz da base de dados (como sempre esteve, para o relógio e o marcador
 // continuarem a funcionar); as outras ligas ficam em ligas/{id}/… com os mesmos nomes de coleções.
-import { epocaDe } from './conquistas.js?v=3';
+import { epocaDe } from './conquistas.js?v=4';
 
 // Não há liga principal nem secundária (Rui, 29/10/2026): a "Futebolada semanal" é uma liga como as outras; só fica guardada
 // na raiz da base de dados (id null aqui) para o relógio e o marcador continuarem a funcionar.

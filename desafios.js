@@ -8,7 +8,7 @@
 //  - os ⌚ (relógio) só a quem tem relógio; níveis: 1 fácil, 2 médio, 3 difícil (1 → médio; 2 → fácil+médio ou médio+difícil; 3 → um de cada).
 //  - mês: cada jogador ativo tem um desafio diferente dos outros nesse mês e diferente do seu do mês anterior.
 // Desafios com {p}: o jogo escolhe um colega ou adversário desse jogo (guarda-se o id em p).
-import { linhaJogo, balizaDe, historico } from './conquistas.js?v=3';
+import { linhaJogo, balizaDe, historico } from './conquistas.js?v=4';
 
 const MIN = 60000;
 const hash = (s) => { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
