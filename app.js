@@ -2141,6 +2141,10 @@ function golosAMao(box, eqB, eqP, nome) {
     cx.querySelectorAll('[data-gm]').forEach((s) => (s.onchange = () => { L[s.dataset.gm][s.dataset.c] = s.value || null; if (s.dataset.c === 'marcador') desenhar(); }));
     cx.querySelectorAll('[data-gmx]').forEach((b) => (b.onclick = () => { L.splice(Number(b.dataset.gmx), 1); desenhar(); }));
     cx.querySelectorAll('[data-gmm]').forEach((b) => (b.onclick = () => { const e = b.dataset.gmm; L.push({ equipa: e, marcador: (e === 'B' ? eqB : eqP)[0], assist: null }); desenhar(); }));
+    // Com golos, o resultado sai deles: fica só o botão do vencedor certo e some o "só o resultado".
+    const v = n('B') > n('P') ? 'B' : n('B') < n('P') ? 'P' : 'E', pl = box.querySelector('.pB')?.closest('.linha');
+    if (pl) { pl.hidden = !!L.length; if (pl.previousElementSibling?.tagName === 'LABEL') pl.previousElementSibling.hidden = !!L.length; }
+    box.querySelectorAll('[data-fm],[data-fechar]').forEach((b) => (b.hidden = !!L.length && (b.dataset.fm || b.dataset.fechar) !== v));
   };
   desenhar();
 }
@@ -2707,6 +2711,7 @@ function secEquipas(el, X = A.ctxEq) {
       g('mao-ok').onclick = () => {
         const ops = gerarEquipas(ids, cartasJogo(), [], 1, { soGR: ids.filter(soGR), A: ids.filter((id) => A.mao[id] === 'B') });
         if (!ops.length) return toast('Não deu para montar estas equipas');
+        ops[0].mao = true;
         if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
         mostrar(ops);
       };
@@ -2848,7 +2853,7 @@ function secEquipas(el, X = A.ctxEq) {
     </div>`;
   }
   function mostrar(ops) {
-    g('res').innerHTML = ops.map((o, k) => `<div class="opcao"><b>Opção ${k + 1}</b>
+    g('res').innerHTML = ops.map((o, k) => `<div class="opcao"><b>${o.mao ? '✋ Equipas à mão' : `Opção ${k + 1}`}</b>
       ${cartaoJogo(o)}
       <div class="linha"><button class="prim peq" data-k="${k}">${X.vivo ? '✅ Escolher estas' : '✅ Escolher e partilhar no WhatsApp'}</button>${Object.keys(A.restr.cor).length ? '' : `<button class="peq" data-tr="${k}">Trocar cores</button>`}</div></div>`).join('') + ajusteConv();
     ligarAjuste();
