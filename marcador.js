@@ -12,6 +12,10 @@ const PARTES = { pd: 'Pé direito', pe: 'Pé esquerdo', cab: 'Cabeça', out: 'Ou
 // guardado neste telemóvel, desligado por defeito. Desligado, o tempo de cada turno continua visível e as trocas registam-se à mão.
 const LS_AVISO = 'futebol-marcador-aviso-gr';
 const avisoGR = () => { try { return localStorage.getItem(LS_AVISO) === '1'; } catch { return false; } };
+// "Como foi?" (pé/cabeça) depois de cada golo (Rui, 01/11): muitas vezes não interessa e atrasa o registo → interruptor no START,
+// guardado neste telemóvel, ligado por defeito. Desligado, o golo fica gravado logo a seguir à assistência (sem parte).
+const LS_PE = 'futebol-marcador-pe';
+const registarPe = () => { try { return localStorage.getItem(LS_PE) !== '0'; } catch { return true; } };
 // Dia de hoje na hora de Portugal (toISOString é UTC: entre a meia-noite e a 1h dava o dia anterior).
 export const hojeLocal = () => new Date().toLocaleDateString('sv-SE');
 
@@ -139,6 +143,7 @@ export function paginaMarcador(opts) {
       <label>${fixoDe(j, 'B') ? 'GR' : '1.º GR'} ⚪</label>${selGR('B', j.brancos)}
       <label>${fixoDe(j, 'P') ? 'GR' : '1.º GR'} ⚫</label>${selGR('P', j.pretos)}
       <label style="margin-top:14px"><input type="checkbox" id="m-aviso" ${avisoGR() ? 'checked' : ''} style="width:auto"> ⏰ Aviso de troca de GR <span class="mute">(bip, vibração e pergunta quem vai; fica guardado neste telemóvel)</span></label>
+      <label style="margin-top:8px"><input type="checkbox" id="m-pe" ${registarPe() ? 'checked' : ''} style="width:auto"> 🦶 Registar como foi o golo <span class="mute">(pé direito/esquerdo, cabeça…; fica guardado neste telemóvel)</span></label>
       <button class="prim" id="m-start" style="width:100%;margin-top:16px;padding:16px;font-size:20px">START GAME</button>
       <p class="mute">O ecrã fica ligado durante o jogo. No fim o jogo é enviado para o site.</p>` : ''}`;
     el.querySelector('#m-eq').onclick = carregar;
@@ -149,6 +154,7 @@ export function paginaMarcador(opts) {
     el.querySelector('#m-lados')?.addEventListener('click', () => {
       j.ladoInicio = { B: j.ladoInicio?.B === 'balnearios' ? 'oposto' : 'balnearios' }; salvar(); render();
     });
+    el.querySelector('#m-pe')?.addEventListener('change', (e) => { try { localStorage.setItem(LS_PE, e.target.checked ? '1' : '0'); } catch {} });
     el.querySelector('#m-aviso')?.addEventListener('change', (e) => { try { localStorage.setItem(LS_AVISO, e.target.checked ? '1' : '0'); } catch {} });
     el.querySelectorAll('[data-min]').forEach((b) => (b.onclick = () => { j.minTurno = Number(b.dataset.min); salvar(); render(); }));
     el.querySelectorAll('[data-ron]').forEach((b) => (b.onclick = () => { j.rondas = Number(b.dataset.ron); salvar(); render(); }));
@@ -242,13 +248,17 @@ export function paginaMarcador(opts) {
       try { navigator.vibrate?.(120); } catch {}
       modal = null; salvar(); render();
     }));
-    q('[data-as]').forEach((b) => (b.onclick = () => { modal = { ...modal, tipo: 'parte', assist: b.dataset.as || null }; render(); }));
-    q('[data-parte]').forEach((b) => (b.onclick = () => {
+    const gravarGolo = (assist, parte) => {
       const t = decorrido(j);
-      j.eventos.push({ t, tipo: 'golo', equipa: modal.e, marcador: modal.marcador, assist: modal.assist, gr: j.baliza[outra(modal.e)]?.atual || null, parte: b.dataset.parte });
+      j.eventos.push({ t, tipo: 'golo', equipa: modal.e, marcador: modal.marcador, assist, gr: j.baliza[outra(modal.e)]?.atual || null, parte });
       try { navigator.vibrate?.(120); } catch {}
       modal = null; salvar(); render();
+    };
+    q('[data-as]').forEach((b) => (b.onclick = () => {
+      if (!registarPe()) return gravarGolo(b.dataset.as || null, null);   // sem "Como foi?"
+      modal = { ...modal, tipo: 'parte', assist: b.dataset.as || null }; render();
     }));
+    q('[data-parte]').forEach((b) => (b.onclick = () => gravarGolo(modal.assist, b.dataset.parte)));
     q('[data-autog]').forEach((b) => (b.onclick = () => {
       j.eventos.push({ t: decorrido(j), tipo: 'autogolo', equipa: modal.e, marcador: b.dataset.autog, assist: null, gr: j.baliza[outra(modal.e)]?.atual || null, parte: null });
       modal = null; salvar(); render();
