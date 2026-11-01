@@ -1618,7 +1618,10 @@ async function notasDeTodasAsLigas() {
       }
       const K = (await db.getSegredo('partilha').catch(() => null))?.chave;
       const r = K ? await db.getPart(K, 'dados', 'retrato').catch(() => null) : null;
-      if (r) await db.setPart(K, 'dados', 'retrato', { ...r, emprestaveis: await paraEmprestar(lk), ts: Date.now() });
+      // + o 🧤 "só joga à baliza" do plantel (senão os moderadores dessa liga não o têm por defeito ao fazer equipas)
+      const gr = new Set(players.filter((p) => p.soGR).map((p) => p.id));
+      const jogadores = (r?.jogadores || []).map(({ soGR: _s, ...p }) => (gr.has(p.id) ? { ...p, soGR: true, overall: cartas[p.id]?.overall ?? p.overall, stats: cartas[p.id]?.stats || p.stats } : p));
+      if (r) await db.setPart(K, 'dados', 'retrato', { ...r, jogadores, emprestaveis: await paraEmprestar(lk), ts: Date.now() });
     } catch (e) { console.error('notas da liga', lk, e); }
   }
   lsSet('notas-todas', String(Date.now()));
