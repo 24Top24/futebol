@@ -1,5 +1,5 @@
-import { DB, novoToken, novoPin } from './db.js?v=49';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=30';
+import { DB, novoToken, novoPin } from './db.js?v=50';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=31';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
@@ -3201,6 +3201,11 @@ const LINK = MODO_TODAS ? 'todas' : slugLiga(NOME_MENU || 'Futebolada semanal');
 const paginaDe = (hash) => { const m = hash.match(LINK_LIGA); return m ? '#' + m[2] : hash; };
 montarSeletorLiga(NOME_MENU);   // título do menu = liga; lista para quem está em 2+
 if (!DB.demo && !lsGet('meu-perfil')) await DB.minhaConta().then((c) => c && (lsSet('meu-perfil', c.player), lsSet('perfil-ok-' + c.player, '1'))).catch(() => {});
+// Só com PIN, numa liga onde ainda não entrou neste telemóvel: entra sozinho se for a mesma pessoa de outra liga (mesmo PIN).
+if (!DB.demo && !MODO_TODAS && !lsGet('meu-perfil')) {
+  const meus = {}; try { for (const k of Object.keys(localStorage)) if (k.startsWith('meu-perfil@') && lsGet(k)) meus[k.slice(11)] = lsGet(k); } catch {}
+  if (Object.keys(meus).length) await DB.entrarComPinDeFora(meus).then((id) => id && (lsSet('meu-perfil', id), lsSet('perfil-ok-' + id, '1'))).catch(() => {});
+}
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
 document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(paginaDe(location.hash)); };

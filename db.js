@@ -216,6 +216,23 @@ async function fireDb() {
       // 1.ª entrada: o admin da liga deixa de ver este PIN (só o Rui).
       if (L() && !ref) await setDoc(D('pins', id), { usado: true }, { merge: true }).catch(() => {});
     },
+    // Quem só tem PIN (sem Google) e muda de liga entra sozinho se a mesma pessoa tem jogador cá (Rui, 01/11): o PIN é o mesmo
+    // (players.pinEm aponta para o jogador da outra liga), por isso serve o hash da ligação que este browser já tem lá.
+    // meus = { 'fs' | idLiga: id do meu jogador lá } (os meu-perfil@<liga> guardados neste telemóvel). Devolve o id daqui, ou null.
+    async entrarComPinDeFora(meus) {
+      const aqui = L() || 'fs', uid = await this.uid();
+      const ligDe = (k) => (k === 'fs' ? getRaiz('ligacoes', uid) : getRaiz('ligas', k, 'ligacoes', uid)).catch(() => null);
+      const playerDe = (k, id) => (k === 'fs' ? getRaiz('players', id) : getRaiz('ligas', k, 'players', id)).catch(() => null);
+      const cands = [];
+      // (1) jogador daqui que usa o PIN de um dos meus; (2) um dos meus usa o PIN de um jogador daqui
+      for (const p of await list('players').catch(() => [])) if (p.pinEm && meus[p.pinEm.liga] === p.pinEm.id) cands.push([p.id, p.pinEm.liga]);
+      for (const [k, id] of Object.entries(meus)) { const r = (await playerDe(k, id))?.pinEm; if (r?.liga === aqui) cands.push([r.id, k]); }
+      for (const [id, k] of cands) {
+        const lig = await ligDe(k); if (!lig?.h || lig.player !== meus[k]) continue;
+        try { await setDoc(D('ligacoes', uid), { player: id, h: lig.h, ts: Date.now() }); return id; } catch { /* PIN mudou entretanto */ }
+      }
+      return null;
+    },
     // Ligação válida = consigo ler o meu voto (as regras confirmam o PIN atual).
     async ligacaoOk(id) { try { await this.uid(); await getDoc(D('votes', id)); return true; } catch { return false; } },
     async desligar() { try { const u = await atual(); if (u) await deleteDoc(D('ligacoes', u.uid)); } catch {} },
