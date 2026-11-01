@@ -229,6 +229,8 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     return Object.entries(cor).every(([id, c]) => (c === 'B') === sA.has(id));
   };
   const res = [];
+  // A nota de campo de cada um (sem a área GR; com a forma, se vier nas cartas). O GR fixo mostra a nota de GR.
+  const nota = Object.fromEntries(ids.map((id) => [id, fixo.has(id) && cartas[id]?.stats.gr != null ? Math.round(cartas[id].stats.gr * 10) : Math.round(val(id, 'ov'))]));
   const avaliar = (A0) => {
     const B0 = ids.filter((x) => !A0.includes(x));
     // ids[0] fica sempre do mesmo lado para não repetir divisões; as cores decidem-se aqui.
@@ -241,7 +243,11 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
       const sA = new Set(A);
       if (Math.max(pa.filter((x) => sA.has(x)).length, pb.filter((x) => sA.has(x)).length) === metade) custo += 40;
     }
-    res.push({ A, B, custo, ovA: comFixo ? forcaMedia(A) : somar(A, 'ov') / A.length, ovB: comFixo ? forcaMedia(B) : somar(B, 'ov') / B.length,
+    // ovA/ovB = média simples das notas de campo (nota[id], o que o cartão mostra ao lado de cada nome; sem o GR fixo) — dá para
+    // conferir à mão. efA/efB = o que conta mesmo para equilibrar (com a stamina na equipa do GR fixo); só difere com GR fixo.
+    const campo = (eq) => { const g = naBaliza(eq); return g ? eq.filter((id) => id !== g) : eq; };
+    res.push({ A, B, custo, nota, ovA: media(campo(A), (id) => nota[id]), ovB: media(campo(B), (id) => nota[id]),
+      ...(comFixo ? { efA: forcaMedia(A), efB: forcaMedia(B) } : {}),
       ...(comFixo ? { grFixo: { A: A.find((id) => fixo.has(id)) || null, B: B.find((id) => fixo.has(id)) || null } } : {}) });
   };
   const rec = (start, esc) => {

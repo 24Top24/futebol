@@ -353,7 +353,7 @@ details summary { cursor: pointer; }
 .fl > span { text-align: center; font-weight: 800; font-size: 11px; letter-spacing: 1px; color: #aaa; }
 .fl.gr { opacity: .55; }
 .fb { height: 8px; background: #ffffff14; border-radius: 99px; overflow: hidden; display: flex; }
-.fb.esq { justify-content: flex-end; }
+.fb.fb-esq { justify-content: flex-end; }
 .fb i { display: block; height: 100%; background: #9aa3ab; border-radius: 99px; }
 .fb i.ganha { background: #4ade80; }
 .fnota { font-size: 11px; text-align: center; margin-top: 4px; }
