@@ -837,6 +837,9 @@ td.sobe { color: var(--vitoria); font-weight: 800; } td.desce { color: var(--der
 .av-op .av-pior.on { background: var(--derrota); }
 .av-op .av-igual.on { background: var(--empate); }
 .av-op .av-melhor.on { background: var(--vitoria); }
+.av-op button.av-mvp { min-width: 40px; font-size: 22px; color: var(--mute); }
+.av-op button.av-mvp.on { background: #f5b301; color: #fff; }
+.mj-mvp { margin-top: 8px; text-align: center; font-weight: 700; }
 @media (max-width: 400px) { .av-op button { min-width: 48px; } .av-j { padding: 8px; gap: 8px; } }
 
 /* Telemóvel (Rui, 23/10): nada que obrigue a arrastar para o lado */

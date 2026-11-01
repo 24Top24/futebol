@@ -319,7 +319,7 @@ async function paginaJogoPub(id) {
   // "#jogo=<id>&avaliar" (vindo do Início): abre logo a avaliação dos colegas.
   const avaliarJa = id.endsWith('&avaliar');
   id = id.replace(/&avaliar$/, '');
-  const [{ todos, res, games }, euLs, posPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null)]);
+  const [{ todos, res, games }, euLs, posPub, mvpPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null), DB.getPublic('mvp').catch(() => null)]);
   const eu = !VISITANTE && euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
   const i = res.findIndex((r) => r.id === id);
   if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
@@ -340,7 +340,8 @@ async function paginaJogoPub(id) {
     : `<div class="mj-res">${n('B')} – ${n('P')}<small>Terminado${j.fimEpoch ? ` · ${Math.round(dur / 60000)} min` : ''}</small></div>`;
   const cab = `<section class="mjogo jcab"><div class="mj-topo"><div class="mj-estado"><span>${esc(diaSemana(j))} · ${esc(dataDe(j))}</span><span>${j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>
     <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span>${v === 'B' ? '<small class="jvenc">Vencedor</small>' : ''}</div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span>${v === 'P' ? '<small class="jvenc">Vencedor</small>' : ''}</div></div>
-    ${j.semGolos ? '' : marcadoresHTML(j)}</div>
+    ${j.semGolos ? '' : marcadoresHTML(j)}
+    ${mvpPub?.j?.[id] ? `<div class="mj-mvp">⭐ MVP: ${mvpPub.j[id].ids.map(lnk).join(' · ')} <small class="mute">(${mvpPub.j[id].n} estrelas)</small></div>` : ''}</div>
     ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><span class="linha"><button class="peq" id="j-cartao">📤 O meu cartão</button><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></span></div>`
       : !eu && !VISITANTE ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
   if (VISITANTE) { $app.innerHTML = `${nav}${cab}${conviteEntrar('Com conta vês o resto do jogo: o desenrolar, as equipas, os destaques e os teus desafios.')}`; return; }
@@ -507,6 +508,7 @@ function campoHTML(j, ev, quem, pos = {}) {
 // ⭐ Avaliar os colegas NESTE jogo (Rui, 23/10): um toque por colega — pior (−1), igual (0) ou melhor (+1) do que o normal
 // dele (as áreas que tem na carta). Guarda sozinho em votosJogo/{jogo}_{votante} = { r: { id: { d } } }. À parte: não entra em
 // calcularCartas; por agora só junta dados.
+// + ⭐ MVP (Rui, 01/11): uma estrela por votante, num jogador do jogo (pode ser ele próprio) → r[id].mvp = true.
 async function abrirAvaliacao(jogoId, j, euId, quem) {
   const atual = (await DB.getVotoJogo(jogoId, euId).catch(() => null)) || {};
   const r = { ...(atual.r || {}) };
@@ -515,19 +517,32 @@ async function abrirAvaliacao(jogoId, j, euId, quem) {
   const OP = [[-1, '▼', 'Pior'], [0, '=', 'Normal'], [1, '▲', 'Melhor']];
   const outros = [...(j.brancos || []), ...(j.pretos || [])].filter((x) => x.id !== euId);
   const nm = (pid) => esc(nomeDe(quem[pid] || { nome: '?' }));
+  const estrela = (pid) => `<button class="av-mvp ${r[pid]?.mvp ? 'on' : ''}" data-mvp="${esc(pid)}" title="MVP do jogo (só uma estrela)" aria-label="MVP: ${nm(pid)}">${r[pid]?.mvp ? '★' : '☆'}</button>`;
   const desenhar = () => {
     const n = outros.filter((x) => [-1, 0, 1].includes(r[x.id]?.d)).length;
     const lado = (e, L) => `<h4 class="av-eq">${LOGO[e]} ${e === 'B' ? 'Brancos' : 'Pretos'}</h4>${L.filter((x) => x.id !== euId).map((x) => `<div class="av-j">${av(quem[x.id] || x)}<span>${nm(x.id)}</span>
-      <div class="av-op" role="group" aria-label="${nm(x.id)}">${OP.map(([d, s, t]) => `<button class="av-${d < 0 ? 'pior' : d > 0 ? 'melhor' : 'igual'} ${r[x.id]?.d === d ? 'on' : ''}" data-p="${esc(x.id)}" data-d="${d}" title="${t} do que o normal">${s}<small>${t}</small></button>`).join('')}</div></div>`).join('')}`;
+      <div class="av-op" role="group" aria-label="${nm(x.id)}">${estrela(x.id)}${OP.map(([d, s, t]) => `<button class="av-${d < 0 ? 'pior' : d > 0 ? 'melhor' : 'igual'} ${r[x.id]?.d === d ? 'on' : ''}" data-p="${esc(x.id)}" data-d="${d}" title="${t} do que o normal">${s}<small>${t}</small></button>`).join('')}</div></div>`).join('')}`;
     corpo.innerHTML = `<p class="mute" style="margin-top:0">Como jogou cada um <b>comparado com o normal dele</b>? Um toque basta — grava sozinho. Fica à parte e <b>não mexe nas cartas</b>.</p>
+      <p class="mute" style="margin-top:0">⭐ <b>MVP:</b> dá a tua estrela a um só jogador (podes ser tu). No jogo só aparece quem a ganhou.</p>
+      <div class="av-j">${av(quem[euId] || { nome: '?' })}<span>${nm(euId)} <small class="mute">(tu)</small></span><div class="av-op">${estrela(euId)}</div></div>
       <div class="prog"><i style="width:${(n / (outros.length || 1)) * 100}%"></i></div><p class="mute" style="font-size:12px;margin:0 0 6px">${n} de ${outros.length} avaliados</p>
       ${lado('B', j.brancos || [])}${lado('P', j.pretos || [])}`;
-    corpo.querySelectorAll('[data-d]').forEach((b) => (b.onclick = async () => {
-      const pid = b.dataset.p, d = Number(b.dataset.d);
-      if (r[pid]?.d === d) delete r[pid]; else r[pid] = { d };   // tocar outra vez no mesmo desfaz
-      desenhar();
+    const gravar = async () => {
       try { await DB.saveVotoJogo(jogoId, euId, { r, ts: Date.now() }); }
       catch (err) { console.error(err); toast(/permission/i.test(err.message || '') ? 'A avaliação dos jogos ainda não está ligada no servidor' : 'Não deu para guardar — tenta outra vez'); }
+    };
+    // Tocar outra vez no mesmo desfaz; a estrela e o pior/igual/melhor de cada um são independentes.
+    const limpar = (pid) => { if (r[pid] && !Object.keys(r[pid]).length) delete r[pid]; };
+    corpo.querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => {
+      const pid = b.dataset.p, d = Number(b.dataset.d), o = (r[pid] ||= {});
+      if (o.d === d) delete o.d; else o.d = d;
+      limpar(pid); desenhar(); gravar();
+    }));
+    corpo.querySelectorAll('[data-mvp]').forEach((b) => (b.onclick = () => {
+      const pid = b.dataset.mvp, tinha = !!r[pid]?.mvp;
+      for (const k of Object.keys(r)) { delete r[k].mvp; limpar(k); }
+      if (!tinha) (r[pid] ||= {}).mvp = true;
+      desenhar(); gravar();
     }));
   };
   desenhar();
@@ -1543,6 +1558,7 @@ async function paginaAdmin() {
   A.usarElo ??= (await DB.getPublic('estado'))?.usarElo !== false;   // por defeito: ligado (Rui, 28/10)
   renderAdmin();
   publicarRetrato().catch((e) => console.error(e));
+  publicarMVP().catch((e) => console.error(e));
   publicarCartasPessoais().then(async () => {
     A.minhas = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
     if (A.tab === 'jog' && A.plVista === 'cartas') renderAdmin();
@@ -1623,6 +1639,7 @@ async function notasDeTodasAsLigas() {
       const gr = new Set(players.filter((p) => p.soGR).map((p) => p.id));
       const jogadores = (r?.jogadores || []).map(({ soGR: _s, ...p }) => (gr.has(p.id) ? { ...p, soGR: true, overall: cartas[p.id]?.overall ?? p.overall, stats: cartas[p.id]?.stats || p.stats } : p));
       if (r) await db.setPart(K, 'dados', 'retrato', { ...r, jogadores, emprestaveis: await paraEmprestar(lk), ts: Date.now() });
+      await publicarMVP(db).catch((e) => console.error('MVP da liga', lk, e));
     } catch (e) { console.error('notas da liga', lk, e); }
   }
   lsSet('notas-todas', String(Date.now()));
@@ -2159,14 +2176,34 @@ async function editarJogo(r, pub, P, euFisico, depois) {
   desenhar();
 }
 
-// Avaliações de um jogo (votosJogo): para cada jogador, quantos o acharam pior / igual / melhor do que o normal. Só o admin vê.
+// Avaliações de um jogo (votosJogo): para cada jogador, quantos o acharam pior / igual / melhor do que o normal, e as ⭐. Só o admin vê.
 function avaliacoesHTML(avs, jogadores) {
   const c = {};
-  for (const v of avs) for (const [pid, x] of Object.entries(v.r || {})) if ([-1, 0, 1].includes(x?.d)) { const o = (c[pid] ||= { '-1': 0, 0: 0, 1: 0 }); o[x.d]++; }
-  const ids = Object.keys(c).sort((a, b) => (c[b][1] - c[b][-1]) - (c[a][1] - c[a][-1]));
+  for (const v of avs) for (const [pid, x] of Object.entries(v.r || {})) {
+    const o = (c[pid] ||= { '-1': 0, 0: 0, 1: 0, s: 0 });
+    if ([-1, 0, 1].includes(x?.d)) o[x.d]++;
+    if (x?.mvp) o.s++;
+  }
+  const ids = Object.keys(c).sort((a, b) => c[b].s - c[a].s || (c[b][1] - c[b][-1]) - (c[a][1] - c[a][-1]));
   if (!ids.length) return '<p class="mute">Ainda sem avaliações.</p>';
-  return `<table><tr><th>Jogador</th><th title="melhor do que o normal">▲</th><th title="normal">=</th><th title="pior do que o normal">▼</th><th>Saldo</th></tr>
-    ${ids.map((pid) => { const o = c[pid], sd = o[1] - o[-1]; return `<tr><td>${esc(jogadores.find((p) => p.id === pid)?.nome || '?')}</td><td>${o[1]}</td><td>${o[0]}</td><td>${o[-1]}</td><td class="${sd > 0 ? 'sobe' : sd < 0 ? 'desce' : ''}">${sd > 0 ? '+' : ''}${sd}</td></tr>`; }).join('')}</table>`;
+  return `<table><tr><th>Jogador</th><th title="estrelas de MVP">⭐</th><th title="melhor do que o normal">▲</th><th title="normal">=</th><th title="pior do que o normal">▼</th><th>Saldo</th></tr>
+    ${ids.map((pid) => { const o = c[pid], sd = o[1] - o[-1]; return `<tr><td>${esc(jogadores.find((p) => p.id === pid)?.nome || '?')}</td><td>${o.s || ''}</td><td>${o[1]}</td><td>${o[0]}</td><td>${o[-1]}</td><td class="${sd > 0 ? 'sobe' : sd < 0 ? 'desce' : ''}">${sd > 0 ? '+' : ''}${sd}</td></tr>`; }).join('')}</table>`;
+}
+
+// ⭐ MVP de cada jogo: as estrelas são secretas (votosJogo); o admin conta-as e publica só o vencedor em
+// public/mvp = { j: { jogo: { ids, n } }, ts }. Mínimo 2 estrelas (senão bastava dar a estrela a si próprio); empate = MVPs partilhados.
+const MVP_MIN = 2;
+function contarMVP(votos) {
+  const por = {}, out = {};
+  for (const v of votos) for (const [pid, x] of Object.entries(v.r || {})) if (x?.mvp && v.jogo) { const c = (por[v.jogo] ||= {}); c[pid] = (c[pid] || 0) + 1; }
+  for (const [jg, c] of Object.entries(por)) { const n = Math.max(...Object.values(c)); if (n >= MVP_MIN) out[jg] = { ids: Object.keys(c).filter((k) => c[k] === n).sort(), n }; }
+  return out;
+}
+async function publicarMVP(db = DB) {
+  const novo = contarMVP(await db.listVotosJogo());
+  const atual = (await db.getPublic('mvp').catch(() => null))?.j || {};
+  const chave = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  if (chave(novo) !== chave(atual)) await db.setPublic('mvp', { j: novo, ts: Date.now() });
 }
 
 // ⚽ Golos à mão (Rui, 01/11): depois do jogo, sem relógio nem marcador — quem marcou e quem assistiu, sem minutos.
