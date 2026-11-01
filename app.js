@@ -1,7 +1,7 @@
 import { DB, novoToken, novoPin } from './db.js?v=48';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=29';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=34';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=35';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=26';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=5';
@@ -2591,7 +2591,7 @@ function secEquipas(el, X = A.ctxEq) {
       ${R.juntar.map((g, i) => `<div class="linha"><span>🤝 ${g.map(nm).join(' + ')}</span><button class="peq" data-rj="${i}">✕</button></div>`).join('')}
       <label>🧤 Só joga à baliza (neste jogo)</label>
       <div class="chips">${sel.map((id) => `<button class="chip ${soGR(id) ? 'on' : ''}" data-sogr="${id}">${soGR(id) ? '🧤 ' : ''}${nm(id)}</button>`).join('')}</div>
-      <p class="mute" style="font-size:12px;margin-top:4px">Fica na baliza o jogo todo. Com dois, fica um em cada equipa; com um, a equipa dele leva jogadores de campo um pouco mais fracos (e conta mais a stamina, porque não descansam na baliza).</p>
+      <p class="mute" style="font-size:12px;margin-top:4px">Fica na baliza o jogo todo. Com dois, fica um em cada equipa; com um, compara-se a média dos 4 de campo da equipa dele com a média dos 5 da outra (que rodam na baliza).</p>
       <label>Só trouxe camisola…</label>
       <div class="cores">${sel.map((id) => `<div class="linha"><span style="flex:1">${nm(id)}</span>
         ${['', 'B', 'P'].map((c) => `<button class="peq ${(R.cor[id] || '') === c ? 'on' : ''}" data-cor="${id}" data-c="${c}">${c === 'B' ? '⚪' : c === 'P' ? '⚫' : 'qualquer'}</button>`).join('')}</div>`).join('')}</div>`}
@@ -2707,7 +2707,7 @@ function secEquipas(el, X = A.ctxEq) {
   const fixoDe = (o, eq) => (eq === o.A ? o.grFixo?.A : o.grFixo?.B) || null;
   const marcaGR = (o, eq, id) => (id === fixoDe(o, eq) ? '🧤 GR' : !fixoDe(o, eq) && id === melhorGR(eq) ? '🥅' : '');
   const grFixoJogo = (o) => (o.grFixo?.A || o.grFixo?.B ? { B: o.grFixo.A || null, P: o.grFixo.B || null } : null);
-  const opcaoPub = (o) => ({ A: o.A, B: o.B, ovA: o.ovA, ovB: o.ovB, ...(o.nota ? { nota: o.nota } : {}), ...(o.efA != null ? { efA: o.efA, efB: o.efB } : {}), ...(o.grFixo ? { grFixo: o.grFixo } : {}) });
+  const opcaoPub = (o) => ({ A: o.A, B: o.B, ovA: o.ovA, ovB: o.ovB, ...(o.nota ? { nota: o.nota } : {}), ...(o.grFixo ? { grFixo: o.grFixo } : {}) });
   const textoEquipas = (titulo, o, nomes, lado) => `⚽ ${titulo}\n\n⚪ BRANCOS\n${o.A.map((id) => nomes[id] + (id === fixoDe(o, o.A) ? ' 🧤 GR' : '')).join('\n')}`
     + `\n\n⚫ PRETOS\n${o.B.map((id) => nomes[id] + (id === fixoDe(o, o.B) ? ' 🧤 GR' : '')).join('\n')}${lado?.B ? `\n\n${textoLado(lado)}` : ''}`;
   // Imagem 1080×1350 do cartão (para o WhatsApp), desenhada em canvas.
@@ -2763,9 +2763,8 @@ function secEquipas(el, X = A.ctxEq) {
   const notaCartao = (o) => {
     const t = ['Média das notas de campo (sem a parte de GR' + (grFixoJogo(o) ? ' e sem o GR fixo' : '') + ').'];
     if (grFixoJogo(o)) {
-      const [eq, ov, ef] = o.grFixo?.A && !o.grFixo?.B ? ['Brancos', o.ovA, o.efA] : o.grFixo?.B && !o.grFixo?.A ? ['Pretos', o.ovB, o.efB] : [];
-      t.push('🧤 GR = fica na baliza o jogo todo' + (eq ? ', a outra equipa roda' : '') + '.');
-      if (eq && ef != null && Math.round(ef) !== Math.round(ov)) t.push(`Os ${eq} contam ${Math.round(ef)} (não ${Math.round(ov)}) porque nunca descansam na baliza (stamina).`);
+      const um = !o.grFixo?.A !== !o.grFixo?.B;
+      t.push('🧤 GR = fica na baliza o jogo todo' + (um ? ', a outra equipa roda' : '') + '.');
     }
     t.push('🥅 = melhor GR ' + (grFixoJogo(o) ? 'dos que rodam' : 'da equipa') + ' (só informativo).');
     return t.join(' ');
@@ -2796,7 +2795,7 @@ function secEquipas(el, X = A.ctxEq) {
       <div class="linha"><button class="prim peq" data-k="${k}">${X.vivo ? '✅ Escolher estas' : '✅ Escolher e partilhar no WhatsApp'}</button>${Object.keys(A.restr.cor).length ? '' : `<button class="peq" data-tr="${k}">Trocar cores</button>`}</div></div>`).join('') + ajusteConv();
     ligarAjuste();
     el.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => {
-      const o = ops[b.dataset.tr]; [o.A, o.B] = [o.B, o.A]; [o.ovA, o.ovB] = [o.ovB, o.ovA]; [o.efA, o.efB] = [o.efB, o.efA];
+      const o = ops[b.dataset.tr]; [o.A, o.B] = [o.B, o.A]; [o.ovA, o.ovB] = [o.ovB, o.ovA];
       if (o.grFixo) o.grFixo = { A: o.grFixo.B, B: o.grFixo.A };
       if (VV) X.publicar({ opcoes: ops.map(opcaoPub) });
       mostrar(ops);

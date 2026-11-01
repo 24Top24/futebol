@@ -203,15 +203,13 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
   const somar = (eq, k) => eq.reduce((s, id) => s + val(id, k), 0);
   // Força de uma equipa = a MÉDIA dos jogadores de campo (Rui, 31/10): o GR fixo não conta (os "90" dele não entram);
   // com 1 GR fixo compara-se a média dos 4 de campo dessa equipa com a média dos 5 da outra (que rodam na baliza).
-  //  - os de campo da equipa com GR fixo nunca descansam na baliza, por isso a stamina pesa: cada um conta
-  //    85 % + 15 % × stamina/10 (stamina 10 conta tudo; stamina 4 perde ~9 %).
+  //  (A stamina já não desconta: as contas têm de bater com as notas mostradas — Rui, 01/11.)
   // Para os custos ficarem na mesma escala de sempre, a média multiplica-se pelo tamanho da equipa.
   // Sem nenhum GR fixo no jogo, isto dá o mesmo resultado de sempre.
   const comFixo = fixo.size > 0;
-  const comStamina = (id) => val(id, 'ov') * (0.85 + 0.15 * (val(id, 'sta') / 100));
   const media = (L, f) => (L.length ? L.reduce((s, id) => s + f(id), 0) / L.length : 0);
   const naBaliza = (eq) => eq.find((id) => fixo.has(id));
-  const forcaMedia = (eq) => { const g = naBaliza(eq); return g ? media(eq.filter((id) => id !== g), comStamina) : media(eq, (id) => val(id, 'ov')); };
+  const forcaMedia = (eq) => { const g = naBaliza(eq); return g ? media(eq.filter((id) => id !== g), (id) => nota[id]) : media(eq, (id) => val(id, 'ov')); };
   const forca = (eq) => (comFixo ? forcaMedia(eq) * metade : somar(eq, 'ov'));
   // O melhor GR dos que rodam (o 2.º melhor dos 10, depois do fixo) deve ficar na equipa SEM GR fixo: assim, quando ele
   // estiver na baliza, as duas equipas têm os dois melhores guarda-redes.
@@ -244,10 +242,9 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
       if (Math.max(pa.filter((x) => sA.has(x)).length, pb.filter((x) => sA.has(x)).length) === metade) custo += 40;
     }
     // ovA/ovB = média simples das notas de campo (nota[id], o que o cartão mostra ao lado de cada nome; sem o GR fixo) — dá para
-    // conferir à mão. efA/efB = o que conta mesmo para equilibrar (com a stamina na equipa do GR fixo); só difere com GR fixo.
+    // conferir à mão; é o mesmo que o gerador equilibra.
     const campo = (eq) => { const g = naBaliza(eq); return g ? eq.filter((id) => id !== g) : eq; };
     res.push({ A, B, custo, nota, ovA: media(campo(A), (id) => nota[id]), ovB: media(campo(B), (id) => nota[id]),
-      ...(comFixo ? { efA: forcaMedia(A), efB: forcaMedia(B) } : {}),
       ...(comFixo ? { grFixo: { A: A.find((id) => fixo.has(id)) || null, B: B.find((id) => fixo.has(id)) || null } } : {}) });
   };
   const rec = (start, esc) => {
