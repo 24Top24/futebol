@@ -1,12 +1,12 @@
 import { DB, novoToken, novoPin } from './db.js?v=52';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=33';
-import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=2';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=34';
+import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=3';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=5';
-import { dnaJogo } from './conquistas.js?v=4';
-import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=3';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=6';
+import { dnaJogo } from './conquistas.js?v=5';
+import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=4';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
 
 const $app = document.getElementById('app');
@@ -96,6 +96,8 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 // =====================================================================
 // Numa liga extra, o título leva o nome da liga por baixo (para nunca se confundir com a principal).
 let NOME_LIGA = null, MODO_TODAS = false;
+// ⭐ MVP publicados desta liga (public/mvp.j): entram em cada jogo como j.mvp = [ids] (estatísticas, medalhas e desafios).
+let MVP = {};
 // Visitante (sem PIN nem Google, Rui 31/10): vê o Início geral, a Classificação e os Jogos por cima (resultado e marcadores).
 // Não vê desafios, destaques, conquistas nem os jogadores: no lugar disso, o convite para entrar. Recalcula-se a cada página.
 // No demo há sempre "conta": ?visitante força o modo para testar.
@@ -120,7 +122,7 @@ const titulo = (t) => { const el = document.getElementById('titulo'); el.textCon
 const av = (p) => `<span class="av">${foto(p)}</span>`;
 const vazio = (ic, t, extra = '') => `<div class="vazio"><span class="ic">${ic}</span>${t}${extra ? `<div style="margin-top:12px">${extra}</div>` : ''}</div>`;
 // Jogos terminados (resumo público), do mais recente para o mais antigo.
-const lerRes = (jogosPub) => jogosPub.map((r) => ({ id: r.id, jogo: JSON.parse(r.json || '{}') })).filter((r) => r.jogo.fase === 'fim')
+const lerRes = (jogosPub) => jogosPub.map((r) => ({ id: r.id, jogo: { ...JSON.parse(r.json || '{}'), ...(MVP[r.id]?.ids?.length ? { mvp: MVP[r.id].ids } : {}) } })).filter((r) => r.jogo.fase === 'fim')
   .sort((a, b) => (b.jogo.inicioEpoch || 0) - (a.jogo.inicioEpoch || 0));
 async function dadosPublicos() {
   // 🌍 Todas as ligas juntas: jogadores, jogos e equipas de todas as ligas da pessoa, com a mesma pessoa junta.
@@ -319,11 +321,11 @@ async function paginaJogoPub(id) {
   // "#jogo=<id>&avaliar" (vindo do Início): abre logo a avaliação dos colegas.
   const avaliarJa = id.endsWith('&avaliar');
   id = id.replace(/&avaliar$/, '');
-  const [{ todos, res, games }, euLs, posPub, mvpPub] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null), DB.getPublic('mvp').catch(() => null)]);
+  const [{ todos, res, games }, euLs, posPub, vivo] = await Promise.all([dadosPublicos(), Promise.resolve(lsGet('meu-perfil')), DB.getPublic('posicoes').catch(() => null), DB.getAoVivo().catch(() => null)]);
   const eu = !VISITANTE && euLs && (await DB.ligacaoOk(euLs).catch(() => false)) ? euLs : null;
   const i = res.findIndex((r) => r.id === id);
   if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
-  const j = res[i].jogo, v = vencedorDe(j);
+  const j = res[i].jogo, v = vencedorDe(j), fechadoMVP = mvpFechado(j, res.map((r) => r.jogo), vivo);
   const quem = Object.fromEntries([...(j.brancos || []), ...(j.pretos || [])].map((x) => [x.id, { ...x, ...(todos.find((p) => p.id === x.id) || {}), nomeJogo: x.nome }]));
   const nome = (pid) => esc(quem[pid]?.nomeJogo || '?');
   const lnk = (pid) => (quem[pid] ? `<a class="lnk-j" href="#jogador=${esc(pid)}">${nome(pid)}</a>` : nome(pid));
@@ -341,7 +343,8 @@ async function paginaJogoPub(id) {
   const cab = `<section class="mjogo jcab"><div class="mj-topo"><div class="mj-estado"><span>${esc(diaSemana(j))} · ${esc(dataDe(j))}</span><span>${j.inicioEpoch ? new Date(j.inicioEpoch).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>
     <div class="mj-placar"><div class="mj-eq">${LOGO.B}<span>Brancos</span>${v === 'B' ? '<small class="jvenc">Vencedor</small>' : ''}</div>${meio}<div class="mj-eq">${LOGO.P}<span>Pretos</span>${v === 'P' ? '<small class="jvenc">Vencedor</small>' : ''}</div></div>
     ${j.semGolos ? '' : marcadoresHTML(j)}
-    ${mvpPub?.j?.[id] ? `<div class="mj-mvp">⭐ MVP: ${mvpPub.j[id].ids.map(lnk).join(' · ')} <small class="mute">(${mvpPub.j[id].n} estrelas)</small></div>` : ''}</div>
+    ${MVP[id] ? `<div class="mj-mvp">⭐ MVP: ${MVP[id].ids.map(lnk).join(' · ')} <small class="mute">(${MVP[id].n} de ${MVP[id].votos} estrelas)</small></div>`
+      : fechadoMVP ? '' : '<div class="mj-mvp mute" style="font-weight:400">⭐ Votação do MVP aberta até ao próximo jogo</div>'}</div>
     ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><span class="linha"><button class="peq" id="j-cartao">📤 O meu cartão</button><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></span></div>`
       : !eu && !VISITANTE ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
   if (VISITANTE) { $app.innerHTML = `${nav}${cab}${conviteEntrar('Com conta vês o resto do jogo: o desenrolar, as equipas, os destaques e os teus desafios.')}`; return; }
@@ -370,7 +373,7 @@ async function paginaJogoPub(id) {
     $app.querySelectorAll('[data-jp]').forEach((x) => x.classList.toggle('on', x.dataset.jp === b.dataset.ja));
   }));
   document.getElementById('r-gr')?.addEventListener('change', (e) => $app.querySelector('.resumo').classList.toggle('com-gr', e.target.checked));
-  document.getElementById('j-aval')?.addEventListener('click', () => abrirAvaliacao(id, j, eu, quem));
+  document.getElementById('j-aval')?.addEventListener('click', () => abrirAvaliacao(id, j, eu, quem, fechadoMVP));
   // Cartão partilhável do próprio (imagem para o WhatsApp); os dados do relógio só entram porque é o próprio que partilha.
   document.getElementById('j-cartao')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
@@ -382,7 +385,7 @@ async function paginaJogoPub(id) {
     } catch (err) { console.error(err); toast('Não deu para fazer o cartão'); }
     e.target.disabled = false;
   });
-  if (avaliarJa && joguei) abrirAvaliacao(id, j, eu, quem);
+  if (avaliarJa && joguei) abrirAvaliacao(id, j, eu, quem, fechadoMVP);
   // Tocar num golo do gráfico: quem marcou, quem assistiu e o resultado nesse momento.
   const det = document.getElementById('g-det');
   $app.querySelectorAll('[data-g]').forEach((g) => {
@@ -509,7 +512,7 @@ function campoHTML(j, ev, quem, pos = {}) {
 // dele (as áreas que tem na carta). Guarda sozinho em votosJogo/{jogo}_{votante} = { r: { id: { d } } }. À parte: não entra em
 // calcularCartas; por agora só junta dados.
 // + ⭐ MVP (Rui, 01/11): uma estrela por votante, num jogador do jogo (pode ser ele próprio) → r[id].mvp = true.
-async function abrirAvaliacao(jogoId, j, euId, quem) {
+async function abrirAvaliacao(jogoId, j, euId, quem, fechadoMVP = false) {
   const atual = (await DB.getVotoJogo(jogoId, euId).catch(() => null)) || {};
   const r = { ...(atual.r || {}) };
   const { el: f } = abrirFolha(`⭐ Os colegas no jogo de ${dataDe(j)}`, '<div id="av-corpo"></div>');
@@ -517,13 +520,13 @@ async function abrirAvaliacao(jogoId, j, euId, quem) {
   const OP = [[-1, '▼', 'Pior'], [0, '=', 'Normal'], [1, '▲', 'Melhor']];
   const outros = [...(j.brancos || []), ...(j.pretos || [])].filter((x) => x.id !== euId);
   const nm = (pid) => esc(nomeDe(quem[pid] || { nome: '?' }));
-  const estrela = (pid) => `<button class="av-mvp ${r[pid]?.mvp ? 'on' : ''}" data-mvp="${esc(pid)}" title="MVP do jogo (só uma estrela)" aria-label="MVP: ${nm(pid)}">${r[pid]?.mvp ? '★' : '☆'}</button>`;
+  const estrela = (pid) => `<button class="av-mvp ${r[pid]?.mvp ? 'on' : ''}" data-mvp="${esc(pid)}" ${fechadoMVP ? 'disabled' : ''} title="MVP do jogo (só uma estrela)" aria-label="MVP: ${nm(pid)}">${r[pid]?.mvp ? '★' : '☆'}</button>`;
   const desenhar = () => {
     const n = outros.filter((x) => [-1, 0, 1].includes(r[x.id]?.d)).length;
     const lado = (e, L) => `<h4 class="av-eq">${LOGO[e]} ${e === 'B' ? 'Brancos' : 'Pretos'}</h4>${L.filter((x) => x.id !== euId).map((x) => `<div class="av-j">${av(quem[x.id] || x)}<span>${nm(x.id)}</span>
       <div class="av-op" role="group" aria-label="${nm(x.id)}">${estrela(x.id)}${OP.map(([d, s, t]) => `<button class="av-${d < 0 ? 'pior' : d > 0 ? 'melhor' : 'igual'} ${r[x.id]?.d === d ? 'on' : ''}" data-p="${esc(x.id)}" data-d="${d}" title="${t} do que o normal">${s}<small>${t}</small></button>`).join('')}</div></div>`).join('')}`;
     corpo.innerHTML = `<p class="mute" style="margin-top:0">Como jogou cada um <b>comparado com o normal dele</b>? Um toque basta — grava sozinho. Fica à parte e <b>não mexe nas cartas</b>.</p>
-      <p class="mute" style="margin-top:0">⭐ <b>MVP:</b> dá a tua estrela a um só jogador (podes ser tu). No jogo só aparece quem a ganhou.</p>
+      <p class="mute" style="margin-top:0">⭐ <b>MVP:</b> ${fechadoMVP ? 'a votação fechou quando se abriu o jogo seguinte.' : 'dá a tua estrela a um só jogador (podes ser tu); podes mudar até se abrir o próximo jogo. No jogo só aparece quem ganhou.'}</p>
       <div class="av-j">${av(quem[euId] || { nome: '?' })}<span>${nm(euId)} <small class="mute">(tu)</small></span><div class="av-op">${estrela(euId)}</div></div>
       <div class="prog"><i style="width:${(n / (outros.length || 1)) * 100}%"></i></div><p class="mute" style="font-size:12px;margin:0 0 6px">${n} de ${outros.length} avaliados</p>
       ${lado('B', j.brancos || [])}${lado('P', j.pretos || [])}`;
@@ -588,7 +591,7 @@ async function paginaTabela() {
   const { todos, res } = await dadosPublicos();
   // Épocas de setembro a agosto (decisão do Rui, 29/10): por defeito a época atual; "Sempre" junta todas.
   const PER = [...epocasDe(res).map((e) => ['ep:' + e, 'Época ' + nomeEpoca(e)]), ['tudo', 'Sempre'], ['10', 'Últimos 10 jogos'], ['30d', 'Últimos 30 dias']];
-  const CAT = [['pts', 'Pontos'], ['g', 'Golos'], ['a', 'Assistências'], ['pv', '% vitórias']];
+  const CAT = [['pts', 'Pontos'], ['g', 'Golos'], ['a', 'Assistências'], ['pv', '% vitórias'], ['mvp', '⭐ MVP']];
   A.cPer ||= 'ep:' + epocaAtual(); A.cCat ||= 'pts';   // por defeito: Pontos (pedido do Rui, 23/10)
   const resF = A.cPer.startsWith('ep:') ? filtrarEpoca(res, A.cPer.slice(3)) : A.cPer === '10' ? res.slice(0, 10) : A.cPer === '30d' ? res.filter((r) => (r.jogo.inicioEpoch || 0) >= Date.now() - 30 * 864e5) : res;
   // % vitórias só conta a partir de 3 jogos no período (1 jogo ganho não é 100 %).
@@ -1155,7 +1158,7 @@ function renderPerfil(el, p, d) {
   titulo(proprio ? 'O meu perfil' : nomeDe(p));
   const meus = jogosDe(p.id, d.res);
   const S = estatisticas(d.res).map(comMedias), s = S.find((x) => x.id === p.id);
-  const m = s || comMedias({ j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0 });
+  const m = s || comMedias({ j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0, mvp: 0 });
   // Carta visível: a pública (se o Rui publicou as cartas); o próprio vê a pessoal quando o Rui as mostrar.
   const cartaVis = (proprio && d.estado?.cartasPessoais ? d.mc?.carta : null) || cartaPublica(d.pub, p);
   const pos = cartaVis?.posicao || null;
@@ -1821,7 +1824,7 @@ const grSofreu = (j, ev) => ev.gr || (j.turnos || []).find((x) => x.equipa !== e
 // ---------- Estatísticas de todos os jogos (a partir do que o relógio envia) ----------
 export function estatisticas(resultados) {
   const S = {};
-  const linha = (id, nome) => (S[id] ||= { id, nome, j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0 });
+  const linha = (id, nome) => (S[id] ||= { id, nome, j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0, mvp: 0 });
   for (const { jogo: j } of resultados) {
     if (!j || j.fase !== 'fim') continue;
     const { B: gB, P: gP } = placarDe(j), venc = vencedorDe(j);
@@ -1844,6 +1847,7 @@ export function estatisticas(resultados) {
       if (q && S[q]) S[q].sofr++;
     }
     for (const t of j.turnos || []) if (S[t.jogador]) S[t.jogador].grMs += t.ate - t.de;
+    for (const id of j.mvp || []) if (S[id]) S[id].mvp++;
     // Penáltis: marcados/tentados por quem bate; defesas para o GR.
     for (const pn of j.penaltis || []) {
       if (S[pn.marcador]) { S[pn.marcador].penT++; if (pn.resultado === 'golo') S[pn.marcador].pen++; }
@@ -1857,7 +1861,7 @@ export function estatisticas(resultados) {
 const comMedias = (s) => ({ ...s, pts: s.v * 3 + s.e, pv: s.j ? s.v / s.j : 0, gj: s.jReg ? s.g / s.jReg : null, grJ: s.jGR ? s.grMs / s.jGR : null,
   sofr10: s.grMs ? s.sofr / (s.grMs / 600000) : null });
 const fmtStat = (k, v, s) => k === 'pen' ? (s.penT ? `${v}/${s.penT}` : '–') : v == null ? '–' : k === 'pv' ? Math.round(v * 100) + '%' : k === 'gj' || k === 'sofr10' ? v.toFixed(1).replace('.', ',') : k === 'grJ' ? Math.round(v / 60000) : v;
-const COLS_STATS = [['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.']];
+const COLS_STATS = [['j', 'J'], ['v', 'V'], ['e', 'E'], ['d', 'D'], ['pts', 'Pts'], ['pv', '%V'], ['g', 'Golos'], ['gj', 'G/J'], ['a', 'Assist.'], ['pd', 'Pé D'], ['pe', 'Pé E'], ['cab', 'Cab.'], ['pen', 'Pen.'], ['ag', 'AG'], ['grJ', 'Min GR/J'], ['sofr10', 'Sofr./10min'], ['penDef', 'Pen. def.'], ['mvp', '⭐ MVP']];
 
 // Últimos 5 resultados de um jogador (do mais antigo para o mais recente), para a coluna Forma da tabela.
 function formaDe(id, res) {
@@ -1891,7 +1895,7 @@ function tabelaStats(el, res, players, ord = 'pts', destaque = null, modo = 'adm
   // Telemóvel (pedido do Rui, 23/10: nada de arrastar para o lado): a tabela pública mostra só as colunas que cabem,
   // com a forma por baixo do nome. "Mais informações" troca para as outras colunas; tudo o resto está no perfil de cada um.
   const estreito = pub && innerWidth < 600;
-  const CURTO = { j: 'J', v: 'V', e: 'E', d: 'D', pts: 'Pts', pv: '%V', g: 'G', gj: 'G/J', a: 'A', ag: 'AG', cab: 'Cab', pen: 'Pen', grJ: 'GR', sofr10: 'Sofr', penDef: 'PD' };
+  const CURTO = { j: 'J', v: 'V', e: 'E', d: 'D', pts: 'Pts', pv: '%V', g: 'G', gj: 'G/J', a: 'A', ag: 'AG', cab: 'Cab', pen: 'Pen', grJ: 'GR', sofr10: 'Sofr', penDef: 'PD', mvp: '⭐' };
   let vis = cols;
   if (estreito) {
     const base = A.statsMais ? ['nome', 'v', 'e', 'd', 'gj', 'ag', 'cab', 'pen'] : ['nome', 'j', 'pts', 'g', 'a', 'pv'];
@@ -2191,19 +2195,45 @@ function avaliacoesHTML(avs, jogadores) {
 }
 
 // ⭐ MVP de cada jogo: as estrelas são secretas (votosJogo); o admin conta-as e publica só o vencedor em
-// public/mvp = { j: { jogo: { ids, n } }, ts }. Mínimo 2 estrelas (senão bastava dar a estrela a si próprio); empate = MVPs partilhados.
-const MVP_MIN = 2;
-function contarMVP(votos) {
-  const por = {}, out = {};
+// public/mvp = { j: { jogo: { ids, n, votos } }, ts }. Regras do Rui (01/11): a votação fica aberta até se abrir o jogo
+// seguinte. Publica-se logo que (1) um jogador tem maioria absoluta (6 de 10: mais de metade dos que jogaram), ou (2) todos os
+// que jogaram já votaram; senão (3) quando a votação fecha, com os votos que houver. Empate = MVPs partilhados.
+const jogadoresDe = (j) => [...(j.brancos || []), ...(j.pretos || [])].map((x) => x.id);
+// Fechada: há um jogo mais recente terminado, ou o jogo seguinte já foi aberto (aovivo depois do fim deste).
+function mvpFechado(j, jogos, vivo) {
+  const t = j.inicioEpoch || 0, fim = j.fimEpoch || t;
+  return jogos.some((x) => x.fase === 'fim' && (x.inicioEpoch || 0) > t) || (!!vivo?.fase && (vivo.ts || 0) > fim);
+}
+function contarMVP(votos, jogosPub, vivo) {
+  const J = Object.fromEntries(jogosPub.map((r) => { try { return [r.id, JSON.parse(r.json || '{}')]; } catch { return [r.id, {}]; } }));
+  const jogos = Object.values(J), por = {}, out = {};
   for (const v of votos) for (const [pid, x] of Object.entries(v.r || {})) if (x?.mvp && v.jogo) { const c = (por[v.jogo] ||= {}); c[pid] = (c[pid] || 0) + 1; }
-  for (const [jg, c] of Object.entries(por)) { const n = Math.max(...Object.values(c)); if (n >= MVP_MIN) out[jg] = { ids: Object.keys(c).filter((k) => c[k] === n).sort(), n }; }
+  for (const [jg, c] of Object.entries(por)) {
+    const j = J[jg]; if (!j || j.fase !== 'fim') continue;
+    const N = jogadoresDe(j).length, n = Math.max(...Object.values(c)), total = Object.values(c).reduce((a, b) => a + b, 0);
+    if (n > N / 2 || total >= N || mvpFechado(j, jogos, vivo)) out[jg] = { ids: Object.keys(c).filter((k) => c[k] === n).sort(), n, votos: total };
+  }
   return out;
 }
 async function publicarMVP(db = DB) {
-  const novo = contarMVP(await db.listVotosJogo());
+  const [votos, jogosPub, vivo] = await Promise.all([db.listVotosJogo(), db.listJogosPub(), db.getAoVivo().catch(() => null)]);
+  const novo = contarMVP(votos, jogosPub, vivo);
   const atual = (await db.getPublic('mvp').catch(() => null))?.j || {};
   const chave = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
   if (chave(novo) !== chave(atual)) await db.setPublic('mvp', { j: novo, ts: Date.now() });
+  if (db === DB) MVP = novo;
+}
+// Contar sem esperar pelo Admin: o Rui (todas as ligas) ou o admin da liga, sempre que abrem a app; no máximo de 10 em 10 min.
+async function mvpAoAbrir() {
+  if (DB.demo || Date.now() - Number(lsGet('mvp-contado') || 0) < 600e3) return;
+  const u = await DB.user();
+  if (!u || u.isAnonymous) return;   // admin = conta Google (não gastar leituras a testar os outros)
+  const geral = await DB.para(null).isAdmin(u).catch(() => false);
+  const dbs = geral ? [null, ...(await DB.para(null).todasLigas().catch(() => [])).map((l) => l.id)].map((id) => DB.para(id))
+    : (await DB.isAdmin(u).catch(() => false)) ? [DB] : [];
+  if (!dbs.length) return;
+  lsSet('mvp-contado', String(Date.now()));
+  for (const db of dbs) await publicarMVP(db).catch((e) => console.error('MVP', e));
 }
 
 // ⚽ Golos à mão (Rui, 01/11): depois do jogo, sem relógio nem marcador — quem marcou e quem assistiu, sem minutos.
@@ -3289,6 +3319,7 @@ if (!DB.demo && !MODO_TODAS && !lsGet('meu-perfil')) {
   const meus = {}; try { for (const k of Object.keys(localStorage)) if (k.startsWith('meu-perfil@') && lsGet(k)) meus[k.slice(11)] = lsGet(k); } catch {}
   if (Object.keys(meus).length) await DB.entrarComPinDeFora(meus).then((id) => id && (lsSet('meu-perfil', id), lsSet('perfil-ok-' + id, '1'))).catch(() => {});
 }
+if (!MODO_TODAS) { MVP = (await DB.getPublic('mvp').catch(() => null))?.j || {}; mvpAoAbrir().catch((e) => console.error(e)); }
 if (history.state?.n == null) history.replaceState({ n: 0 }, '');
 let profundidade = history.state.n;
 document.getElementById('voltar').onclick = () => { if (profundidade > 0) history.back(); else location.hash = paiDe(paginaDe(location.hash)); };

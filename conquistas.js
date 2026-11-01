@@ -62,6 +62,7 @@ export function linhaJogo(j, pid) {
     goloGR: meus.some((e) => emGR(e.t)), assistGR: ev.some((e) => e.assist === pid && emGR(e.t)),
     parc: parcN >= 2 ? { nome: nome(parcId), n: parcN } : null,
     tminGolo: t1.length ? Math.round(t1[0] / MIN) : null,
+    mvp: (j.mvp || []).includes(pid),   // ⭐ MVP votado pelos colegas (vem de public/mvp; a app junta-o ao jogo)
   };
 }
 
@@ -388,7 +389,8 @@ export const MEDALHAS = [
   { id: 'guardaRedes', icone: '🧤', nome: 'Guarda-redes', un: 'turnos sem sofrer', niveis: [5, 20, 50], tipo: 'carreira', medir: (c) => c.H.reduce((s, x) => s + balizaDe(x.j, c.pid).limpos, 0) },
   { id: 'muralha', icone: '🧱', nome: 'Muralha', un: 'min seguidos sem sofrer', niveis: [6, 10, 15], tipo: 'recorde', medir: (c) => Math.max(0, ...c.H.map((x) => balizaDe(x.j, c.pid).melhor)) },
   { id: 'hattrick', icone: '🎩', nome: 'Hat-trick', un: 'jogos com 3+ golos', niveis: [1, 5, 10], tipo: 'exibição', medir: (c) => c.H.filter((x) => x.l.g >= 3).length },
-  { id: 'melhorEmCampo', icone: '⭐', nome: 'Melhor em campo', un: 'jogos', niveis: [1, 5, 15], tipo: 'exibição', medir: (c) => c.H.filter((x) => doJogo(x.j).topGA === c.pid).length },
+  { id: 'mvp', icone: '⭐', nome: 'MVP', un: 'vezes MVP', niveis: [1, 5, 15], tipo: 'exibição', medir: (c) => c.H.filter((x) => x.l.mvp).length },
+  { id: 'melhorEmCampo', icone: '🌟', nome: 'Melhor em campo', un: 'jogos', niveis: [1, 5, 15], tipo: 'exibição', medir: (c) => c.H.filter((x) => doJogo(x.j).topGA === c.pid).length },
   { id: 'cabeceador', icone: '🗣️', nome: 'Cabeceador', un: 'golos de cabeça', niveis: [3, 10, 25], tipo: 'carreira', medir: (c) => c.H.reduce((s, x) => s + x.l.cab, 0) },
   { id: 'dupla', icone: '🤜🤛', nome: 'Dupla', un: 'golos com o mesmo colega', niveis: [5, 15, 30], tipo: 'carreira', medir: (c) => {
     const P = {};

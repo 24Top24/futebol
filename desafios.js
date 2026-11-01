@@ -8,7 +8,7 @@
 //  - os ⌚ (relógio) só a quem tem relógio; níveis: 1 fácil, 2 médio, 3 difícil (1 → médio; 2 → fácil+médio ou médio+difícil; 3 → um de cada).
 //  - mês: cada jogador ativo tem um desafio diferente dos outros nesse mês e diferente do seu do mês anterior.
 // Desafios com {p}: o jogo escolhe um colega ou adversário desse jogo (guarda-se o id em p).
-import { linhaJogo, balizaDe, historico } from './conquistas.js?v=4';
+import { linhaJogo, balizaDe, historico } from './conquistas.js?v=5';
 
 const MIN = 60000;
 const hash = (s) => { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
@@ -217,6 +217,8 @@ add('ritmo', '🫀', [
   ['zalta2', 1, '2 minutos acima de 13 km/h', fis((f) => zAlta(f) >= 2), { rel: true }],
   ...[15, 20, 25, 30].map((k, i) => [`zmed${k}`, i < 1 ? 1 : i < 3 ? 2 : 3, `${k} minutos acima de 7 km/h`, fis((f) => zMedia(f) >= k), { rel: true }]),
 ]);
+// ⭐ MVP (Rui, 01/11): eleito pelos colegas depois do jogo; até a votação fechar fica por saber (null).
+add('mvp', '⭐', [['mvp', 3, 'Sê o MVP do jogo (a ⭐ dos colegas)', (c) => (c.j.mvp ? c.l.mvp : null)]]);
 export const DESAFIOS_JOGO = D;
 
 // ---------- Desafio do mês (um por jogador) ----------
@@ -242,6 +244,9 @@ addM('especial', '⭐', [
   ['mcab', 'Marca 2 golos de cabeça', 2, (L) => soma(L, 'cab')], ['mprimeiro', 'Marca o primeiro golo de um jogo', 1, (L) => L.filter((l) => l.primeiro).length],
   ['mvitoria', 'Marca um golo da vitória', 1, (L) => L.filter((l) => l.decisivo).length], ['mhat', 'Faz um hat-trick', 1, (L) => L.filter((l) => l.g >= 3).length],
   ['mga-mesmo', 'Marca e assiste no mesmo jogo, 2 vezes', 2, (L) => L.filter((l) => l.g && l.a).length],
+]);
+addM('mvp', '⭐', [
+  ['mmvp1', 'Sê MVP de um jogo este mês', 1, (L) => L.filter((l) => l.mvp).length], ['mmvp2', 'Sê MVP 2 vezes este mês', 2, (L) => L.filter((l) => l.mvp).length],
 ]);
 addM('fisico', '👟', [
   ['mkm10', 'Corre 10 km no mês', 10, (L, F) => F.reduce((s, f) => s + (f?.m || 0), 0) / 1000, { rel: true, un: 'km' }],
