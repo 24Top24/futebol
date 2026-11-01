@@ -136,7 +136,23 @@ async function fireDb() {
   const app = initializeApp(FIREBASE_CONFIG);
   const db = fs.getFirestore(app);
   const auth = au.getAuth(app);
-  const { doc, getDoc, getDocs, setDoc, deleteDoc, collection, writeBatch } = fs;
+  const { doc, getDoc, collection } = fs;
+  // Leituras poupadas (01/11: a quota grátis de 50 000 leituras/dia esgotou): cada lista de documentos fica 2 min em memória,
+  // porque cada página voltava a ler jogadores, perfis, jogos e equipas inteiros. Qualquer gravação feita aqui (ou mudar de
+  // sessão) apaga a memória toda — o que se grava vê-se logo; o que outros gravam aparece no máximo 2 min depois.
+  const MEM = new Map(), MEM_MS = 120000;
+  const esquecer = () => MEM.clear();
+  const getDocs = async (q) => {
+    const k = q.type === 'collection' ? q.path : null;   // só coleções inteiras (as consultas com filtros vão sempre à rede)
+    const m = k && MEM.get(k);
+    if (m && Date.now() - m.ts < MEM_MS) return m.v;
+    const v = await fs.getDocs(q);
+    if (k) MEM.set(k, { ts: Date.now(), v });
+    return v;
+  };
+  const setDoc = (...a) => { esquecer(); return fs.setDoc(...a); };
+  const deleteDoc = (...a) => { esquecer(); return fs.deleteDoc(...a); };
+  const writeBatch = (d) => { const b = fs.writeBatch(d), commit = b.commit.bind(b); b.commit = () => { esquecer(); return commit(); }; return b; };
   // Liga ativa (29/10/2026): null = a principal, na raiz (como sempre); outra = ligas/{id}/… com as mesmas coleções.
   // contas/ e tickets/ são sempre da raiz (são da pessoa / da app, não de uma liga).
   // A liga da app (usarLiga) é uma só; para ler/gravar noutra liga SEM mexer na da app usa-se DB.para(id) (31/10: mudar a liga
@@ -144,6 +160,7 @@ async function fireDb() {
   let LIGA_APP = null;
   const listRaiz = async (...c) => (await getDocs(collection(db, ...c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const getRaiz = async (...c) => { const d = await getDoc(doc(db, ...c)); return d.exists() ? d.data() : null; };
+  au.onAuthStateChanged(auth, esquecer);   // outra sessão = outras permissões
   const atual = () => new Promise((res) => { const off = au.onAuthStateChanged(auth, (u) => { off(); res(u); }); });
   // Jogador de uma liga → jogador da Futebolada semanal da mesma pessoa (pelas contas Google), com os perfis da raiz. Guardado 5 min.
   const cacheMapa = {};
