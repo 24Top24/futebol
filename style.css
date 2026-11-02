@@ -946,3 +946,4 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .des-nv.n1 { color: #4ade80; } .des-nv.n2 { color: #f1c40f; } .des-nv.n3 { color: #f87171; }
 .des-j.falhou .des-txt { opacity: .6; }
 .des-j.sem .des-txt { opacity: .75; }
+.j-partilha { display: flex; justify-content: center; margin: 10px 0; }

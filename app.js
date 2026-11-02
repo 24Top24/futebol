@@ -347,7 +347,8 @@ async function paginaJogoPub(id) {
       : fechadoMVP ? '' : '<div class="mj-mvp mute" style="font-weight:400">⭐ Votação do MVP aberta até ao próximo jogo</div>'}</div>
     ${joguei ? `<div class="mj-rodape"><span class="mute">Jogaste nos ${joguei === 'B' ? 'Brancos' : 'Pretos'}.</span><span class="linha"><button class="peq" id="j-cartao">📤 O meu cartão</button><button class="prim peq" id="j-aval">⭐ Avaliar os colegas neste jogo</button></span></div>`
       : !eu && !VISITANTE ? '<div class="mj-rodape"><span class="mute">Jogaste? Entra no teu perfil para avaliar os colegas neste jogo.</span><a class="btn peq" href="#eu">Entrar</a></div>' : ''}</section>`;
-  if (VISITANTE) { $app.innerHTML = `${nav}${cab}${conviteEntrar('Com conta vês o resto do jogo: o desenrolar, as equipas, os destaques e os teus desafios.')}`; return; }
+  // 🔗 Partilhar (Rui, 02/11): o link abre este jogo a quem é de fora — nas ligas públicas o jogo inteiro é público.
+  const partilha = MODO_TODAS ? '' : '<div class="j-partilha"><button class="peq" id="j-partilhar">🔗 Partilhar este jogo</button></div>';
   // Painéis
   const graf = ev.length ? `<section class="cartao"><div class="cartao-tit">Desenrolar do jogo <small class="mute">toca num golo</small></div>${graficoJogo(j, ev, dur, nome)}
     <div class="gdet mute" id="g-det">Diferença no marcador ao longo do jogo: para cima a favor dos Brancos, para baixo a favor dos Pretos.</div></section>` : '';
@@ -364,10 +365,20 @@ async function paginaJogoPub(id) {
   const dnaH = htmlDNAJogo(j, jogosC, quem, { eu: joguei ? eu : null, fisEu, fisAntes });
   const fisH = joguei ? htmlFisicoJogo(fisEu, j) : '';
   const desH = joguei ? htmlDesafiosJogo(j, eu, games.find((g) => g.id === j.gameId), { fis: fisEu }) : '';
-  $app.innerHTML = `${nav}${cab}
+  $app.innerHTML = `${nav}${cab}${partilha}
     <div class="tabs jtabs" role="tablist"><button data-ja="resumo" class="on">Resumo</button><button data-ja="stats">Estatísticas</button><button data-ja="equipas">Equipas</button></div>
     <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${desH}${dnaH}${fisH}${resumo}</div></div>
-      <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>`;
+      <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>
+    ${VISITANTE ? conviteEntrar('Com conta vês também os teus desafios, o teu físico e avalias os colegas.') : ''}`;
+  document.getElementById('j-partilhar')?.addEventListener('click', () => {
+    const url = `${location.origin}${location.pathname}#${ligaGuardada() || LINK}/jogo=${encodeURIComponent(id)}`;
+    const res = j.semGolos ? (v === 'E' ? 'empate' : `ganharam os ${v === 'B' ? 'Brancos' : 'Pretos'}`) : `Brancos ${marcaDe(j, 'B')} – ${marcaDe(j, 'P')} Pretos`;
+    const texto = `⚽ ${NOME_LIGA || NOME_MENU || 'Futebolada'} · ${diaSemana(j)} ${dataDe(j)}: ${res}`;
+    if (navigator.share) navigator.share({ title: 'Futebolada', text: texto, url }).catch((e) => e.name !== 'AbortError' && copiar(`${texto}
+${url}`));
+    else copiar(`${texto}
+${url}`);
+  });
   $app.querySelectorAll('[data-ja]').forEach((b) => (b.onclick = () => {
     $app.querySelectorAll('[data-ja]').forEach((x) => x.classList.toggle('on', x === b));
     $app.querySelectorAll('[data-jp]').forEach((x) => x.classList.toggle('on', x.dataset.jp === b.dataset.ja));
