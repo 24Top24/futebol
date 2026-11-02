@@ -151,7 +151,25 @@ export function tercos(gr) {
 }
 
 // Resumo físico compacto de um jogador num jogo (o que vai para minhacarta/{id}.fisico — só o próprio e o admin leem).
-export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null } = {}) {
+// Frequência cardíaca do jogo (fit.hr = [[ms de jogo, bpm]]; antes do apito vem com 0 e não conta): média, máxima e o tempo
+// em 5 zonas pela FC máxima (a do perfil, se houver; senão a maior do jogo). Rui, 02/11.
+export const ZONAS_FC = ['Leve', 'Moderado', 'Aeróbio', 'Limiar', 'Máximo'];
+export function resumoFC(fit, fcMax = null) {
+  const h = (fit?.hr || []).filter((x) => x[0] > 0 && x[1] > 30 && x[1] < 230);
+  if (h.length < 10) return null;
+  const max = Math.max(...h.map((x) => x[1])), ref = fcMax || max;
+  const z = [0, 0, 0, 0, 0];
+  let soma = 0, ms = 0;
+  for (let i = 0; i < h.length; i++) {
+    const dt = i ? Math.min(5000, Math.max(0, h[i][0] - h[i - 1][0])) : 1000;
+    soma += h[i][1] * dt; ms += dt;
+    const pct = h[i][1] / ref;
+    z[pct < 0.6 ? 0 : pct < 0.7 ? 1 : pct < 0.8 ? 2 : pct < 0.9 ? 3 : 4] += dt;
+  }
+  return { med: Math.round(soma / (ms || 1)), max, ref, zonas: z.map((x) => Math.round(x / 1000)) };
+}
+
+export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fcMax = null } = {}) {
   if (!fit) return null;
   const serie = serieVelocidade(fit);
   if (!serie.length && !(fit.gps || []).length) return null;
@@ -169,5 +187,6 @@ export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null } =
     grelha: fit.gps && campo && !!fit.gpsXY === !!campo.xy && (campo.ref || null) === (fit.gpsRef || null)
       ? grelhaHeatmap(fit.gps, campo, { defendeBalnearios, baliza: bal }) : null,
     precisao: fit.calib?.metodo || ((fit.calib?.pontos || []).length >= 2 ? 'gps' : 'altura'),
+    fc: resumoFC(fit, fcMax), calorias: fit.calorias ?? null, passos: fit.passos ?? null, temGps: !!(fit.gps || []).length,
   };
 }

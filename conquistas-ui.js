@@ -3,7 +3,7 @@
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
 import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=6';
 import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=5';
-import { ZONAS_VEL, LIM_KMH, tercos } from './fisico.js?v=2';
+import { ZONAS_VEL, LIM_KMH, ZONAS_FC, tercos } from './fisico.js?v=3';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pt = (v, d = 1) => (v == null ? '–' : (Math.round(v * 10 ** d) / 10 ** d).toLocaleString('pt-PT'));
@@ -49,7 +49,22 @@ export function htmlFisicoJogo(fis, j) {
       <div class="zleg">${zs.map((z, i) => `<span><i class="z${i}"></i>${ZONAS_VEL[i]} <small>${lim[i]} · ${Math.round(z[0] / 60)}'</small></span>`).join('')}</div>` : ''}
     ${(fis.sprints || []).length || fis.vmax?.t != null ? `<div class="mute fis-leg">Linha do tempo: <i class="sp-ic"></i> sprint · <i class="vm-ic"></i> velocidade máxima</div>
       <div class="tline">${tl}<div class="tl-min">${marcas.join('')}</div></div>` : ''}
-    ${fis.precisao === 'altura' ? '<p class="mute" style="margin:8px 0 0">Distância e velocidade estimadas pela passada (sem calibração com GPS): valores aproximados.</p>' : ''}</section>`;
+    ${fis.precisao === 'altura' ? '<p class="mute" style="margin:8px 0 0">Distância e velocidade estimadas pela passada (sem calibração com GPS): valores aproximados.</p>' : ''}</section>
+    ${htmlFC(fis)}
+    ${fis.grelha ? htmlHeatmap(fis.grelha, 'Onde andaste neste jogo') : fis.temGps === false ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
+      <p class="mute" style="margin:0">Este jogo foi gravado sem GPS, por isso não há mapa. Liga o GPS no relógio antes do jogo.</p></section>` : ''}`;
+}
+
+// ❤ Frequência cardíaca do jogo: média, máxima, zonas; e calorias e passos (Rui, 02/11).
+function htmlFC(fis) {
+  const fc = fis.fc;
+  if (!fc && fis.calorias == null && fis.passos == null) return '';
+  const tot = (fc?.zonas || []).reduce((a, b) => a + b, 0) || 1;
+  return `<section class="cartao fis-jogo"><div class="cartao-tit">❤ Coração e esforço <span class="tag">🔒 só tu</span></div>
+    <div class="fis-nums">${fc ? `<div><b>${fc.med}</b><span>bpm média</span></div><div><b>${fc.max}</b><span>bpm máx.</span></div>` : ''}
+      ${fis.calorias != null ? `<div><b>${fis.calorias}</b><span>kcal</span></div>` : ''}${fis.passos != null ? `<div><b>${fis.passos.toLocaleString('pt-PT')}</b><span>passos</span></div>` : ''}</div>
+    ${fc ? `<div class="mute fis-leg">Zonas de frequência cardíaca (% da FC máx. ${fc.ref})</div><div class="zbar">${fc.zonas.map((z, i) => `<i class="z${i}" style="width:${(z / tot) * 100}%" title="${ZONAS_FC[i]}: ${Math.round(z / 60)} min"></i>`).join('')}</div>
+      <div class="zleg">${fc.zonas.map((z, i) => `<span><i class="z${i}"></i>${ZONAS_FC[i]} <small>${['< 60', '60–70', '70–80', '80–90', '> 90'][i]} % · ${Math.round(z / 60)}'</small></span>`).join('')}</div>` : ''}</section>`;
 }
 
 // ---------- Heatmap 8×4 no campo vertical (x = 0 é a baliza que defende, em baixo) ----------

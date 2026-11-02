@@ -3,8 +3,8 @@ import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVot
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=36';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
-import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=2';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=7';
+import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=3';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=8';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
@@ -1681,7 +1681,12 @@ async function publicarCartasPessoais() {
   const dataJogo = ultimo ? dataDe(ultimo) : null;
   for (const p of ativos) {
     const c = cartas[p.id];
-    if (!c || c.overall == null) continue;
+    // Ainda sem carta (faltam votos): o físico dos jogos grava-se na mesma (Rui, 02/11 — senão quem tem relógio não via nada).
+    if (!c || c.overall == null) {
+      if (fisicoDe[p.id] && JSON.stringify(antes[p.id]?.fisico) !== JSON.stringify(fisicoDe[p.id]))
+        { const { id: _x, fisicoJson: _f, ...resto } = antes[p.id] || {}; await DB.setMinhaCarta(p.id, { ...resto, fisico: fisicoDe[p.id], ts: Date.now() }); }
+      continue;
+    }
     const carta = { stats: c.stats, overall: c.overall, posicao: c.posicao || null, provisoria: !!c.provisoria, estimada: !!c.estimada, conhecem: c.conhecem || 0 };
     const foto = { mes, ov: c.overall, st: Object.fromEntries(AREAS.map((a) => [a.k, c.stats[a.k] != null ? Math.round(c.stats[a.k] * 10) : null])) };
     const hist = [...(antes[p.id]?.hist || [])];
@@ -1760,7 +1765,7 @@ async function resumosFisicos(brutos) {
   for (const r of comFit) {
     const dono = r.fit.dono || P.eu;
     if (!dono) continue;
-    const res = resumoFisico(r.jogo, r.fit, dono, { campo });
+    const res = resumoFisico(r.jogo, r.fit, dono, { campo, fcMax: dono === P.eu ? P.fcMax : null });
     if (res) (out[dono] ||= {})[r.jogo.gameId || r.id] = { ...res, data: dataDe(r.jogo) };
   }
   return out;
