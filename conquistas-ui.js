@@ -3,7 +3,7 @@
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
 import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=6';
 import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=5';
-import { ZONAS_VEL, LIM_KMH, ZONAS_FC, tercos } from './fisico.js?v=4';
+import { ZONAS_VEL, LIM_KMH, ZONAS_FC, tercos } from './fisico.js?v=5';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pt = (v, d = 1) => (v == null ? '–' : (Math.round(v * 10 ** d) / 10 ** d).toLocaleString('pt-PT'));

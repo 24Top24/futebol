@@ -83,7 +83,8 @@ export function sprints(serie, { vmaxPessoal = null, baliza = [] } = {}) {
 // sobrar pouco o heatmap não aparece (melhor nada do que um desenho inventado).
 export const GPS_MAX_M = 8;
 const R = 6371000, rad = Math.PI / 180;
-const bons = (gps = []) => gps.filter((p) => p && p[1] != null && p[2] != null && (p[3] == null || p[3] <= GPS_MAX_M));
+// Há relógios que marcam sempre 125 m de precisão (valor de "não sei", Rui 02/11): aí vale o número de satélites (≥ 6).
+const bons = (gps = []) => gps.filter((p) => p && p[1] != null && p[2] != null && (p[3] == null || p[3] <= GPS_MAX_M || (p[3] >= 100 && (p[6] || 0) >= 6)));
 const plano = (lat0, lon0) => ([, lat, lon]) => [(lon - lon0) * rad * R * Math.cos(lat0 * rad), (lat - lat0) * rad * R];
 const proj = (campo) => (campo.xy ? (p) => [p[1] - campo.cx, p[2] - campo.cy] : plano(campo.lat0, campo.lon0));
 const pct = (arr, q) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))]; };
