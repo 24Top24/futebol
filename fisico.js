@@ -18,7 +18,15 @@ export function serieVelocidade(fit = {}) {
   const bins = fit.bins || [];
   const a = fit.calib?.a ?? -0.385, b = fit.calib?.b ?? 0.0105;
   const passada = (cad) => Math.max(0.45, Math.min(2.2, a + b * cad));
-  return bins.map((x) => { const cad = (x[1] || 0) * 12; return [x[0], x[1] ? (x[1] * passada(cad)) / 5 : 0, 5000]; });
+  // O contador de passos entrega aos solavancos (0, 2, 25, 3…): um bin de 25 passos em 5 s seriam 300 passos/min, impossível.
+  // Por isso: média de 3 bins (15 s) e no máximo 230 passos/min (Rui, 02/11 — sem isto saíam sprints a 40 km/h).
+  const P = bins.map((x) => x[1] || 0), MAXP = 230 / 12;
+  const liso = P.map((_, i) => Math.min(MAXP, (P[i] + (P[i - 1] ?? P[i]) + (P[i + 1] ?? P[i])) / 3));
+  let serie = bins.map((x, i) => [x[0], liso[i] ? (liso[i] * passada(liso[i] * 12)) / 5 : 0, 5000]);
+  // A distância total fica a do relógio (o modelo de passada dele), quando a mediu: a nossa passada sem calibração com GPS exagera.
+  const total = distancia(serie);
+  if (fit.distancia > 0 && total > 0 && !(fit.calib?.pontos || []).length) serie = serie.map(([t, v, dt]) => [t, v * fit.distancia / total, dt]);
+  return serie;
 }
 
 // Intervalos [de, até] (ms desde o início do jogo) em que o jogador esteve na baliza — ficam fora dos sprints.
