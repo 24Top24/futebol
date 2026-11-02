@@ -48,7 +48,7 @@ async function partilharWhatsApp(png, texto, nome) {
   copiar(texto);
 }
 async function copiar(t) {
-  try { await navigator.clipboard.writeText(t); toast('Copiado ✔'); } catch { prompt('Copia:', t); }
+  try { await navigator.clipboard.writeText(t); toast('Copiado ✔'); } catch { try { prompt('Copia:', t); } catch { toast('Não deu para copiar'); } }   // há browsers (apps embutidas) sem prompt()
 }
 
 // Baralha de forma estável (sempre a mesma ordem para o mesmo votante).
@@ -3012,7 +3012,7 @@ function secEquipas(el, X = A.ctxEq) {
         ${campoLados(ladoInicio)}<p class="mute" style="margin-top:4px">Pode trocar-se no ecrã do START do marcador.</p>
         <p class="mute">Ficam como as equipas do jogo de hoje (link geral, relógio e marcador).</p>
         ${X.irMarcador ? '<button class="prim" id="ir-marc" style="width:100%;padding:14px;font-size:18px">⏱ Abrir o marcador com estas equipas</button>'
-          : '<p class="mute">No relógio: "Descarregar equipas" e START GAME.</p>'}
+          : `<p class="mute">No relógio: ${DB.ligaAtual() ? `Preparar → 🏆 Liga → ${esc(NOME_LIGA || 'esta liga')}, depois` : ''} "Descarregar equipas" e START GAME.</p>`}
         <button class="peq" id="refazer" style="margin-top:8px">Refazer equipas</button></div>`;
       g('ir-marc')?.addEventListener('click', X.irMarcador);
       g('refazer').onclick = () => g('gerar').click();
