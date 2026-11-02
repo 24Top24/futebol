@@ -2007,6 +2007,7 @@ function htmlSaude(j, f, P, eu) {
 
 // ---------- Jogos (admin): lista compacta (data + resultado); tocar abre o editor para corrigir ----------
 async function secJogos(el) {
+  await aceitarRelogios(DB, (await DB.user().catch(() => null))?.uid).catch((e) => console.error('Relógios', e));
   const [RV, pubs] = await Promise.all([resultadosValidos(), DB.listJogosPub()]);
   const brutos = RV.validos;
   const res = brutos.map((r) => ({ id: r.id, bruto: r, ...JSON.parse(r.json || '{}') })).filter((r) => r.jogo)
@@ -2244,7 +2245,35 @@ async function mvpAoAbrir() {
     : (await DB.isAdmin(u).catch(() => false)) ? [DB] : [];
   if (!dbs.length) return;
   lsSet('mvp-contado', String(Date.now()));
-  for (const db of dbs) await publicarMVP(db).catch((e) => console.error('MVP', e));
+  let novos = 0;
+  for (const db of dbs) {
+    const n = await aceitarRelogios(db, u.uid).catch((e) => (console.error('Relógios', e), 0));
+    if (n && db === DB) novos += n;
+    await publicarMVP(db).catch((e) => console.error('MVP', e));
+  }
+  if (novos) { toast(`⌚ ${novos} jogo${novos > 1 ? 's' : ''} do relógio ${novos > 1 ? 'entraram' : 'entrou'} nos resultados`); rota(); }
+}
+
+// ⌚ Jogos dos relógios entram sozinhos (Rui, 02/11): 1 por jogo, sem ter de escolher em Admin → Jogos. Com vários relógios no
+// mesmo jogo conta o de quem está a administrar (eu), senão o primeiro que chegou. Corre quando o admin abre a app (só ele lê
+// resultados/). Devolve quantos entraram.
+async function aceitarRelogios(db, eu) {
+  const [brutos, pubs] = await Promise.all([db.listResultados(), db.listJogosPub().catch(() => [])]);
+  const props = brutos.filter(eProposta);
+  if (!props.length) return 0;
+  const escolhidos = new Set(pubs.map((x) => x.de).filter(Boolean));
+  const gid = (r) => { try { return JSON.parse(r.json || '{}').jogo?.gameId || r.gameId || ''; } catch { return r.gameId || ''; } };
+  const jaTem = new Set([...brutos.filter((r) => !eProposta(r) || escolhidos.has(r.id)).map(gid), ...pubs.map((x) => { try { return JSON.parse(x.json || '{}').gameId; } catch { return ''; } })].filter(Boolean));
+  const grupos = {};
+  for (const r of props) if (!escolhidos.has(r.id) && !(gid(r) && jaTem.has(gid(r)))) (grupos[gid(r) || r.id] ||= []).push(r);
+  let n = 0;
+  for (const L of Object.values(grupos)) {
+    const r = L.find((x) => x.dono === eu) || [...L].sort((a, b) => (a.ts || 0) - (b.ts || 0))[0];
+    let jogo = null; try { jogo = JSON.parse(r.json || '{}').jogo; } catch {}
+    if (!jogo) continue;
+    await db.saveJogoPub(r.id, { de: r.id, ts: Date.now(), json: JSON.stringify(jogo) }); n++;
+  }
+  return n;
 }
 
 // ⚽ Golos à mão (Rui, 01/11): depois do jogo, sem relógio nem marcador — quem marcou e quem assistiu, sem minutos.
