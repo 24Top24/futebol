@@ -2171,6 +2171,8 @@ async function editarJogo(r, pub, P, euFisico, depois) {
       j.turnos = (j.turnos || []).sort((a, b) => a.de - b.de);
       // Quem estava na baliza a sofrer cada golo, pelas trocas de GR corrigidas.
       if (j.turnos.length) for (const e of j.eventos) e.gr = j.turnos.find((x) => x.equipa !== e.equipa && e.t >= x.de && e.t < x.ate)?.jogador || e.gr || null;
+      // Sem trocas de GR (apagadas todas: não houve controlo de GR — Rui, 02/11): ninguém esteve na baliza a sofrer.
+      else { for (const e of j.eventos) delete e.gr; delete j.baliza; }
       // Penáltis marcados que já não têm golo: saem.
       j.penaltis = (j.penaltis || []).filter((pn) => pn.resultado !== 'golo' || j.eventos.some((e) => e.parte === 'pen' && e.marcador === pn.marcador));
       if (j.eventos.length) { delete j.placar; delete j.semGolos; delete j.vencedor; }
