@@ -67,21 +67,38 @@ function htmlFC(fis) {
       <div class="zleg">${fc.zonas.map((z, i) => `<span><i class="z${i}"></i>${ZONAS_FC[i]} <small>${['< 60', '60–70', '70–80', '80–90', '> 90'][i]} % · ${Math.round(z / 60)}'</small></span>`).join('')}</div>` : ''}</section>`;
 }
 
+// Escala de cor do heatmap (0 → 1): azul, verde, amarelo, laranja, vermelho.
+const CALOR = [[0, [44, 123, 230]], [0.35, [0, 196, 140]], [0.6, [255, 214, 0]], [0.8, [255, 122, 0]], [1, [232, 0, 28]]];
+function corCalor(a) {
+  const i = Math.max(1, CALOR.findIndex(([p]) => p >= a)), [p0, c0] = CALOR[i - 1], [p1, c1] = CALOR[i];
+  const k = (a - p0) / (p1 - p0 || 1);
+  return `rgb(${c0.map((c, j) => Math.round(c + (c1[j] - c) * k)).join(',')})`;
+}
+
 // ---------- Heatmap 8×4 no campo vertical (x = 0 é a baliza que defende, em baixo) ----------
 export function htmlHeatmap(grelha, titulo = 'Onde andaste') {
   if (!grelha) return `<section class="cartao"><div class="cartao-tit">🗺️ ${esc(titulo)}</div>
     <p class="mute" style="margin:0">Precisa do GPS no relógio. Aparece quando houver jogos gravados com GPS.</p></section>`;
   const max = Math.max(1, ...grelha.s.flat());
   // Linhas do desenho: de cima (ataque, x alto) para baixo (defesa, x = 0); colunas: largura (y).
-  const cel = [];
-  for (let x = grelha.nx - 1; x >= 0; x--) for (let y = 0; y < grelha.ny; y++) {
-    const v = grelha.s[y]?.[x] || 0, a = v / max;
-    cel.push(`<i style="background:rgba(255,${Math.round(200 - a * 170)},0,${(a * 0.85).toFixed(2)})" title="${Math.round(v / 60)} min"></i>`);
+  // Desenho suave (Rui, 02/11): cada célula é um retângulo de cor forte (azul → verde → amarelo → vermelho) e o SVG desfoca-as
+  // umas nas outras — fica uma mancha natural em vez de quadrados. A grelha guardada continua a ser a mesma (8 × 4).
+  // A escala vai do mínimo ao máximo deste mapa (contraste esticado): num jogo em que se anda por todo o lado, as diferenças veem-se.
+  const cel = [], min = Math.min(...grelha.s.flat().filter((v) => v > 0), max);
+  for (let x = grelha.nx - 1, r = 0; x >= 0; x--, r++) for (let y = 0; y < grelha.ny; y++) {
+    const v = grelha.s[y]?.[x] || 0;
+    if (!v) continue;
+    const a = max > min ? Math.pow((v - min) / (max - min), 0.85) : 1;
+    cel.push(`<rect x="${y - 0.1}" y="${r - 0.1}" width="1.2" height="1.2" fill="${corCalor(a)}" fill-opacity="${(0.6 + a * 0.35).toFixed(2)}"><title>${Math.round(v / 60)} min</title></rect>`);
   }
+  const svg = `<svg class="hm-svg" viewBox="0 0 ${grelha.ny} ${grelha.nx}" preserveAspectRatio="none" aria-hidden="true">
+    <defs><filter id="hm-blur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="0.38"/></filter></defs>
+    <g filter="url(#hm-blur)">${cel.join('')}</g></svg>`;
   const t = grelha.orientado ? tercos(grelha) : null;
   return `<section class="cartao"><div class="cartao-tit">🗺️ ${esc(titulo)}${grelha.jogos ? ` <small class="mute">${grelha.jogos} jogo${grelha.jogos > 1 ? 's' : ''}</small>` : ''}</div>
-    <div class="heat"><div class="heat-campo" style="grid-template-columns:repeat(${grelha.ny},1fr)">${cel.join('')}<span class="hm-meio"></span><span class="hm-bal cima"></span><span class="hm-bal baixo"></span></div>
-      <div class="mute heat-leg">${grelha.orientado ? '⬆ ataque · a tua baliza ⬇' : 'Sem saber o lado (falta o lado de início do jogo)'}</div></div>
+    <div class="heat"><div class="heat-campo">${svg}<span class="hm-meio"></span><span class="hm-circ"></span><span class="hm-bal cima"></span><span class="hm-bal baixo"></span></div>
+      <div class="hm-escala"><span>pouco</span><i></i><span>muito tempo</span></div>
+      <div class="mute heat-leg">${grelha.orientado ? '⬆ ataque · a tua baliza ⬇' : 'Sem saber para que lado atacaste: falta a marca da ponta dos balneários no relógio'}</div></div>
     ${t ? `<div class="tercos"><div><b>${t.ata}%</b><span>ataque</span></div><div><b>${t.meio}%</b><span>meio</span></div><div><b>${t.def}%</b><span>defesa</span></div></div>` : ''}</section>`;
 }
 

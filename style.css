@@ -912,9 +912,12 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .tl-min { position: absolute; left: 0; right: 0; top: 36px; font-size: 10px; color: var(--mute); }
 .tl-min span { position: absolute; transform: translateX(-50%); }
 .heat { display: flex; flex-direction: column; align-items: center; }
-.heat-campo { position: relative; display: grid; width: 160px; height: 280px; border: 2px solid #ffffffb0; border-radius: 6px; overflow: hidden;
-  background: repeating-linear-gradient(180deg, #1c7a3a 0 35px, #1a7035 35px 70px); }
-.heat-campo i { display: block; }
+.heat-campo { position: relative; width: 180px; height: 300px; border: 2px solid #ffffffb0; border-radius: 6px; overflow: hidden;
+  background: repeating-linear-gradient(180deg, #14532b 0 37.5px, #124a27 37.5px 75px); }
+.hm-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hm-circ { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border: 2px solid #ffffff90; border-radius: 50%; }
+.hm-escala { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--mute); margin-top: 6px; }
+.hm-escala i { display: block; width: 90px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgb(44,123,230), rgb(0,196,140), rgb(255,214,0), rgb(255,122,0), rgb(232,0,28)); }
 .hm-meio { position: absolute; left: 0; right: 0; top: 50%; border-top: 2px solid #ffffff90; }
 .hm-bal { position: absolute; left: 50%; width: 50px; margin-left: -25px; height: 16px; border: 2px solid #ffffff90; }
 .hm-bal.cima { top: -2px; border-top: 0; } .hm-bal.baixo { bottom: -2px; border-bottom: 0; }
