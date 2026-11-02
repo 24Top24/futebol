@@ -154,8 +154,10 @@ async function fireDb() {
   const carimbo = async (path) => {
     const pai = path.split('/').slice(0, -1).join('/'), k = 'carimbo:' + pai, m = MEM.get(k);
     if (m && Date.now() - m.ts < 60000) return m.v;
-    const d = await getDoc(doc(db, ...(pai ? pai.split('/') : []), 'aovivo', 'jogo')).catch(() => null);
-    const x = d?.exists() ? d.data() : {}, v = `${x.fase || ''}|${x.ts || ''}|${x.gameId || ''}`;
+    // + public/versao.j: o admin muda-o ao corrigir/apagar um jogo ou equipas, e os outros telemóveis veem logo (Rui, 02/11).
+    const raiz = pai ? pai.split('/') : [];
+    const [d, ver] = await Promise.all(['aovivo/jogo', 'public/versao'].map((c) => getDoc(doc(db, ...raiz, ...c.split('/'))).catch(() => null)));
+    const x = d?.exists() ? d.data() : {}, v = `${x.fase || ''}|${x.ts || ''}|${x.gameId || ''}|${(ver?.exists() && ver.data().j) || ''}`;
     MEM.set(k, { ts: Date.now(), v });
     return v;
   };
@@ -202,6 +204,8 @@ async function fireDb() {
   const fazer = (L) => {
   const P = (...s) => (L() ? ['ligas', L(), ...s] : s);
   const D = (...s) => doc(db, ...P(...s));
+  // Jogos/equipas mudaram: as caches dos outros telemóveis deixam de valer (carimbo). Só o admin escreve public/; o resto ignora.
+  const mexeu = () => setDoc(D('public', 'versao'), { j: Date.now() }).catch(() => {});
   const Cl = (...s) => collection(db, ...P(...s));
   const list = async (c) => (await getDocs(Cl(c))).docs.map((d) => ({ id: d.id, ...d.data() }));
   const get = async (c, id, ...mais) => { const d = await getDoc(D(c, id, ...mais)); return d.exists() ? d.data() : null; };
@@ -515,8 +519,8 @@ async function fireDb() {
     // public/cartas deixou de ser legível para os jogadores (cartas sempre privadas): sem permissão devolve null.
     getPublic: (d) => get('public', d).catch((e) => { if (d === 'cartas') return null; throw e; }),
     setPublic: (d, v) => setDoc(D('public', d), v),
-    async saveGame(g) { const id = g.id || novoToken(10); const { id: _, ...d } = g; await setDoc(D('games', id), d); return id; },
-    deleteGame: (id) => deleteDoc(D('games', id)),
+    async saveGame(g) { const id = g.id || novoToken(10); const { id: _, ...d } = g; await setDoc(D('games', id), d); await mexeu(); return id; },
+    deleteGame: (id) => deleteDoc(D('games', id)).then(mexeu),
     listGames: () => list('games'),
     listResultados: () => list('resultados'),
     // ⌚ Relógios com Google: o fit (FC, GPS) de cada proposta está à parte (só o próprio e o admin leem); quem é cada uid.
@@ -533,8 +537,8 @@ async function fireDb() {
     saveResultado: (id, d) => setDoc(D('resultados', id), d),
     // Resumo público de cada jogo (sem dados de saúde): alimenta as estatísticas do link geral.
     listJogosPub: () => list('jogos'),
-    saveJogoPub: (id, d) => setDoc(D('jogos', id), d),
-    deleteJogoPub: (id) => deleteDoc(D('jogos', id)),
+    saveJogoPub: (id, d) => setDoc(D('jogos', id), d).then(mexeu),
+    deleteJogoPub: (id) => deleteDoc(D('jogos', id)).then(mexeu),
     // Jogo de hoje ao vivo: aovivo/jogo (todos leem; escrevem moderadores e admin), em tempo real.
     // d: 'jogo' (o a sério) ou 'teste' (jogo de teste dos moderadores, não conta para nada).
     getAoVivo: (d = 'jogo') => get('aovivo', d),
