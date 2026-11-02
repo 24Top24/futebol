@@ -66,9 +66,11 @@ export function contarConvivio(jogos) {
   return C;
 }
 
+// Overall de um jogador de campo: sem a nota de GR (Rui, 02/11 — a baliza não conta para a pontuação global).
+// Quem só joga à baliza tem o overall = nota de GR (ver calcularCartas).
 export function overallDe(stats) {
   let s = 0, p = 0;
-  for (const a of AREAS) if (stats[a.k] != null) { s += stats[a.k] * a.peso; p += a.peso; }
+  for (const a of AREAS) if (a.k !== 'gr' && stats[a.k] != null) { s += stats[a.k] * a.peso; p += a.peso; }
   return p ? Math.round((s / p) * 10) : null;
 }
 
