@@ -84,11 +84,14 @@ export function htmlHeatmap(grelha, titulo = 'Onde andaste') {
   // Desenho suave (Rui, 02/11): cada célula é um retângulo de cor forte (azul → verde → amarelo → vermelho) e o SVG desfoca-as
   // umas nas outras — fica uma mancha natural em vez de quadrados. A grelha guardada continua a ser a mesma (8 × 4).
   // A escala vai do mínimo ao máximo deste mapa (contraste esticado): num jogo em que se anda por todo o lado, as diferenças veem-se.
-  const cel = [], min = Math.min(...grelha.s.flat().filter((v) => v > 0), max);
+  // O topo da escala é o percentil 90, não o máximo (Rui, 02/11): a baliza (muito tempo parado lá) fica vermelha e não apaga o resto.
+  const nz = grelha.s.flat().filter((v) => v > 0).sort((a, b) => a - b);
+  const min = nz[0] ?? 0, topo = nz.length ? nz[Math.floor((nz.length - 1) * 0.9)] : max;
+  const cel = [];
   for (let x = grelha.nx - 1, r = 0; x >= 0; x--, r++) for (let y = 0; y < grelha.ny; y++) {
     const v = grelha.s[y]?.[x] || 0;
     if (!v) continue;
-    const a = max > min ? Math.pow((v - min) / (max - min), 0.85) : 1;
+    const a = topo > min ? Math.min(1, (v - min) / (topo - min)) : 1;
     cel.push(`<rect x="${y - 0.1}" y="${r - 0.1}" width="1.2" height="1.2" fill="${corCalor(a)}" fill-opacity="${(0.6 + a * 0.35).toFixed(2)}"><title>${Math.round(v / 60)} min</title></rect>`);
   }
   const svg = `<svg class="hm-svg" viewBox="0 0 ${grelha.ny} ${grelha.nx}" preserveAspectRatio="none" aria-hidden="true">
