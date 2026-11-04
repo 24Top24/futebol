@@ -3538,6 +3538,20 @@ document.getElementById('ticket').onclick = abrirTicket;
 // Android/Chrome/Edge: botão "Instalar app" quando o browser deixa. iPhone: o Safari não tem botão — explica-se o caminho.
 // App instalável: o service worker só existe no site real (na cópia de demonstração não há sw.js).
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && !DB.demo) navigator.serviceWorker.register('sw.js').catch((e) => console.error(e));
+// A app instalada fica aberta em memória dias a fio, por isso uma correção só chegava quando alguém a fechasse (Markinho, 04/11: reenviou
+// o ficheiro com a versão antiga e o GPS perdeu-se). Ao abrir e ao voltar à app vê se saiu versão nova e recarrega; a meio de escrever
+// ou do jogo ao vivo não mexe, e tenta na vez seguinte. Só recarrega uma vez por versão, para nunca ficar em ciclo.
+async function verVersao() {
+  if (DB.demo || location.protocol === 'file:' || document.visibilityState !== 'visible') return;
+  const atual = document.querySelector('script[src*="app.js"]')?.src.match(/v=(\d+)/)?.[1];
+  const nova = (await (await fetch('index.html', { cache: 'no-store' })).text()).match(/app\.js\?v=(\d+)/)?.[1];
+  if (!atual || !nova || nova === atual || localStorage.getItem('recarregou') === nova) return;
+  if (document.querySelector('.form-treino, .ej-lista, textarea, input[type="file"]') || /marcador|admin/.test(location.hash)) return;
+  localStorage.setItem('recarregou', nova);
+  location.reload();
+}
+verVersao().catch(() => {});
+document.addEventListener('visibilitychange', () => verVersao().catch(() => {}));
 const instalada = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 const $inst = document.getElementById('instalar');
 let pedidoInstalar = null;

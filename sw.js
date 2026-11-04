@@ -1,6 +1,6 @@
 // Service worker da app instalável (PWA). Rede primeiro: abre sempre a versão mais recente quando há rede;
 // sem rede mostra a última que viu. Os dados (Firestore) precisam sempre de rede — não são guardados aqui.
-const CACHE = 'futebolada-v132';
+const CACHE = 'futebolada-v133';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
@@ -23,7 +23,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;   // Firebase e afins: direto à rede
   e.respondWith(
-    fetch(e.request)
+    // A página pede-se sempre ao servidor: o GitHub deixa-a 10 min na cache do telemóvel e atrasava as correções.
+    (e.request.mode === 'navigate' ? fetch(e.request.url, { cache: 'no-cache' }) : fetch(e.request))
       .then((r) => { if (r.ok) { const c = r.clone(); caches.open(CACHE).then((k) => k.put(e.request, c)); } return r; })
       .catch(() => caches.match(e.request, { ignoreSearch: e.request.mode === 'navigate' }).then((r) => r || caches.match('./'))),
   );
