@@ -190,6 +190,14 @@ export function resumoFC(fit, fcMax = null) {
   return { med: Math.round(soma / (ms || 1)), max, ref, zonas: z.map((x) => Math.round(x / 1000)) };
 }
 
+// Máxima dos jogos com bins: o pico que o relógio mediu (cadência em 4 passos seguidos × passada), fit.velMax em m/s. A média de 3 bins
+// não serve: o contador entrega passos em rajada e o tecto de 230 passos/min fazia os 24,7 km/h de 04/11 (103 m em 15 s num campo de 40 m).
+function picoRelogio(fit) {
+  if (!(fit.velMax > 0)) return null;
+  const b = (fit.bins || []).reduce((m, x) => ((x[6] || 0) > (m?.[6] || 0) ? x : m), null);
+  return { kmh: Math.round(fit.velMax * KMH * 10) / 10, t: b ? b[0] : null };
+}
+
 export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fcMax = null } = {}) {
   if (!fit) return null;
   const serie = serieVelocidade(fit);
@@ -198,9 +206,10 @@ export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fc
   const eq = (j.brancos || []).some((x) => x.id === pid) ? 'B' : 'P';
   const ladoB = j.ladoInicio?.B;   // 'balnearios' | 'oposto'
   const defendeBalnearios = ladoB ? (eq === 'B') === (ladoB === 'balnearios') : null;
-  const vm = fit.vMax?.v ? { kmh: Math.round(fit.vMax.v * KMH * 10) / 10, t: fit.vMax.t } : velMax(serie);
-  const sp = Array.isArray(fit.sprints) ? fit.sprints.filter((s) => !dentro(s.t, bal)).map((s) => ({ t: s.t, dur: s.dur, m: Math.round(s.m || 0), kmh: Math.round((s.vMax || 0) * KMH * 10) / 10, sentido: s.sentido || null }))
+  const vm = fit.vMax?.v ? { kmh: Math.round(fit.vMax.v * KMH * 10) / 10, t: fit.vMax.t } : picoRelogio(fit) || velMax(serie);
+  const sp0 = Array.isArray(fit.sprints) ? fit.sprints.filter((s) => !dentro(s.t, bal)).map((s) => ({ t: s.t, dur: s.dur, m: Math.round(s.m || 0), kmh: Math.round((s.vMax || 0) * KMH * 10) / 10, sentido: s.sentido || null }))
     : sprints(serie, { vmaxPessoal, baliza: bal });
+  const sp = sp0.map((s) => (vm && s.kmh > vm.kmh ? { ...s, kmh: vm.kmh } : s));   // nenhum sprint acima da máxima
   const z = zonasVelocidade(serie);
   return {
     v: fit.v || 1, m: Math.round(fit.treino && fit.distancia ? fit.distancia : distancia(serie)), vmax: vm, sprints: sp, nSprints: sp.length, mSprint: sp.reduce((s, x) => s + x.m, 0),
