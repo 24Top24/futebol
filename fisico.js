@@ -193,7 +193,7 @@ export function resumoFC(fit, fcMax = null) {
 export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fcMax = null } = {}) {
   if (!fit) return null;
   const serie = serieVelocidade(fit);
-  if (!serie.length && !(fit.gps || []).length) return null;
+  if (!serie.length && !(fit.gps || []).length && !(fit.hr || []).length) return null;
   const bal = naBaliza(j, pid);
   const eq = (j.brancos || []).some((x) => x.id === pid) ? 'B' : 'P';
   const ladoB = j.ladoInicio?.B;   // 'balnearios' | 'oposto'
@@ -203,11 +203,11 @@ export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fc
     : sprints(serie, { vmaxPessoal, baliza: bal });
   const z = zonasVelocidade(serie);
   return {
-    v: fit.v || 1, m: Math.round(distancia(serie)), vmax: vm, sprints: sp, nSprints: sp.length, mSprint: sp.reduce((s, x) => s + x.m, 0),
-    zonas: z.map((x) => [Math.round(x.ms / 1000), Math.round(x.m)]),
+    v: fit.v || 1, m: Math.round(fit.treino && fit.distancia ? fit.distancia : distancia(serie)), vmax: vm, sprints: sp, nSprints: sp.length, mSprint: sp.reduce((s, x) => s + x.m, 0),
+    zonas: serie.length ? z.map((x) => [Math.round(x.ms / 1000), Math.round(x.m)]) : [],
     grelha: gpsValido(fit, j) && campo && !!fit.gpsXY === !!campo.xy && (campo.ref || null) === (fit.gpsRef || null)
       ? grelhaHeatmap(fit.gps, campo, { defendeBalnearios, baliza: bal }) : null,
-    precisao: fit.calib?.metodo || ((fit.calib?.pontos || []).length >= 2 ? 'gps' : 'altura'),
+    precisao: fit.treino ? 'treino' : fit.calib?.metodo || ((fit.calib?.pontos || []).length >= 2 ? 'gps' : 'altura'),
     fc: resumoFC(fit, fcMax), calorias: fit.calorias ?? null, passos: fit.passos ?? null, temGps: !!(fit.gps || []).length,
   };
 }

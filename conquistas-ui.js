@@ -3,7 +3,7 @@
 // resumo físico do jogo (velocidade, zonas, sprints), heatmap no campo e o cartão partilhável (imagem).
 import { dnaJogo, recordes, tendencias, sentidoEpoca, dadosCartao, medalhas, epocaDe } from './conquistas.js?v=6';
 import { textoDesafio, avaliarDesafios, desafiosMesDeGames, progressoMes, desafiosCumpridosJogos, desafiosMesCumpridos } from './desafios.js?v=5';
-import { ZONAS_VEL, LIM_KMH, ZONAS_FC, tercos } from './fisico.js?v=6';
+import { ZONAS_VEL, LIM_KMH, ZONAS_FC, tercos } from './fisico.js?v=7';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pt = (v, d = 1) => (v == null ? '–' : (Math.round(v * 10 ** d) / 10 ** d).toLocaleString('pt-PT'));
@@ -51,7 +51,8 @@ export function htmlFisicoJogo(fis, j) {
       <div class="tline">${tl}<div class="tl-min">${marcas.join('')}</div></div>` : ''}
     ${fis.precisao === 'altura' ? '<p class="mute" style="margin:8px 0 0">Distância e velocidade estimadas pela passada (sem calibração com GPS): valores aproximados.</p>' : ''}</section>
     ${htmlFC(fis)}
-    ${fis.grelha ? htmlHeatmap(fis.grelha, 'Onde andaste neste jogo') : fis.temGps === false ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
+    ${fis.grelha ? htmlHeatmap(fis.grelha, 'Onde andaste neste jogo', fis.precisao === 'treino') : fis.semPista ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
+      <p class="mute" style="margin:0">Este ficheiro foi lido antes de a app guardar o GPS. Para veres o mapa e a velocidade, vai a Eu → Dados físicos, edita o treino deste jogo e escolhe outra vez o ficheiro do relógio.</p></section>` : fis.temGps === false ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
       <p class="mute" style="margin:0">Este jogo foi gravado sem GPS, por isso não há mapa. Liga o GPS no relógio antes do jogo.</p></section>` : `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
       <p class="mute" style="margin:0">Mapa de calor indisponível: o GPS não teve dados com qualidade suficiente neste jogo.</p></section>`}`;
 }
@@ -77,7 +78,7 @@ function corCalor(a) {
 }
 
 // ---------- Heatmap 8×4 no campo vertical (x = 0 é a baliza que defende, em baixo) ----------
-export function htmlHeatmap(grelha, titulo = 'Onde andaste') {
+export function htmlHeatmap(grelha, titulo = 'Onde andaste', soTreino = false) {
   if (!grelha) return `<section class="cartao"><div class="cartao-tit">🗺️ ${esc(titulo)}</div>
     <p class="mute" style="margin:0">Precisa do GPS no relógio. Aparece quando houver jogos gravados com GPS.</p></section>`;
   const max = Math.max(1, ...grelha.s.flat());
@@ -102,7 +103,7 @@ export function htmlHeatmap(grelha, titulo = 'Onde andaste') {
   return `<section class="cartao"><div class="cartao-tit">🗺️ ${esc(titulo)}${grelha.jogos ? ` <small class="mute">${grelha.jogos} jogo${grelha.jogos > 1 ? 's' : ''}</small>` : ''}</div>
     <div class="heat"><div class="heat-campo">${svg}<span class="hm-meio"></span><span class="hm-circ"></span><span class="hm-bal cima"></span><span class="hm-bal baixo"></span></div>
       <div class="hm-escala"><span>pouco</span><i></i><span>muito tempo</span></div>
-      <div class="mute heat-leg">${grelha.orientado ? '⬆ ataque · a tua baliza ⬇' : 'Sem saber para que lado atacaste: falta a marca da ponta dos balneários no relógio'}</div></div>
+      <div class="mute heat-leg">${grelha.orientado ? '⬆ ataque · a tua baliza ⬇' : (soTreino ? 'O ficheiro do relógio não diz para que lado atacaste' : 'Sem saber para que lado atacaste: falta a marca da ponta dos balneários no relógio')}</div></div>
     ${t ? `<div class="tercos"><div><b>${t.ata}%</b><span>ataque</span></div><div><b>${t.meio}%</b><span>meio</span></div><div><b>${t.def}%</b><span>defesa</span></div></div>` : ''}</section>`;
 }
 

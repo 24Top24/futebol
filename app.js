@@ -3,11 +3,11 @@ import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVot
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=37';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
-import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=6';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=13';
+import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=7';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=14';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
-import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
+import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe, fitDeTreino, temGpsPista } from './treinos.js?v=28';
 
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -357,7 +357,8 @@ async function paginaJogoPub(id) {
   const equipas = `<section class="cartao"><div class="cartao-tit">Equipas</div>${campoHTML(j, ev, quem, posPub?.pos || {})}</section>`;
   // Destaques (Match DNA) de cada jogador; quem jogou e tem relógio vê também o seu físico deste jogo (só ele).
   const jogosC = jogosConq(res);
-  const fisTodos = joguei ? (await DB.getMinhaCarta(eu).catch(() => null))?.fisico || {} : {};
+  const fisTodos = joguei ? await Promise.all([DB.getMinhaCarta(eu).catch(() => null), DB.listTreinos(eu).catch(() => []), DB.getSaude(eu).catch(() => null)])
+    .then(([mc, treinos, saude]) => fisicoComTreinos(mc?.fisico, treinos, saude, eu, res)) : {};
   // Chave dos dados físicos: a mesma com que o admin os grava (gameId ou o id do jogo); a data lá vem em dd/mm/aaaa.
   const kJ = j.gameId || res[i].id, iso = (x) => (String(x || '').includes('/') ? x.split('/').reverse().join('-') : x || '');
   const fisEu = fisTodos[kJ] || null;
@@ -917,13 +918,28 @@ function htmlZonas(z) {
     <div class="mute zleg">${z.map((p, i) => `<span><i class="z${i + 1}"></i>${ZONAS[i].split(' ')[0]} ${p}%</span>`).join('')}</div>`;
 }
 const fcRef = (saude) => fcMaxIdade(idadeDe(saude?.ano));
+// Quem joga com outro relógio (Garmin, Apple…) tem o jogo num treino: conta nos mesmos cartões, só para o próprio e sem ir para
+// minhacarta, que só o admin escreve. O jogo com a nossa app do relógio tem prioridade. O campo sai da pista dele: não há outro no mesmo referencial.
+function fisicoComTreinos(fisico, treinos, saude, eu, res) {
+  const out = { ...(fisico || {}) };
+  for (const t of treinos || []) {
+    const r = t.jogoId && res.find((x) => x.id === t.jogoId || x.jogo.gameId === t.jogoId);
+    if (!r || t.origem === 'manual' || out[r.jogo.gameId || r.id]) continue;
+    const fit = fitDeTreino(t, r.jogo);
+    const campo = gpsValido(fit, r.jogo) ? campoDeNuvem(fit.gps, null, { xy: true, ref: 'treino' }) : null;
+    const f = resumoFisico(r.jogo, fit, eu, { campo, fcMax: fcRef(saude) });
+    if (f) out[r.jogo.gameId || r.id] = { ...f, data: dataDe(r.jogo), semPista: !t.pista };
+  }
+  return out;
+}
 function htmlTreino(t, saude) {
   const z = zonas(t.fc, fcRef(saude), saude?.fcRep);
   const pre = [t.sensacao && SENS[t.sensacao], t.sono && `${n1(t.sono, 1)} h de sono`, t.dores && `dores: ${esc(t.dores)}`].filter(Boolean);
   return `<div class="treino"><b>⌚ Relógio</b> <small class="mute">(${t.origem === 'manual' ? 'à mão' : '.' + t.origem})</small><br>
     ${fmtMin(t.dur)} · ❤️ ${n1(t.fcMed)} média (máx ${n1(t.fcMax)}) · 🔥 ${n1(t.kcal)} kcal · 👟 ${n1(t.km, 2)} km
     ${graficoFC(t.fc)}${htmlZonas(z)}${!z && t.fc?.length ? '<div class="mute">Mete o ano de nascimento para veres as zonas de esforço.</div>' : ''}
-    ${pre.length ? `<div class="mute">${pre.join(' · ')}</div>` : ''}</div>`;
+    ${pre.length ? `<div class="mute">${pre.join(' · ')}</div>` : ''}
+    ${t.jogoId && t.origem !== 'manual' && !t.pista ? '<div class="mute">Sem mapa nem velocidade: este ficheiro foi lido antes de a app guardar o GPS. Edita o treino e escolhe outra vez o ficheiro.</div>' : ''}</div>`;
 }
 // O que aparece dentro do resumo de cada jogo: o treino ligado a esse jogo (+ botões, se for o próprio).
 function extraTreino(jogoId, treinos, saude, leitura) {
@@ -1017,7 +1033,7 @@ async function ficheiroPartilhado() {
 function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null, partilhado = null) {
   const el = document.getElementById('eu-form');
   const t = existente || treinos.find((x) => jogoId && x.jogoId === jogoId) || {};
-  let fc = t.fc || [], origem = t.origem || 'manual', inicio = t.inicio || null;
+  let fc = t.fc || [], origem = t.origem || 'manual', inicio = t.inicio || null, pista = t.pista || null;
   const dataJogo = (r) => dataDe(r.jogo);
   const jSel = jogoId || t.jogoId || '';
   el.innerHTML = `<div class="opcao form-treino"><b>⌚ Treino do relógio</b>
@@ -1048,7 +1064,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null, 
   const lerFich = async (f) => {
     try {
       const r = await lerFicheiro(f);
-      fc = r.fc; origem = r.origem; inicio = r.inicio;
+      fc = r.fc; origem = r.origem; inicio = r.inicio; pista = r.pista;
       if (r.dur) g('tr-dur').value = Math.round(r.dur / 60);
       if (r.fcMed) g('tr-fcm').value = r.fcMed;
       if (r.fcMax) g('tr-fcx').value = r.fcMax;
@@ -1057,7 +1073,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null, 
       // Junta ao jogo que começou até 3 h antes/depois do treino.
       const jogo = r.inicio && meus.find((x) => Math.abs((x.jogo.inicioEpoch || 0) - r.inicio) < 3 * 3600000);
       if (jogo && !jogoId) g('tr-jogo').value = jogo.id;
-      g('tr-lido').innerHTML = `✔ Lido: ${r.inicio ? new Date(r.inicio).toLocaleString('pt-PT') : ''} · ${fc.filter(Boolean).length ? `FC em ${fc.length} blocos de 30 s` : 'sem FC'}${jogo ? ' · ligado ao jogo do mesmo dia' : ''}`;
+      g('tr-lido').innerHTML = `✔ Lido: ${r.inicio ? new Date(r.inicio).toLocaleString('pt-PT') : ''} · ${fc.filter(Boolean).length ? `FC em ${fc.length} blocos de 30 s` : 'sem FC'} · ${temGpsPista(r) ? 'com GPS' : 'sem GPS'}${jogo ? ' · ligado ao jogo do mesmo dia' : ''}`;
     } catch (err) { console.error(err); toast(err.message || 'Não deu para ler o ficheiro'); }
   };
   g('tr-fich').onchange = (e) => { if (e.target.files[0]) lerFich(e.target.files[0]); };
@@ -1070,7 +1086,7 @@ function formTreino(eu, saude, treinos, meus, jogoId, depois, existente = null, 
   g('tr-ok').onclick = async () => {
     const nr = (id) => { const v = g(id).value.trim().replace(',', '.'); return v === '' ? null : Number(v); };
     const d = { jogoId: g('tr-jogo').value || null, origem, inicio, dur: nr('tr-dur') != null ? nr('tr-dur') * 60 : null, fcMed: nr('tr-fcm'), fcMax: nr('tr-fcx'),
-      kcal: nr('tr-kcal'), km: nr('tr-km'), fc: fc || [], sensacao: nr('tr-sens'), sono: nr('tr-sono'), dores: g('tr-dores').value.trim() || null, ts: Date.now() };
+      kcal: nr('tr-kcal'), km: nr('tr-km'), fc: fc || [], pista, sensacao: nr('tr-sens'), sono: nr('tr-sono'), dores: g('tr-dores').value.trim() || null, ts: Date.now() };
     if (Object.entries(d).some(([k, v]) => typeof v === 'number' && Number.isNaN(v))) return toast('Há um número mal escrito');
     if (d.fcMed && (d.fcMed < 40 || d.fcMed > 230)) return toast('FC média fora do normal');
     const id = d.jogoId || t.id || 't' + (inicio || Date.now());
@@ -1403,7 +1419,7 @@ async function perfilEu(eu, todos) {
   carta += htmlElo(mc?.elo, estado?.usarElo !== false);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   const tudo = juntarPerfis(players, perfis);
-  const { meus } = renderPerfil($app, eu, { todos: tudo, res, pub, proprio: true, estado, mc, saude, treinos, pedido, carta });
+  const { meus } = renderPerfil($app, eu, { todos: tudo, res, pub, proprio: true, estado, mc: { ...mc, fisico: fisicoComTreinos(mc?.fisico, treinos, saude, eu.id, res) }, saude, treinos, pedido, carta });
   ligarFisico(eu, todos, saude, treinos, meus.map((x) => ({ id: x.id, jogo: x.j })));
   // "Juntar treino do relógio" num jogo: o formulário está no separador Físico.
   $app.querySelectorAll('[data-tr]').forEach((b) => b.addEventListener('click', () => {
