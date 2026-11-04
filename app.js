@@ -3,8 +3,8 @@ import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVot
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=37';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
-import { resumoFisico, campoDeNuvem, somarGrelhas } from './fisico.js?v=5';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=12';
+import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=6';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=13';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe } from './treinos.js?v=27';
@@ -1739,6 +1739,38 @@ async function resultadosValidos() {
   return { validos, porEscolher, fitExtra };
 }
 
+// Automático (Rui, 04/11): da 1.ª vez que um admin da liga abre o site, em qualquer página, sem ir à Administração.
+// 1) Jogo mandado por um só relógio, terminado e com ≥ 10 min, passa para jogos/. Com vários relógios no mesmo jogo continua a
+//    escolher-se à mão, porque não se sabe qual está certo. 2) O físico de cada jogo vai para minhacarta/{id}.fisico.
+// O fit só o admin o lê, por isso isto corre aqui; sem um servidor, acontece quando o admin abrir o site depois do jogo.
+const autoFeito = new Set();
+async function autoLiga() {
+  const liga = DB.ligaAtual() || 'raiz';
+  if (MODO_TODAS || autoFeito.has(liga)) return;
+  autoFeito.add(liga);
+  const u = await DB.user();
+  if (!u) return;
+  const cfg = await DB.getConfigLiga().catch(() => null);
+  if (!cfg || !(cfg.raiz ? await DB.isAdmin(u) : (cfg.admins || []).includes(u.uid))) return;
+  let RV = await resultadosValidos();
+  const pubs = await DB.listJogosPub().catch(() => []);
+  const jaTem = new Set(pubs.map((x) => { try { return JSON.parse(x.json || '{}').gameId; } catch { return null; } }).filter(Boolean));
+  const grupos = {};
+  for (const r of RV.porEscolher) if (!r.gameId || !jaTem.has(r.gameId)) (grupos[r.gameId || r.id] ||= []).push(r);
+  const certos = Object.values(grupos).filter((L) => L.length === 1 && L[0].jogo.fase === 'fim'
+    && (L[0].jogo.fimEpoch || 0) - (L[0].jogo.inicioEpoch || 0) >= 10 * 60000).map((L) => L[0]);
+  for (const r of certos) await DB.saveJogoPub(r.id, { de: r.id, ts: Date.now(), json: JSON.stringify(r.jogo) });
+  if (certos.length) RV = await resultadosValidos();
+  const brutos = RV.validos.map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
+  const fisicoDe = await resumosFisicos([...brutos, ...RV.fitExtra]);
+  const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
+  for (const [id, fisico] of Object.entries(fisicoDe)) {
+    if (JSON.stringify(antes[id]?.fisico) === JSON.stringify(fisico)) continue;
+    const { id: _x, fisicoJson: _f, ...resto } = antes[id] || {};
+    await DB.setMinhaCarta(id, { ...resto, fisico, ts: Date.now() });
+  }
+}
+
 // Resumo físico de cada jogo de quem tem relógio (velocidade, zonas, sprints, heatmap em grelha) → minhacarta/{id}.fisico,
 // que só o próprio e o admin leem. O dono do fit é fit.dono (relógios de vários jogadores) ou, por agora, o perfil do Rui.
 // O retângulo do campo calcula-se do GPS de todos os jogos juntos e fica em segredos/campo (tem a localização do pavilhão).
@@ -1750,9 +1782,10 @@ async function resumosFisicos(brutos) {
   const guardado = (await DB.getSegredo('campo')) || null;
   let campo = guardado;
   // Só se juntam jogos com o GPS no mesmo referencial (formato e origem do relógio) — o do jogo com GPS mais recente.
-  const ult = [...comFit].reverse().find((r) => (r.fit.gps || []).length);
+  // Jogos com GPS sem qualidade ficam de fora: estragavam o campo de todos os outros jogos do mesmo sítio.
+  const ult = [...comFit].reverse().find((r) => gpsValido(r.fit, r.jogo));
   const mesmo = (f) => !!f.gpsXY === !!ult?.fit.gpsXY && (f.gpsRef || null) === (ult?.fit.gpsRef || null);
-  const doRef = comFit.filter((r) => ult && mesmo(r.fit));
+  const doRef = comFit.filter((r) => ult && mesmo(r.fit) && gpsValido(r.fit, r.jogo));
   const gps = doRef.flatMap((r) => r.fit.gps || []);
   if (guardado && ult && (!!guardado.xy !== !!ult.fit.gpsXY || (guardado.ref || null) !== (ult.fit.gpsRef || null))) campo = null;
   // Ponta dos balneários: enviada pelo relógio no aquecimento (fit.balnearios, no mesmo formato do GPS) ou guardada antes.
@@ -3392,6 +3425,8 @@ async function rota() {
   pararAoVivo();
   confirmarModerador();
   VISITANTE = (await souVisitante().catch(() => false)) || (DB.demo && /[?&]visitante/.test(location.search));
+  // Espera pouco: só para o jogo de hoje já aparecer completo; se demorar, acaba por trás.
+  await Promise.race([autoLiga().catch((e) => console.error(e)), new Promise((r) => setTimeout(r, 4000))]);
   try {
     if (VISITANTE && (h === '#jogadores' || h === '#cartas' || h.startsWith('#jogador='))) {
       titulo('Jogadores'); $app.innerHTML = conviteEntrar('Os jogadores, as cartas e as conquistas só se veem com conta. Entra com o PIN ou com o Google.'); return;

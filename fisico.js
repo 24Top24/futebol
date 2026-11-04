@@ -85,6 +85,18 @@ export const GPS_MAX_M = 8;
 const R = 6371000, rad = Math.PI / 180;
 // Há relógios que marcam sempre 125 m de precisão (valor de "não sei", Rui 02/11): aí vale o número de satélites (≥ 6).
 const bons = (gps = []) => gps.filter((p) => p && p[1] != null && p[2] != null && (p[3] == null || p[3] <= GPS_MAX_M || (p[3] >= 100 && (p[6] || 0) >= 6)));
+// O GPS deste jogo serve para mapa? Melhor nada do que um desenho inventado (jogo de 04/11, pavilhão: 6,8 min de GPS em 65,
+// numa nuvem de 246 × 45 m). Pede posição em pelo menos 40 % do jogo e pontos numa área do tamanho de um campo (diagonal ≤ 100 m).
+const GPS_MIN_PONTOS = 300, GPS_COBERTURA_MIN = 0.4, GPS_DIAG_MAX_M = 100;
+export function gpsValido(fit = {}, j = {}) {
+  const P = bons(fit.gps);
+  if (P.length < GPS_MIN_PONTOS) return false;
+  const dur = (j.fimEpoch || 0) - (j.inicioEpoch || 0);
+  if (dur > 0 && P.length / (dur / 1000) < GPS_COBERTURA_MIN) return false;
+  if (!fit.gpsXY) return true;
+  const larg = (k) => pct(P.map((p) => p[k]), 0.98) - pct(P.map((p) => p[k]), 0.02);
+  return Math.hypot(larg(1), larg(2)) <= GPS_DIAG_MAX_M;
+}
 const plano = (lat0, lon0) => ([, lat, lon]) => [(lon - lon0) * rad * R * Math.cos(lat0 * rad), (lat - lat0) * rad * R];
 const proj = (campo) => (campo.xy ? (p) => [p[1] - campo.cx, p[2] - campo.cy] : plano(campo.lat0, campo.lon0));
 const pct = (arr, q) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))]; };
@@ -193,7 +205,7 @@ export function resumoFisico(j, fit, pid, { campo = null, vmaxPessoal = null, fc
   return {
     v: fit.v || 1, m: Math.round(distancia(serie)), vmax: vm, sprints: sp, nSprints: sp.length, mSprint: sp.reduce((s, x) => s + x.m, 0),
     zonas: z.map((x) => [Math.round(x.ms / 1000), Math.round(x.m)]),
-    grelha: fit.gps && campo && !!fit.gpsXY === !!campo.xy && (campo.ref || null) === (fit.gpsRef || null)
+    grelha: gpsValido(fit, j) && campo && !!fit.gpsXY === !!campo.xy && (campo.ref || null) === (fit.gpsRef || null)
       ? grelhaHeatmap(fit.gps, campo, { defendeBalnearios, baliza: bal }) : null,
     precisao: fit.calib?.metodo || ((fit.calib?.pontos || []).length >= 2 ? 'gps' : 'altura'),
     fc: resumoFC(fit, fcMax), calorias: fit.calorias ?? null, passos: fit.passos ?? null, temGps: !!(fit.gps || []).length,
