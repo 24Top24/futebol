@@ -3546,7 +3546,7 @@ async function verVersao() {
   const atual = document.querySelector('script[src*="app.js"]')?.src.match(/v=(\d+)/)?.[1];
   const nova = (await (await fetch('index.html', { cache: 'no-store' })).text()).match(/app\.js\?v=(\d+)/)?.[1];
   if (!atual || !nova || nova === atual || localStorage.getItem('recarregou') === nova) return;
-  if (document.querySelector('.form-treino, .ej-lista, textarea, input[type="file"]') || /marcador|admin/.test(location.hash)) return;
+  if (document.querySelector('.form-treino, .ej-lista, textarea, input[type="file"]') || /(^|/|#)jogo$|marcador|admin/.test(location.hash)) return;
   localStorage.setItem('recarregou', nova);
   location.reload();
 }
