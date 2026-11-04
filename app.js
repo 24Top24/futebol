@@ -4,7 +4,7 @@ import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhi
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=37';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=7';
-import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=14';
+import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=15';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe, fitDeTreino, temGpsPista } from './treinos.js?v=28';
@@ -926,9 +926,13 @@ function fisicoComTreinos(fisico, treinos, saude, eu, res) {
     const r = t.jogoId && res.find((x) => x.id === t.jogoId || x.jogo.gameId === t.jogoId);
     if (!r || t.origem === 'manual' || out[r.jogo.gameId || r.id]) continue;
     const fit = fitDeTreino(t, r.jogo);
-    const campo = gpsValido(fit, r.jogo) ? campoDeNuvem(fit.gps, null, { xy: true, ref: 'treino' }) : null;
+    const gpsBom = gpsValido(fit, r.jogo), gpsFraco = !!fit.gps && !gpsBom;
+    // Com o GPS mau, a velocidade do ficheiro vem dele: no jogo de 04/11 o Garmin de um jogador "correu" 600 m para fora do pavilhão e
+    // voltou de um salto, o que deu 25 km/h e 2 sprints falsos. Melhor sem velocidade do que com uma inventada.
+    if (gpsFraco) delete fit.serie1s;
+    const campo = gpsBom ? campoDeNuvem(fit.gps, null, { xy: true, ref: 'treino' }) : null;
     const f = resumoFisico(r.jogo, fit, eu, { campo, fcMax: fcRef(saude) });
-    if (f) out[r.jogo.gameId || r.id] = { ...f, data: dataDe(r.jogo), semPista: !t.pista };
+    if (f) out[r.jogo.gameId || r.id] = { ...f, data: dataDe(r.jogo), semPista: !t.pista, gpsFraco };
   }
   return out;
 }

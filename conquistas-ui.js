@@ -54,7 +54,7 @@ export function htmlFisicoJogo(fis, j) {
     ${fis.grelha ? htmlHeatmap(fis.grelha, 'Onde andaste neste jogo', fis.precisao === 'treino') : fis.semPista ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
       <p class="mute" style="margin:0">Este ficheiro foi lido antes de a app guardar o GPS. Para veres o mapa e a velocidade, vai a Eu → Dados físicos, edita o treino deste jogo e escolhe outra vez o ficheiro do relógio.</p></section>` : fis.temGps === false ? `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
       <p class="mute" style="margin:0">Este jogo foi gravado sem GPS, por isso não há mapa. Liga o GPS no relógio antes do jogo.</p></section>` : `<section class="cartao"><div class="cartao-tit">🗺️ Onde andaste neste jogo</div>
-      <p class="mute" style="margin:0">Mapa de calor indisponível: o GPS não teve dados com qualidade suficiente neste jogo.</p></section>`}`;
+      <p class="mute" style="margin:0">Mapa de calor indisponível: o GPS não teve dados com qualidade suficiente neste jogo.${fis.gpsFraco ? ' Sem velocidade nem sprints pelo mesmo motivo, e a distância do relógio pode vir a mais.' : ''}</p></section>`}`;
 }
 
 // ❤ Frequência cardíaca do jogo: média, máxima, zonas; e calorias e passos (Rui, 02/11).
