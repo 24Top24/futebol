@@ -499,7 +499,7 @@ function campoHTML(j, ev, quem, pos = {}) {
   const meio = (e, ids) => {
     const tur = (j.turnos || []).filter((x) => x.equipa === e).sort((a, b) => a.de - b.de);
     const minGR = (pid) => Math.round(tur.filter((x) => x.jogador === pid).reduce((s, x) => s + x.ate - x.de, 0) / 60000);
-    const g1 = [...new Set(tur.map((x) => x.jogador))].filter((pid) => ids.includes(pid))
+    const g1 = (ids.includes(j.grFixo?.[e]) && j.grFixo[e]) || [...new Set(tur.map((x) => x.jogador))].filter((pid) => ids.includes(pid))
       .reduce((m, pid) => (m == null || minGR(pid) > minGR(m) ? pid : m), null);
     const resto = ids.filter((pid) => pid !== g1);
     const temPos = resto.some((pid) => pos[pid]);
@@ -1772,6 +1772,7 @@ async function autoLiga() {
   if (!u) return;
   const cfg = await DB.getConfigLiga().catch(() => null);
   if (!cfg || !(cfg.raiz ? await DB.isAdmin(u) : (cfg.admins || []).includes(u.uid))) return;
+  await corrigirGrFixo(DB).catch((e) => console.error('GR fixo', e));
   let RV = await resultadosValidos();
   const pubs = await DB.listJogosPub().catch(() => []);
   const jaTem = new Set(pubs.map((x) => { try { return JSON.parse(x.json || '{}').gameId; } catch { return null; } }).filter(Boolean));
@@ -1780,6 +1781,7 @@ async function autoLiga() {
   const certos = Object.values(grupos).filter((L) => L.length === 1 && L[0].jogo.fase === 'fim'
     && (L[0].jogo.fimEpoch || 0) - (L[0].jogo.inicioEpoch || 0) >= 10 * 60000).map((L) => L[0]);
   for (const r of certos) await DB.saveJogoPub(r.id, { de: r.id, ts: Date.now(), json: JSON.stringify(r.jogo) });
+  if (certos.length) await corrigirGrFixo(DB).catch((e) => console.error('GR fixo', e));
   if (certos.length) RV = await resultadosValidos();
   const brutos = RV.validos.map((r) => { try { return { id: r.id, ...JSON.parse(r.json || '{}') }; } catch { return null; } }).filter((r) => r?.jogo);
   const fisicoDe = await resumosFisicos([...brutos, ...RV.fitExtra]);
@@ -2317,6 +2319,36 @@ async function mvpAoAbrir() {
 // ⌚ Jogos dos relógios entram sozinhos (Rui, 02/11): 1 por jogo, sem ter de escolher em Admin → Jogos. Com vários relógios no
 // mesmo jogo conta o de quem está a administrar (eu), senão o primeiro que chegou. Corre quando o admin abre a app (só ele lê
 // resultados/). Devolve quantos entraram.
+// 🧤 GR fixo (quem só joga à baliza, games/{id}.grFixo = { B, P }): fica na baliza o jogo todo e a equipa dele não roda. O relógio
+// não sabe disto e grava turnos para todos (World Crap, 08/11: Pedro Almeida apareceu no meio-campo). Aqui o jogo publicado passa
+// a ter um só turno dele, do apito ao fim, e os golos sofridos por essa equipa ficam com ele. Devolve o jogo corrigido ou null.
+function aplicarGrFixo(j, gf) {
+  const fixos = ['B', 'P'].filter((e) => gf?.[e] && (e === 'B' ? j.brancos : j.pretos || []).some((p) => p.id === gf[e]));
+  if (!fixos.length) return null;
+  const n = structuredClone(j);
+  const fim = Math.max((n.fimEpoch || 0) - (n.inicioEpoch || 0) - (n.pausaTotal || 0), ...(n.turnos || []).map((t) => t.ate || 0), 0);
+  for (const e of fixos) {
+    n.turnos = [...(n.turnos || []).filter((t) => t.equipa !== e), { equipa: e, jogador: gf[e], de: 0, ate: fim }];
+    for (const ev of n.eventos || []) if (ev.equipa !== e) ev.gr = gf[e];
+    n.baliza = { ...(n.baliza || {}), [e]: { ...(n.baliza?.[e] || {}), atual: gf[e], fixo: true } };
+  }
+  n.turnos.sort((a, b) => a.de - b.de);
+  n.grFixo = { B: gf.B || null, P: gf.P || null };
+  return JSON.stringify(n) === JSON.stringify(j) ? null : n;
+}
+// Corrige os jogos publicados desta liga que não respeitam o GR fixo das equipas feitas na app (só o admin escreve).
+async function corrigirGrFixo(db) {
+  const [pubs, games] = await Promise.all([db.listJogosPub(), db.listGames()]);
+  const gf = Object.fromEntries(games.filter((g) => g.grFixo).map((g) => [g.id, g.grFixo]));
+  let n = 0;
+  for (const p of pubs) {
+    let j = null; try { j = JSON.parse(p.json || '{}'); } catch { continue; }
+    const novo = j.gameId && gf[j.gameId] ? aplicarGrFixo(j, gf[j.gameId]) : null;
+    if (novo) { const { id, ...resto } = p; await db.saveJogoPub(id, { ...resto, json: JSON.stringify(novo) }); n++; }
+  }
+  return n;
+}
+
 async function aceitarRelogios(db, eu) {
   const [brutos, pubs] = await Promise.all([db.listResultados(), db.listJogosPub().catch(() => [])]);
   const props = brutos.filter(eProposta);
@@ -2333,6 +2365,7 @@ async function aceitarRelogios(db, eu) {
     if (!jogo) continue;
     await db.saveJogoPub(r.id, { de: r.id, ts: Date.now(), json: JSON.stringify(jogo) }); n++;
   }
+  if (n) await corrigirGrFixo(db).catch((e) => console.error('GR fixo', e));
   return n;
 }
 
