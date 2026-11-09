@@ -380,7 +380,8 @@ export async function notasFora() {
   return Object.fromEntries(Object.entries(por).map(([id, v]) => [id, Math.round(v.reduce((a, b) => a + b, 0) / v.length)]));
 }
 // Põe a nota de fora (como nota100) em quem ainda não tem carta nesta liga: convidado, ou carta provisória/estimada.
-export const comNotaFora = (players, cartas, fora) => players.map((p) => fora[p.id] != null && (p.convidado || cartas[p.id]?.provisoria || cartas[p.id]?.estimada)
+// Com nota geral fixa (notaFixa) vale a desta liga.
+export const comNotaFora = (players, cartas, fora) => players.map((p) => fora[p.id] != null && !p.notaFixa && (p.convidado || cartas[p.id]?.provisoria || cartas[p.id]?.estimada)
   ? { ...p, nota100: fora[p.id], fora: true } : p);
 
 // Histórico das outras ligas (Rui, 31/10): o perfil de um jogador traz também os jogos que a mesma pessoa fez noutras ligas
