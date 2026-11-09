@@ -106,7 +106,8 @@ export function calcularCartas(players, votes, convivio = {}) {
     const c = cartas[p.id];
     const nota = notaDe(p);
     if (nota == null) continue;
-    for (const a of AREAS) if (c.n[a.k] < MIN_VOTOS) c.stats[a.k] = nota;
+    // notaFixa (Rui, 09/11): a nota geral dada pelo admin manda sobre os votos (Cê Erre Setes, notas do print da outra app).
+    for (const a of AREAS) if (c.n[a.k] < MIN_VOTOS || p.notaFixa) c.stats[a.k] = nota;
     c.overall = overallDe(c.stats);
     c.estimada = true;
   }
