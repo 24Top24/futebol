@@ -1,4 +1,4 @@
-import { DB, novoToken, novoPin } from './db.js?v=54';
+import { DB, novoToken, novoPin } from './db.js?v=55';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=37';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=38';
@@ -326,6 +326,8 @@ async function paginaJogoPub(id) {
   const i = res.findIndex((r) => r.id === id);
   if (i < 0) { $app.innerHTML = vazio('🤷', 'Este jogo não existe (ou ainda não terminou).', '<a class="btn" href="#jogos">Ver os jogos</a>'); return; }
   const j = res[i].jogo, v = vencedorDe(j), fechadoMVP = mvpFechado(j, res.map((r) => r.jogo), vivo);
+  // 🎥 Vídeo dos golos (Futebol Lab, 15/11): videos/{inicioEpoch} com o YouTube e o trecho de cada golo.
+  const video = j.inicioEpoch ? await DB.getVideo(String(j.inicioEpoch)).catch(() => null) : null;
   const quem = Object.fromEntries([...(j.brancos || []), ...(j.pretos || [])].map((x) => [x.id, { ...x, ...(todos.find((p) => p.id === x.id) || {}), nomeJogo: x.nome }]));
   const nome = (pid) => esc(quem[pid]?.nomeJogo || '?');
   const lnk = (pid) => (quem[pid] ? `<a class="lnk-j" href="#jogador=${esc(pid)}">${nome(pid)}</a>` : nome(pid));
@@ -352,7 +354,7 @@ async function paginaJogoPub(id) {
   // Painéis
   const graf = ev.length ? `<section class="cartao"><div class="cartao-tit">Desenrolar do jogo <small class="mute">toca num golo</small></div>${graficoJogo(j, ev, dur, nome)}
     <div class="gdet mute" id="g-det">Diferença no marcador ao longo do jogo: para cima a favor dos Brancos, para baixo a favor dos Pretos.</div></section>` : '';
-  const resumo = `<section class="cartao"><div class="cartao-tit">Resumo${(j.turnos || []).length ? '<label class="tgr"><input type="checkbox" id="r-gr"> trocas de GR</label>' : ''}</div>${resumoJogoHTML(j, ev, dur, lnk, parte)}</section>`;
+  const resumo = `<section class="cartao"><div class="cartao-tit">Resumo${(j.turnos || []).length ? '<label class="tgr"><input type="checkbox" id="r-gr"> trocas de GR</label>' : ''}</div>${resumoJogoHTML(j, ev, dur, lnk, parte, video)}</section>`;
   const stats = `<section class="cartao"><div class="cartao-tit">Estatísticas da equipa</div>${statsJogoHTML(j, ev, dur)}</section>`;
   const equipas = `<section class="cartao"><div class="cartao-tit">Equipas</div>${campoHTML(j, ev, quem, posPub?.pos || {})}</section>`;
   // Destaques (Match DNA) de cada jogador; quem jogou e tem relógio vê também o seu físico deste jogo (só ele).
@@ -371,6 +373,7 @@ async function paginaJogoPub(id) {
     <div class="jgrid"><div class="jcol"><div class="jp on" data-jp="resumo">${graf}${desH}${dnaH}${fisH}${resumo}</div></div>
       <div class="jcol"><div class="jp" data-jp="stats">${stats}</div><div class="jp" data-jp="equipas">${equipas}</div></div></div>
     ${VISITANTE ? conviteEntrar('Com conta vês também os teus desafios, o teu físico e avalias os colegas.') : ''}`;
+  $app.querySelectorAll('.vgolo').forEach((b) => b.addEventListener('click', () => verGolo(b.dataset.yt, +b.dataset.ini, +b.dataset.fim)));
   document.getElementById('j-partilhar')?.addEventListener('click', () => {
     const url = `${location.origin}${location.pathname}#${ligaGuardada() || LINK}/jogo=${encodeURIComponent(id)}`;
     const res = j.semGolos ? (v === 'E' ? 'empate' : `ganharam os ${v === 'B' ? 'Brancos' : 'Pretos'}`) : `Brancos ${marcaDe(j, 'B')} – ${marcaDe(j, 'P')} Pretos`;
@@ -439,13 +442,37 @@ function graficoJogo(j, ev, dur, nome) {
     <text x="${W - m}" y="${mid - 6}" class="g-eq" text-anchor="end">BRANCOS ▲</text><text x="${W - m}" y="${mid + 14}" class="g-eq" text-anchor="end">PRETOS ▼</text></svg>`;
 }
 
+// 🎥 Um golo em loop: o vídeo do YouTube junta todos os golos do jogo; aqui toca só o trecho deste e recomeça no fim.
+let apiYT = null;
+function carregarYT() {
+  return apiYT ||= new Promise((ok) => {
+    if (window.YT?.Player) return ok(window.YT);
+    window.onYouTubeIframeAPIReady = () => ok(window.YT);
+    const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+  });
+}
+async function verGolo(yt, ini, fim) {
+  const { el } = abrirFolha('Golo', '<div class="vg-caixa"><div id="vg-p"></div></div><p class="mute" style="margin:8px 0 0">Repete sozinho. Usa a barra para andar para trás ou para a frente.</p>');
+  const YT = await carregarYT();
+  if (!document.body.contains(el)) return;
+  const p = new YT.Player('vg-p', { videoId: yt, playerVars: { start: Math.floor(ini), autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1 },
+    events: { onReady: (e) => { e.target.mute?.(); e.target.seekTo(ini, true); e.target.playVideo(); } } });
+  const vigia = setInterval(() => {
+    if (!document.body.contains(el)) { clearInterval(vigia); p.destroy?.(); return; }
+    const t = p.getCurrentTime?.() ?? 0, st = p.getPlayerState?.();
+    if (t >= fim - 0.2 || st === 0 || (t > 0 && t < ini - 1)) { p.seekTo(ini, true); p.playVideo(); }
+  }, 200);
+}
+
 // Resumo minuto a minuto (estilo FotMob): Brancos à esquerda, Pretos à direita, o minuto ao centro.
-function resumoJogoHTML(j, ev, dur, lnk, parte) {
+function resumoJogoHTML(j, ev, dur, lnk, parte, video) {
   const L = [];
   let B = 0, P = 0;
   for (const e of ev) {
     if (e.equipa === 'B') B++; else P++;
-    L.push({ t: e.t, e: e.equipa, html: `<span class="ri">⚽</span><div><b>${lnk(e.marcador)}</b> <span class="rres">${B}-${P}</span>${e.tipo === 'autogolo' ? ' <span class="mute">(autogolo)</span>' : ''}${e.assist ? ` <span class="rassist">(assistência de ${lnk(e.assist)})</span>` : ''}${parte(e) ? `<div class="mute">${parte(e)}</div>` : ''}</div>` });
+    const vg = video?.youtube && (video.golos || []).find((g) => Number(g.t) === e.t);
+    const bt = vg ? `<button class="vgolo" data-yt="${esc(video.youtube)}" data-ini="${vg.ini}" data-fim="${vg.fim}" aria-label="Ver o golo">▶</button>` : '';
+    L.push({ t: e.t, e: e.equipa, html: `<span class="ri">⚽</span><div>${bt}<b>${lnk(e.marcador)}</b> <span class="rres">${B}-${P}</span>${e.tipo === 'autogolo' ? ' <span class="mute">(autogolo)</span>' : ''}${e.assist ? ` <span class="rassist">(assistência de ${lnk(e.assist)})</span>` : ''}${parte(e) ? `<div class="mute">${parte(e)}</div>` : ''}</div>` });
   }
   for (const pn of (j.penaltis || []).filter((x) => x.resultado !== 'golo'))
     L.push({ t: pn.t, e: pn.equipa, html: `<span class="ri">${pn.resultado === 'defendido' ? '🧤' : '❌'}</span><div><b>Penálti ${pn.resultado === 'defendido' ? 'defendido' : 'falhado'}</b><div class="mute">${lnk(pn.marcador)}${pn.resultado === 'defendido' && pn.gr ? ` · defende ${lnk(pn.gr)}` : ''}</div></div>` });

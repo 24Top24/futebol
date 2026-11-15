@@ -110,6 +110,7 @@ function demoDb() {
     // Jogo de hoje ao vivo (moderadores) e chave do link para os moderadores.
     // (Na demo fica numa chave à parte, para dois separadores — dois "telemóveis" — não se pisarem.)
     // doc: 'jogo' (o a sério) ou 'teste' (jogo de teste dos moderadores, não conta para nada).
+    async getVideo() { return null; },
     async getAoVivo(doc = 'jogo') { try { return JSON.parse(localStorage.getItem(KEY + '-aovivo' + (doc === 'jogo' ? '' : '-' + doc))); } catch { return null; } },
     async setAoVivo(d, junta = true, doc = 'jogo') { const v = junta ? { ...((await this.getAoVivo(doc)) || {}), ...d } : d; localStorage.setItem(KEY + '-aovivo' + (doc === 'jogo' ? '' : '-' + doc), JSON.stringify(v)); },
     ouvirAoVivo(cb, doc = 'jogo') {
@@ -542,6 +543,8 @@ async function fireDb() {
     // Jogo de hoje ao vivo: aovivo/jogo (todos leem; escrevem moderadores e admin), em tempo real.
     // d: 'jogo' (o a sério) ou 'teste' (jogo de teste dos moderadores, não conta para nada).
     getAoVivo: (d = 'jogo') => get('aovivo', d),
+    // 🎥 Vídeo dos golos de um jogo (Futebol Lab): videos/{inicioEpoch}, na raiz (vale para todas as ligas).
+    getVideo: (id) => getRaiz('videos', id),
     setAoVivo: (v, junta = true, d = 'jogo') => setDoc(D('aovivo', d), v, { merge: junta }),
     ouvirAoVivo: (cb, d = 'jogo') => fs.onSnapshot(D('aovivo', d), (x) => cb(x.exists() ? x.data() : null), (e) => console.error(e)),
     // moderacao/chave = chave do link (só moderadores com PIN e o admin leem; só o admin escreve).

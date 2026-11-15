@@ -950,3 +950,8 @@ table.liga.estreita .tpos { width: 20px; height: 20px; margin-right: 6px; }
 .des-j.falhou .des-txt { opacity: .6; }
 .des-j.sem .des-txt { opacity: .75; }
 .j-partilha { display: flex; justify-content: center; margin: 10px 0; }
+
+/* 🎥 Golo em vídeo */
+.vgolo{border:0;border-radius:50%;width:26px;height:26px;padding:0;margin-right:6px;background:#e53935;color:#fff;font-size:12px;cursor:pointer;vertical-align:middle}
+.vg-caixa{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden}
+.vg-caixa iframe,#vg-p{position:absolute;inset:0;width:100%;height:100%}
