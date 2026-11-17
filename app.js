@@ -1,7 +1,7 @@
 import { DB, novoToken, novoPin } from './db.js?v=55';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=37';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado } from './ranking.js?v=38';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=39';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=8';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=16';
@@ -3003,8 +3003,13 @@ function secEquipas(el, X = A.ctxEq) {
       soGR: [...A.sel].filter(soGR),
     };
     const anteriores = [...X.games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 3).map((x) => [x.brancos || [], x.pretos || []]);
-    const ops = gerarEquipas(ids, cartasJogo(), anteriores, 3, restr);
-    if (!ops.length) return (g('res').innerHTML = '<p class="opcao">Não há nenhuma divisão que cumpra todas as opções. Tira alguma.</p>');
+    // 🎲 Outras opções: as divisões já vistas com estes mesmos jogadores ficam de fora; outro grupo de jogadores recomeça.
+    const grupoSel = [...ids].sort().join(',');
+    if (!A.reroll || A.vistas?.grupo !== grupoSel) A.vistas = { grupo: grupoSel, chaves: [] };
+    A.reroll = false;
+    const ops = gerarEquipas(ids, cartasJogo(), anteriores, 3, { ...restr, excluir: A.vistas.chaves });
+    if (!ops.length) return (g('res').innerHTML = `<p class="opcao">${A.vistas.chaves.length ? 'Já viste todas as divisões possíveis com estas opções.' : 'Não há nenhuma divisão que cumpra todas as opções. Tira alguma.'}</p>`);
+    A.vistas.chaves.push(...ops.map((o) => chaveEquipas(o.A, o.B)));
     if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
     mostrar(ops);
   };
@@ -3125,11 +3130,21 @@ function secEquipas(el, X = A.ctxEq) {
       <div class="fplant"><div>${plantel(o.A)}</div><div>${plantel(o.B)}</div></div>
     </div>`;
   }
+  // 🎲 Refazer (Rui, 17/11): volta a ler as notas (uma carta mudou entretanto) e gera outras 3 divisões, sem repetir as já vistas.
+  async function refazer() {
+    const doAdmin = X === A.ctxEq && !X.vivo;
+    if (doAdmin) { await recarregar(); A.ctxEq = await ctxAdmin(); }
+    A.reroll = true;
+    secEquipas(el, doAdmin ? A.ctxEq : X);
+    el.querySelector('#gerar')?.click();
+    el.querySelector('#res')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   function mostrar(ops) {
-    g('res').innerHTML = ops.map((o, k) => `<div class="opcao"><b>${o.mao ? '✋ Equipas à mão' : `Opção ${k + 1}`}</b>
+    g('res').innerHTML = (ops.some((o) => !o.mao) ? '<button id="reroll" style="width:100%;margin-bottom:8px">🎲 Outras equipas (com as notas de agora)</button>' : '') + ops.map((o, k) => `<div class="opcao"><b>${o.mao ? '✋ Equipas à mão' : `Opção ${k + 1}`}</b>
       ${cartaoJogo(o)}
       <div class="linha"><button class="prim peq" data-k="${k}">${X.vivo ? '✅ Escolher estas' : '✅ Escolher e partilhar no WhatsApp'}</button>${Object.keys(A.restr.cor).length ? '' : `<button class="peq" data-tr="${k}">Trocar cores</button>`}</div></div>`).join('') + ajusteConv();
     ligarAjuste();
+    g('reroll')?.addEventListener('click', refazer);
     el.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => {
       const o = ops[b.dataset.tr]; [o.A, o.B] = [o.B, o.A]; [o.ovA, o.ovB] = [o.ovB, o.ovA];
       if (o.grFixo) o.grFixo = { A: o.grFixo.B, B: o.grFixo.A };
@@ -3165,7 +3180,9 @@ function secEquipas(el, X = A.ctxEq) {
       const criado = Date.now(), desafios = atribuirDesafios({ brancos: o.A, pretos: o.B, criado }, X.games || [], { relogio: X.relogio || [] });
       const desafiosMes = completarDesafiosMes(data.slice(0, 7), [...o.A, ...o.B], X.games || [], { relogio: X.relogio || [] });   // só os que ainda não têm o do mês
       const grFixo = grFixoJogo(o);
-      await X.saveGame({ data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes, ...(grFixo ? { grFixo } : {}) });
+      // Refazer depois de escolher: as equipas novas substituem as de hoje (o mesmo jogo), em vez de criar outro.
+      const mesmo = (X.games || []).find((x) => x.data === data && x.estado === 'marcado' && Date.now() - (x.criado || 0) < 20 * 3600e3);
+      await X.saveGame({ ...(mesmo ? { id: mesmo.id } : {}), data, brancos: o.A, pretos: o.B, nomes, estado: 'marcado', criado, ladoInicio, desafios, desafiosMes, ...(grFixo ? { grFixo } : {}) }, mesmo?.id);
       // Confirmação: as equipas ficam como as do próximo jogo; daqui vai-se direto para o marcador.
       g('res').innerHTML = `<div class="opcao" style="text-align:center"><h3 style="margin:4px 0">✅ Equipas escolhidas</h3>
         ${cartaoJogo(o)}
@@ -3175,7 +3192,7 @@ function secEquipas(el, X = A.ctxEq) {
           : `<p class="mute">No relógio: ${DB.ligaAtual() ? `Preparar → 🏆 Liga → ${esc(NOME_LIGA || 'esta liga')}, depois` : ''} "Descarregar equipas" e START GAME.</p>`}
         <button class="peq" id="refazer" style="margin-top:8px">Refazer equipas</button></div>`;
       g('ir-marc')?.addEventListener('click', X.irMarcador);
-      g('refazer').onclick = () => g('gerar').click();
+      g('refazer').onclick = refazer;
       window.scrollTo(0, g('res').offsetTop - 60);
     }));
   }
@@ -3215,7 +3232,7 @@ function secEquipas(el, X = A.ctxEq) {
     g('refazer')?.addEventListener('click', () => {
       if (!confirm('Refazer as equipas? As escolhidas deixam de valer (para todos).')) return;
       v.escolhida = null; X.publicar({ escolhida: null, partilhado: null }); v.partilhado = null;
-      mostrar(v.opcoes || []);
+      refazer();
     });
     el.querySelectorAll('[data-fm]').forEach((b) => (b.onclick = async () => {
       const box = b.closest('details'), gm = { id: v.gameId, data: v.data, brancos: o.A, pretos: o.B, nomes: Object.fromEntries([...o.A, ...o.B].map((id) => [id, nomeDe(pid(id))])) };

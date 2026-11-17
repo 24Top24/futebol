@@ -184,6 +184,8 @@ export function tier(ov) {
 export const sortearLado = () => ({ B: Math.random() < 0.5 ? 'balnearios' : 'oposto' });
 export const textoLado = (l) => (l?.B ? `🚪 Lado dos balneários: ${l.B === 'balnearios' ? '⚪ Brancos' : '⚫ Pretos'} · à baliza do outro lado: ${l.B === 'balnearios' ? '⚫ Pretos' : '⚪ Brancos'}` : '');
 
+// A mesma divisão dá sempre a mesma chave, troquem-se ou não as cores.
+export const chaveEquipas = (A, B) => [A, B].map((x) => [...x].sort().join(',')).sort().join('|');
 export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) {
   const N = ids.length, metade = Math.floor(N / 2);
   if (N < 2) return [];
@@ -232,13 +234,15 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     return Object.entries(cor).every(([id, c]) => (c === 'B') === sA.has(id));
   };
   const res = [];
+  // 🎲 Outras opções (Rui, 17/11): divisões já mostradas nesta sessão (restr.excluir = chaves de chaveEquipas) ficam de fora.
+  const excluir = new Set(restr.excluir || []);
   // A nota de campo de cada um (sem a área GR; com a forma, se vier nas cartas). O GR fixo mostra a nota de GR.
   const nota = Object.fromEntries(ids.map((id) => [id, fixo.has(id) && cartas[id]?.stats.gr != null ? Math.round(cartas[id].stats.gr * 10) : Math.round(val(id, 'ov'))]));
   const avaliar = (A0) => {
     const B0 = ids.filter((x) => !A0.includes(x));
     // ids[0] fica sempre do mesmo lado para não repetir divisões; as cores decidem-se aqui.
     const [A, B] = ok(A0, B0) ? [A0, B0] : ok(B0, A0) ? [B0, A0] : [null, null];
-    if (!A) return;
+    if (!A || excluir.has(chaveEquipas(A, B))) return;
     let custo = 3 * Math.abs(forca(A) - forca(B));
     for (const a of semGR) custo += 0.5 * Math.abs(somarCampo(A, a.k) - somarCampo(B, a.k));
     if (melhorRoda) { const comG = A.some((id) => fixo.has(id)) ? A : B; if (comG.includes(melhorRoda)) custo += 15; }   // preferência, não obrigação
