@@ -196,7 +196,8 @@ function cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro = false } = {})
   const ult = [...games].sort((a, b) => (b.criado || 0) - (a.criado || 0))[0];
   let html = '', mostrado = null;
   if (vivo && vivo.fase === 'aberto' && !vivo.gameId)
-    html += `<div class="aviso"><span class="ic">📋</span><div><b>Jogo de ${esc(diaPT(vivo.data))}</b><p>Aberto por ${esc(vivo.por?.nome || '?')} — as equipas estão a ser feitas.</p></div></div>`;
+    html += `<div class="aviso"><span class="ic">📋</span><div><b>Jogo de ${esc(diaPT(vivo.data))}</b><p>Aberto por ${esc(vivo.por?.nome || '?')} — as equipas estão a ser feitas.</p>
+      ${lsGet('sou-moderador') === '1' ? '<a class="btn peq prim" href="#jogo">🛡 Continuar as equipas</a>' : ''}</div></div>`;
   if (ult) {
     const r = res.find((x) => x.jogo.gameId === ult.id);
     const vv = !r && aoVivo?.gameId === ult.id ? aoVivo : null;
@@ -3350,10 +3351,17 @@ const docVivo = () => (A.teste ? 'teste' : 'jogo');
 const lsMarcador = () => (A.teste ? 'futebol-marcador-teste' : 'futebol-marcador-jogo');
 function pararAoVivo() { A.offVivo?.(); A.offVivo = null; A.vivo = null; }
 // O separador 🛡 só aparece a moderadores: confirma (sem atrasar a página) e redesenha se mudou.
+// Admin da liga aberta (o Rui na raiz; nas outras ligas, quem está em admins): também faz de moderador.
+async function souAdminLiga() {
+  const u = await DB.user().catch(() => null);
+  if (!u) return false;
+  const cfg = await DB.getConfigLiga().catch(() => null);
+  return !!cfg && (cfg.raiz ? await DB.isAdmin(u) : (cfg.admins || []).includes(u.uid));
+}
 async function confirmarModerador() {
   const id = lsGet('meu-perfil'); const antes = lsGet('sou-moderador') === '1';
   let agora = false;
-  try { agora = !!id && !!(await DB.listPlayers()).find((p) => p.id === id)?.moderador; } catch { return; }
+  try { agora = (!!id && !!(await DB.listPlayers()).find((p) => p.id === id)?.moderador) || await souAdminLiga(); } catch { return; }
   if (agora !== antes) lsSet('sou-moderador', agora ? '1' : '');
   document.querySelector('#nav a[data-r="mod"]').hidden = !agora;
 }
@@ -3449,11 +3457,17 @@ async function paginaJogo(el) {
   const eu = todos.find((p) => p.id === lsGet('meu-perfil'));
   const sair = (t) => { $app.innerHTML = `<div class="fim"><p>${t}</p><button class="prim" id="ir-eu">👤 Ir para o meu perfil</button></div>`;
     document.getElementById('ir-eu').onclick = () => { location.hash = '#eu'; }; };
-  if (!eu || !(await DB.ligacaoOk(eu.id))) return sair('Entra primeiro no teu perfil com o PIN.');
-  if (!eu.moderador) return sair('Este separador é só para os moderadores. Fala com o Rui.');
+  // O admin continua o que um moderador começou (Rui, 17/11: o Markinho abriu o jogo, fez as opções e não escolheu).
+  const admin = await souAdminLiga();
+  if (!admin) {
+    if (!eu || !(await DB.ligacaoOk(eu.id))) return sair('Entra primeiro no teu perfil com o PIN.');
+    if (!eu.moderador) return sair('Este separador é só para os moderadores. Fala com o Rui.');
+  }
   const K = (await DB.getModeracao('chave').catch(() => null))?.chave;
   if (!K) return sair('Ainda não está pronto: o Rui tem de abrir o admin uma vez.');
-  return paginaColab(K, { eu });
+  const pfAdmin = admin && !eu ? await DB.getSegredo('perfil').catch(() => null) : null;
+  const euAdmin = pfAdmin?.eu ? todos.find((p) => p.id === pfAdmin.eu) : null;
+  return paginaColab(K, { eu: eu || euAdmin || { id: 'admin', nome: 'Admin' } });
 }
 
 // =====================================================================
