@@ -244,7 +244,15 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     const [A, B] = ok(A0, B0) ? [A0, B0] : ok(B0, A0) ? [B0, A0] : [null, null];
     if (!A || excluir.has(chaveEquipas(A, B))) return;
     let custo = 3 * Math.abs(forca(A) - forca(B));
-    for (const a of semGR) custo += 0.5 * Math.abs(somarCampo(A, a.k) - somarCampo(B, a.k));
+    let ganhaA = 0, ganhaB = 0;
+    for (const a of semGR) {
+      const d = somarCampo(A, a.k) - somarCampo(B, a.k);
+      custo += 0.5 * Math.abs(d);
+      if (d > metade) ganhaA++; else if (d < -metade) ganhaB++;   // ganha a área: média da equipa mais de 1 ponto acima
+    }
+    // Domínio (Rui, 17/11, ligeiro): uma equipa que ganha mais de 3 das 6 áreas paga 4 por cada uma a mais. Estudo offline
+    // (dados-algoritmos, custo C5L): com a forma ligada, as opções com 5–6 áreas para a mesma equipa quase desaparecem.
+    custo += 4 * Math.max(0, Math.max(ganhaA, ganhaB) - 3);
     if (melhorRoda) { const comG = A.some((id) => fixo.has(id)) ? A : B; if (comG.includes(melhorRoda)) custo += 15; }   // preferência, não obrigação
     for (const [pa, pb] of anteriores) {
       const sA = new Set(A);
@@ -312,7 +320,11 @@ export function aplicarForma(cartas, elo) {
   const out = {};
   for (const [id, c] of Object.entries(cartas)) {
     const f = elo[id]?.forma || 0;
-    out[id] = c.overall == null || !f ? c : { ...c, overall: Math.round(c.overall + ajusteElo(c.overall, f)) };
+    if (c.overall == null || !f) { out[id] = c; continue; }
+    // A forma também nas áreas (Rui, 17/11): a mesma percentagem do overall, para o gerador e o cartão equilibrarem as áreas
+    // com a mesma força com que equilibram o overall (antes, o overall subia com a forma e as áreas ficavam iguais à carta).
+    const overall = Math.round(c.overall + ajusteElo(c.overall, f)), k = c.overall ? overall / c.overall : 1;
+    out[id] = { ...c, overall, stats: Object.fromEntries(Object.entries(c.stats || {}).map(([a, v]) => [a, v == null ? v : v * k])) };
   }
   return out;
 }

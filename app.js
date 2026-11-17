@@ -1,7 +1,7 @@
 import { DB, novoToken, novoPin } from './db.js?v=55';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=37';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=39';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=40';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=8';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=16';
@@ -3040,7 +3040,8 @@ function secEquipas(el, X = A.ctxEq) {
   // (Brancos à esquerda, Pretos à direita) e os plantéis em pequeno. Rating = média do overall sem GR
   // (o que o gerador equilibra). 🧤 = melhor GR da equipa (só informativo, não conta).
   const medE = (eq, f) => { const v = eq.map(f).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
-  const areaE = (eq, k) => (k === 'gr' ? Math.max(...eq.map((id) => (cartas[id]?.stats.gr ?? 6) * 10)) : medE(eq, (id) => cartas[id]?.stats[k] != null ? cartas[id].stats[k] * 10 : null));
+  // As áreas do cartão vêm das mesmas cartas com que o gerador equilibrou (com a forma, se estiver ligada).
+  const areaE = (eq, k) => { const C = cartasJogo(); return k === 'gr' ? Math.max(...eq.map((id) => (C[id]?.stats.gr ?? 6) * 10)) : medE(eq, (id) => C[id]?.stats[k] != null ? C[id].stats[k] * 10 : null); };
   const estrelas = (ov) => { const n = Math.max(0.5, Math.min(5, Math.round(((ov ?? 0) / 20) * 2) / 2));
     return '<span class="on">' + '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '') + '</span>' + '★'.repeat(5 - Math.ceil(n)); };
   const melhorGR = (eq) => eq.reduce((m, id) => ((cartas[id]?.stats.gr ?? 0) > (cartas[m]?.stats.gr ?? 0) ? id : m), eq[0]);
