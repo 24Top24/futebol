@@ -1655,7 +1655,7 @@ async function ctxAdmin() {
   const players = comNotaFora(ps0, calcularCartas(ps0.filter((p) => p.ativo !== false), A.votes, A.conv), await notasFora());
   const cartasEq = calcularCartas(players.filter((p) => p.ativo !== false), A.votes, A.conv);
   return {
-    players, cartas: cartasEq, games: A.games,
+    admin: true, players, cartas: cartasEq, games: A.games,
     elo: calcularElo((await resultadosValidos()).validos.map((r) => JSON.parse(r.json || '{}').jogo), cartasEq),
     relogio: [((await DB.getSegredo('perfil')) || {}).eu].filter(Boolean),   // quem tem relógio (por agora o Rui) → desafios ⌚
     async addConvidado(d) { const id = await DB.savePlayer(d); await recarregar(); A.ctxEq = await ctxAdmin(); return id; },
@@ -3132,7 +3132,7 @@ function secEquipas(el, X = A.ctxEq) {
   }
   // 🎲 Refazer (Rui, 17/11): volta a ler as notas (uma carta mudou entretanto) e gera outras 3 divisões, sem repetir as já vistas.
   async function refazer() {
-    const doAdmin = X === A.ctxEq && !X.vivo;
+    const doAdmin = X.admin && !X.vivo;
     if (doAdmin) { await recarregar(); A.ctxEq = await ctxAdmin(); }
     A.reroll = true;
     secEquipas(el, doAdmin ? A.ctxEq : X);
