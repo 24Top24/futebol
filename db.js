@@ -71,6 +71,8 @@ function demoDb() {
     async getVotoJogo(jogo, votante) { return s.votosJogo?.[jogo + '_' + votante] || null; },
     async saveVotoJogo(jogo, votante, d) { (s.votosJogo ||= {})[jogo + '_' + votante] = { ...d, jogo, votante }; save(); },
     async listVotosJogo() { return Object.entries(s.votosJogo || {}).map(([id, d]) => ({ id, ...d })); },
+    async listVotosEquipas(chave) { return Object.values(s.votosEquipas || {}).filter((v) => v.chave === chave); },
+    async saveVotoEquipas(d) { (s.votosEquipas ||= {})[d.chave + '_' + d.votante] = d; save(); },
     async setTicket(id, d) { (s.tickets ||= {})[id] = d; save(); },
     async deleteTicket(id) { delete s.tickets?.[id]; save(); },
     async getSaude(id) { return (s.saude ||= {})[id] || null; },
@@ -496,6 +498,9 @@ async function fireDb() {
     getVotoJogo: (jogo, votante) => get('votosJogo', jogo + '_' + votante),
     saveVotoJogo: (jogo, votante, d) => setDoc(D('votosJogo', jogo + '_' + votante), { ...d, jogo, votante }),
     listVotosJogo: () => list('votosJogo'),
+    // 🗳 Votação das equipas (votoequipas.js): votosEquipas/{chave}_{jogador}; todos leem, cada convocado escreve o seu até ao prazo.
+    listVotosEquipas: async (chave) => (await getDocs(fs.query(Cl('votosEquipas'), fs.where('chave', '==', chave)))).docs.map((d) => ({ id: d.id, ...d.data() })),
+    saveVotoEquipas: (d) => setDoc(D('votosEquipas', d.chave + '_' + d.votante), d),
     setTicket: (id, d) => setDoc(doc(db, 'tickets', id), d),
     deleteTicket: (id) => deleteDoc(doc(db, 'tickets', id)),
     // Dados de saúde e treinos do relógio: escreve só o próprio (PIN); o admin só lê.

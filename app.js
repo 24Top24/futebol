@@ -1,10 +1,11 @@
-import { DB, novoToken, novoPin } from './db.js?v=55';
-import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=37';
+import { DB, novoToken, novoPin } from './db.js?v=56';
+import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=38';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
 import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto2, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=41';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=8';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=16';
+import { prazoVotacao, vencedora, htmlVotacao, ligarContagem } from './votoequipas.js?v=1';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe, fitDeTreino, temGpsPista } from './treinos.js?v=28';
@@ -190,6 +191,26 @@ function cartaoJogo(o) {
 
 // Cartões do topo (Início e Jogos): jogo aberto à espera de equipas, e o jogo das equipas mais recentes (próximo / ao vivo / último).
 // desafiosPrimeiro: os meus desafios por cima do cartão do próximo jogo (Início do próprio).
+// 🗳 Votação das equipas no Início (Rui, 18/11): os convocados com sessão votam até ao prazo; todos veem a contagem.
+async function montarVotacao(v, todos) {
+  const box = document.getElementById('vot-eq'); if (!box) return;
+  const chave = String(v.opcoesTs), meuId = lsGet('meu-perfil');
+  const [votos, ligado] = await Promise.all([DB.listVotosEquipas(chave).catch(() => []), meuId ? DB.ligacaoOk(meuId).catch(() => false) : false]);
+  const eu = ligado ? todos.find((p) => p.id === meuId) || null : null;
+  const nome = (id) => nomeDe(todos.find((p) => p.id === id) || { nome: v.nomes?.[id] || '?' });
+  box.innerHTML = htmlVotacao(v, votos, eu, nome, { moderador: lsGet('sou-moderador') === '1' });
+  if (Date.now() >= v.prazo && lsGet('sou-moderador') === '1')
+    box.insertAdjacentHTML('beforeend', '<p><a class="btn peq prim" href="#jogo">🛡 Fechar a votação e escolher</a></p>');
+  ligarContagem(box, () => montarVotacao(v, todos));
+  const meu = eu && votos.find((x) => x.votante === eu.id);
+  const gravar = async (d) => {
+    try { await DB.saveVotoEquipas({ chave, votante: eu.id, k: meu?.k ?? null, so: meu?.so ?? null, ...d, ts: Date.now() }); toast('Voto guardado ✔'); }
+    catch (e) { console.error(e); toast('Não deu para votar (a votação pode ter fechado)'); }
+    montarVotacao(v, todos);
+  };
+  box.querySelectorAll('[data-voto-eq]').forEach((b) => (b.onclick = () => gravar({ k: Number(b.dataset.votoEq) })));
+  box.querySelectorAll('[data-so]').forEach((b) => (b.onclick = () => (meu ? gravar({ so: b.dataset.so || null }) : toast('Vota primeiro numa das opções'))));
+}
 function cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro = false } = {}) {
   const aoVivo = vivo?.fase === 'jogo' && vivo.live ? JSON.parse(vivo.live) : null;
   const pessoa = (id, nome) => todos.find((p) => p.id === id) || { nome: nome || '?' };   // sem id = não abre perfil
@@ -198,6 +219,10 @@ function cartoesTopo(todos, res, games, vivo, { desafiosPrimeiro = false } = {})
   if (vivo && vivo.fase === 'aberto' && !vivo.gameId)
     html += `<div class="aviso"><span class="ic">📋</span><div><b>Jogo de ${esc(diaPT(vivo.data))}</b><p>Aberto por ${esc(vivo.por?.nome || '?')} — as equipas estão a ser feitas.</p>
       ${lsGet('sou-moderador') === '1' ? '<a class="btn peq prim" href="#jogo">🛡 Continuar as equipas</a>' : ''}</div></div>`;
+  if (vivo && vivo.fase === 'aberto' && !vivo.gameId && vivo.opcoes?.length > 1 && vivo.prazo) {
+    html += '<div id="vot-eq"></div>';
+    setTimeout(() => montarVotacao(vivo, todos).catch((e) => console.error(e)), 0);
+  }
   if (ult) {
     const r = res.find((x) => x.jogo.gameId === ult.id);
     const vv = !r && aoVivo?.gameId === ult.id ? aoVivo : null;
@@ -3038,7 +3063,7 @@ function secEquipas(el, X = A.ctxEq) {
         const ops = gerarEquipas(ids, cartasJogo(), [], 1, { soGR: ids.filter(soGR), A: ids.filter((id) => A.mao[id] === 'B') });
         if (!ops.length) return toast('Não deu para montar estas equipas');
         ops[0].mao = true;
-        if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
+        if (VV) publicarOpcoes(ops);
         mostrar(ops);
       };
     };
@@ -3065,7 +3090,7 @@ function secEquipas(el, X = A.ctxEq) {
     const ops = gerarEquipas(ids, cartasJogo(), anteriores, 3, { ...restr, excluir: A.vistas.chaves });
     if (!ops.length) return (g('res').innerHTML = `<p class="opcao">${A.vistas.chaves.length ? 'Já viste todas as divisões possíveis com estas opções.' : 'Não há nenhuma divisão que cumpra todas as opções. Tira alguma.'}</p>`);
     A.vistas.chaves.push(...ops.map((o) => chaveEquipas(o.A, o.B)));
-    if (VV) { VV.opcoes = ops.map(opcaoPub); VV.escolhida = null; X.publicar({ opcoes: VV.opcoes, escolhida: null }); }
+    if (VV) publicarOpcoes(ops);
     mostrar(ops);
   };
   // Depois de ver as equipas: afinar a nota dos convidados (0–100) e voltar a gerar.
@@ -3195,12 +3220,34 @@ function secEquipas(el, X = A.ctxEq) {
     el.querySelector('#gerar')?.click();
     el.querySelector('#res')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+  // Opções novas = votação nova: chave nova (os votos antigos deixam de contar) e prazo pela hora a que o jogo foi aberto.
+  function publicarOpcoes(ops) {
+    const opcoesTs = Date.now(), prazo = ops.length > 1 ? prazoVotacao(VV.ts || opcoesTs, VV.data) : null;
+    Object.assign(VV, { opcoes: ops.map(opcaoPub), escolhida: null, opcoesTs, prazo });
+    X.publicar({ opcoes: VV.opcoes, escolhida: null, opcoesTs, prazo });
+  }
+  // Votação (moderador): contagem, camisolas e, passado o prazo, escolhe sozinho a mais votada (empate → a mais equilibrada).
+  async function votacaoMod(ops) {
+    const box = g('vot-mod'); if (!box || !VV?.opcoesTs || !VV.prazo) return;
+    const votos = await DB.listVotosEquipas(String(VV.opcoesTs)).catch(() => []);
+    box.innerHTML = htmlVotacao(VV, votos, null, (id) => nomeDe(pid(id) || { nome: '?' }), { moderador: true });
+    ligarContagem(box, () => votacaoMod(ops));
+    if (Date.now() >= VV.prazo && VV.escolhida == null && !A.autoEscolha) {
+      A.autoEscolha = true;
+      const k = vencedora(VV.opcoes, votos);
+      toast(`Votação fechada: fica a opção ${k + 1}`);
+      el.querySelector(`#res [data-k="${k}"]`)?.click();
+    }
+  }
   function mostrar(ops) {
-    g('res').innerHTML = (ops.some((o) => !o.mao) ? '<button id="reroll" style="width:100%;margin-bottom:8px">🎲 Outras equipas (com as notas de agora)</button>' : '') + ops.map((o, k) => `<div class="opcao"><b>${o.mao ? '✋ Equipas à mão' : `Opção ${k + 1}`}</b>
+    g('res').innerHTML = (VV?.prazo && ops.length > 1 ? '<div id="vot-mod"></div>' : '')
+      + (ops.some((o) => !o.mao) ? '<button id="reroll" style="width:100%;margin-bottom:8px">🎲 Outras equipas (com as notas de agora)</button>' : '') + ops.map((o, k) => `<div class="opcao"><b>${o.mao ? '✋ Equipas à mão' : `Opção ${k + 1}`}</b>
       ${cartaoJogo(o)}
       <div class="linha"><button class="prim peq" data-k="${k}">${X.vivo ? '✅ Escolher estas' : '✅ Escolher e partilhar no WhatsApp'}</button>${Object.keys(A.restr.cor).length ? '' : `<button class="peq" data-tr="${k}">Trocar cores</button>`}</div></div>`).join('') + ajusteConv();
     ligarAjuste();
     g('reroll')?.addEventListener('click', refazer);
+    A.autoEscolha = false;
+    votacaoMod(ops).catch((e) => console.error(e));
     el.querySelectorAll('[data-tr]').forEach((b) => (b.onclick = () => {
       const o = ops[b.dataset.tr]; [o.A, o.B] = [o.B, o.A]; [o.ovA, o.ovB] = [o.ovB, o.ovA];
       if (o.grFixo) o.grFixo = { A: o.grFixo.B, B: o.grFixo.A };
