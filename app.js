@@ -598,7 +598,8 @@ async function paginaJogadores() {
   const [pub, { todos, res }] = await Promise.all([DB.getPublic('cartas'), dadosPublicos()]);
   const comCartas = !!pub?.visivel;
   const S = Object.fromEntries(estatisticas(res).map((s) => [s.id, s]));
-  const lista = todos.filter((p) => p.ativo !== false && !p.convidado).map((p) => ({ p, j: S[p.id]?.j || 0, c: comCartas ? cartaPublica(pub, p) : null }));
+  const rec = presencasRecentes(res.map((r) => r.jogo));
+  const lista = todos.filter((p) => p.ativo !== false && !p.convidado).map((p) => ({ p, j: S[p.id]?.j || 0, rec: rec[p.id] || 0, c: comCartas ? cartaPublica(pub, p) : null }));
   const posicoes = POSICOES.filter((x) => lista.some((l) => l.c?.posicao === x.k));
   const ORD = [...(comCartas ? [['ov', 'Overall']] : []), ['nome', 'Nome'], ['j', 'Jogos']];
   A.jOrd = ORD.some(([k]) => k === A.jOrd) ? A.jOrd : ORD[0][0];
@@ -618,8 +619,8 @@ async function paginaJogadores() {
       : `<a class="pj" href="#jogador=${esc(l.p.id)}">${av(l.p)}<b>${esc(nomeDe(l.p))}</b><span class="pj-jogos"><b>${l.j}</b> jogo${l.j === 1 ? '' : 's'}</span></a>`);
     // Ativos (já jogaram) primeiro; inativos (0 jogos) à parte, no fim (Rui, 18/11).
     const grupo = (G, tit) => (G.length ? `<h3 class="j-grupo">${tit} <span class="mute">(${G.length})</span></h3><div class="${comCartas ? 'cartas' : 'plantel'}">${G.map(item).join('')}</div>` : '');
-    const ativosL = L.filter((l) => l.j > 0), inativosL = L.filter((l) => !l.j);
-    document.getElementById('j-lista').innerHTML = L.length ? grupo(ativosL, 'Ativos') + grupo(inativosL, 'Inativos <small>(ainda sem jogos)</small>')
+    const ativosL = L.filter((l) => l.rec > 0), inativosL = L.filter((l) => !l.rec);
+    document.getElementById('j-lista').innerHTML = L.length ? grupo(ativosL, 'Ativos') + grupo(inativosL, `Inativos <small>(sem jogos nos últimos ${RECENTES})</small>`)
       : vazio('🔎', 'Nenhum jogador encontrado.');
   };
   desenhar();
@@ -1477,10 +1478,9 @@ async function votar(eu, todos) {
   const jSo = A.votarJogo ? jogosPub.find((x) => x.id === A.votarJogo) : null;
   const jogoSo = jSo ? JSON.parse(jSo.json || '{}') : null;
   const so = jogoSo ? new Set([...(jogoSo.brancos || []), ...(jogoSo.pretos || [])].map((x) => x.id)) : null;
-  // Ordem (Rui, 18/11): primeiro quem aparece mais (jogos feitos), quem nunca jogou fica no fim; empates pelos jogos juntos.
+  // Ordem (Rui, 18/11): primeiro quem aparece mais nos últimos 15 jogos, os inativos no fim; empates pelos jogos juntos.
   const novos = new Set(porVotar(eu.id, r, todos).map((p) => p.id));   // ainda sem nota minha: marcados com 🆕
-  const nJogos = {};
-  for (const j of jogos) for (const x of [...(j.brancos || []), ...(j.pretos || [])]) if (x?.id) nJogos[x.id] = (nJogos[x.id] || 0) + 1;
+  const nJogos = presencasRecentes(jogos);   // jogos feitos nos últimos 15: quem nunca apareceu neles fica no fim
   const alvos = todos.filter((p) => p.id !== eu.id && (!so || so.has(p.id)))
     .sort((a, b) => (nJogos[b.id] || 0) - (nJogos[a.id] || 0) || (juntos[b.id] || 0) - (juntos[a.id] || 0) || nomeDe(a).localeCompare(nomeDe(b), 'pt'));
   let filtro = 'todos';
@@ -1934,6 +1934,14 @@ const PARTE = { pd: 'pé dir.', pe: 'pé esq.', cab: 'cabeça', out: 'outro', pe
 const grSofreu = (j, ev) => ev.gr || (j.turnos || []).find((x) => x.equipa !== ev.equipa && ev.t >= x.de && ev.t < x.ate)?.jogador;
 
 // ---------- Estatísticas de todos os jogos (a partir do que o relógio envia) ----------
+// Ativo = jogou em algum dos últimos 15 jogos da liga (Rui, 18/11). Devolve { id: jogos feitos nesses 15 }.
+const RECENTES = 15;
+function presencasRecentes(jogos) {
+  const P = {};
+  for (const j of [...jogos].sort((a, b) => (b.inicioEpoch || 0) - (a.inicioEpoch || 0)).slice(0, RECENTES))
+    for (const x of [...(j.brancos || []), ...(j.pretos || [])]) { const id = typeof x === 'string' ? x : x?.id; if (id) P[id] = (P[id] || 0) + 1; }
+  return P;
+}
 export function estatisticas(resultados) {
   const S = {};
   const linha = (id, nome) => (S[id] ||= { id, nome, j: 0, jReg: 0, jGR: 0, v: 0, e: 0, d: 0, g: 0, a: 0, ag: 0, grMs: 0, sofr: 0, gm: 0, gs: 0, pd: 0, pe: 0, cab: 0, pen: 0, penT: 0, penDef: 0, mvp: 0 });
