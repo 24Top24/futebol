@@ -616,8 +616,11 @@ async function paginaJogadores() {
     const item = (l) => (l.c
       ? `<a class="carta-link" href="#jogador=${esc(l.p.id)}">${htmlCarta(l.p, l.c)}<span class="carta-j">${l.j} jogo${l.j === 1 ? '' : 's'}</span></a>`
       : `<a class="pj" href="#jogador=${esc(l.p.id)}">${av(l.p)}<b>${esc(nomeDe(l.p))}</b><span class="pj-jogos"><b>${l.j}</b> jogo${l.j === 1 ? '' : 's'}</span></a>`);
-    document.getElementById('j-lista').innerHTML = L.length ? `<p class="mute" style="margin:0 0 8px">${L.length} jogador${L.length > 1 ? 'es' : ''}</p>
-      <div class="${comCartas ? 'cartas' : 'plantel'}">${L.map(item).join('')}</div>` : vazio('🔎', 'Nenhum jogador encontrado.');
+    // Ativos (já jogaram) primeiro; inativos (0 jogos) à parte, no fim (Rui, 18/11).
+    const grupo = (G, tit) => (G.length ? `<h3 class="j-grupo">${tit} <span class="mute">(${G.length})</span></h3><div class="${comCartas ? 'cartas' : 'plantel'}">${G.map(item).join('')}</div>` : '');
+    const ativosL = L.filter((l) => l.j > 0), inativosL = L.filter((l) => !l.j);
+    document.getElementById('j-lista').innerHTML = L.length ? grupo(ativosL, 'Ativos') + grupo(inativosL, 'Inativos <small>(ainda sem jogos)</small>')
+      : vazio('🔎', 'Nenhum jogador encontrado.');
   };
   desenhar();
   document.getElementById('j-busca').oninput = (e) => { A.jBusca = e.target.value; desenhar(); };
@@ -1474,10 +1477,12 @@ async function votar(eu, todos) {
   const jSo = A.votarJogo ? jogosPub.find((x) => x.id === A.votarJogo) : null;
   const jogoSo = jSo ? JSON.parse(jSo.json || '{}') : null;
   const so = jogoSo ? new Set([...(jogoSo.brancos || []), ...(jogoSo.pretos || [])].map((x) => x.id)) : null;
-  // Os que ainda não têm nota minha (jogadores novos) vêm primeiro; depois por jogos juntos.
-  const novos = new Set(porVotar(eu.id, r, todos).map((p) => p.id));
+  // Ordem (Rui, 18/11): primeiro quem aparece mais (jogos feitos), quem nunca jogou fica no fim; empates pelos jogos juntos.
+  const novos = new Set(porVotar(eu.id, r, todos).map((p) => p.id));   // ainda sem nota minha: marcados com 🆕
+  const nJogos = {};
+  for (const j of jogos) for (const x of [...(j.brancos || []), ...(j.pretos || [])]) if (x?.id) nJogos[x.id] = (nJogos[x.id] || 0) + 1;
   const alvos = todos.filter((p) => p.id !== eu.id && (!so || so.has(p.id)))
-    .sort((a, b) => novos.has(b.id) - novos.has(a.id) || (juntos[b.id] || 0) - (juntos[a.id] || 0) || nomeDe(a).localeCompare(nomeDe(b), 'pt'));
+    .sort((a, b) => (nJogos[b.id] || 0) - (nJogos[a.id] || 0) || (juntos[b.id] || 0) - (juntos[a.id] || 0) || nomeDe(a).localeCompare(nomeDe(b), 'pt'));
   let filtro = 'todos';
   const abertos = new Set();          // abertos à mão depois de fechados
   atualizar.forEach((id) => abertos.add(id));   // os que estão para atualizar aparecem logo abertos
