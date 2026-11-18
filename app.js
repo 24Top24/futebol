@@ -1,7 +1,7 @@
 import { DB, novoToken, novoPin } from './db.js?v=55';
 import { paginaLigas, abrirConvite, ligaGuardada, TODAS, dadosTodas, espelharVoto, montarSeletorLiga, souVisitante, slugLiga, LINK_LIGA, ligaDoLink, irParaLiga, campoSinc, publicarNotasFora, notasFora, comNotaFora, registarPessoa, paginaContas, jogosDeFora, paraEmprestar, promoverEmprestados, JOGOS_EMPRESTADO } from './ligas-ui.js?v=37';
 import { epocasDe, filtrarEpoca, nomeEpoca, epocaAtual, aplicarTema, temaEscolhido } from './ligas.js?v=4';
-import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=40';
+import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, calcularElo, aplicarForma, ajusteElo, ELO, contarConvivio, pontosConvivio, pesoVoto2, placarDe, vencedorDe, marcaDe, sortearLado, textoLado, chaveEquipas } from './ranking.js?v=41';
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=8';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=16';
@@ -620,7 +620,7 @@ async function paginaJogadores() {
     // Ativos (já jogaram) primeiro; inativos (0 jogos) à parte, no fim (Rui, 18/11).
     const grupo = (G, tit) => (G.length ? `<h3 class="j-grupo">${tit} <span class="mute">(${G.length})</span></h3><div class="${comCartas ? 'cartas' : 'plantel'}">${G.map(item).join('')}</div>` : '');
     const ativosL = L.filter((l) => l.rec > 0), inativosL = L.filter((l) => !l.rec);
-    document.getElementById('j-lista').innerHTML = L.length ? grupo(ativosL, 'Ativos') + grupo(inativosL, `Inativos <small>(sem jogos nos últimos ${RECENTES})</small>`)
+    document.getElementById('j-lista').innerHTML = L.length ? grupo(ativosL, 'Ativos') + grupo(inativosL, `Inativos <small>(sem jogos nos últimos ${RECENTES})</small>`) + (comCartas ? COMO_CARTA : '')
       : vazio('🔎', 'Nenhum jogador encontrado.');
   };
   desenhar();
@@ -1372,7 +1372,7 @@ function painelGeral(p, d, meus, m, proprio, S, cartaVis, est) {
   // Carta de jogador
   let carta = '';
   if (proprio) carta = `<section class="cartao">${d.carta}</section>`;
-  else if (cartaVis) carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><div class="eu-carta">${htmlCarta(p, cartaVis)}</div></section>`;
+  else if (cartaVis) carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><div class="eu-carta">${htmlCarta(p, cartaVis)}</div>${COMO_CARTA}</section>`;
   else carta = `<section class="cartao"><div class="cartao-tit">Carta de jogador</div><p class="mute" style="margin:0">🔒 As cartas são privadas: cada um vê a sua no seu perfil.</p></section>`;
   const sem = !meus.length ? `<div class="cartao">${vazio('⚽', 'Ainda sem jogos registados.')}</div>` : '';
   return `${proprio ? d.pedido || '' : ''}<div class="grelha2"><div>${sem}${ultima}${formaH}${pfH}${recH}${estH}${ficha}</div><aside>${carta}</aside></div>`;
@@ -1451,7 +1451,7 @@ async function perfilEu(eu, todos) {
   else if (!mc?.carta) carta = '<div class="cartao-tit">Carta de jogador</div><p class="mute">Ainda não há carta para ti (faltam votos).</p>';
   else carta = `<div class="cartao-tit">Carta de jogador <span class="tag">🔒 só tu</span></div><div class="eu-carta">${htmlCarta(eu, mc.carta, d)}</div>
     ${htmlMudanca(mc)}
-    <p class="mute" style="text-align:center">${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>`;
+    <p class="mute" style="text-align:center">${mc.carta.conhecem ? `Conhecem-te ${mc.carta.conhecem} jogadores.` : ''}</p>${COMO_CARTA}`;
   carta += htmlElo(mc?.elo, estado?.usarElo !== false);
   if (estado?.cartasPessoais && mc?.carta) carta += `<h3>Evolução</h3>${graficoEvolucao(mc.hist || [])}`;
   const tudo = juntarPerfis(players, perfis);
@@ -1595,6 +1595,19 @@ async function votar(eu, todos) {
 // =====================================================================
 // CARTAS (#cartas — só existe depois de o admin as publicar)
 // =====================================================================
+// «Como é calculada a carta?» (Rui, 18/11: «explica isso nas cartas») — o mesmo texto na lista de jogadores, no perfil e no 👤 Eu.
+const COMO_CARTA = `<details class="como-carta" style="margin:10px 0;font-size:13px"><summary style="cursor:pointer"><b>Como é calculada a carta?</b></summary>
+  <p class="mute" style="margin:6px 0">Os colegas dão notas de 1 a 10 a cada área. A carta não é uma média simples:</p>
+  <ul class="mute" style="margin:0;padding-left:18px">
+    <li>corrige quem vota sempre alto ou sempre baixo <i>(viés do votante)</i>;</li>
+    <li>iguala quem usa a escala toda e quem só dá 6 a 8 <i>(escala do votante)</i>;</li>
+    <li>dá mais peso a quem concorda com os outros nos jogadores em que votou <i>(fiabilidade)</i>;</li>
+    <li>quem dá a mesma nota a todos quase não conta, porque não distingue ninguém;</li>
+    <li>votos muito fora do normal contam menos <i>(estimador robusto de Huber)</i>;</li>
+    <li>o voto de quem joga mais, e mais vezes com o jogador, vale até 4,5 vezes mais;</li>
+    <li>com poucos votos, a nota fica perto do meio até haver mais informação <i>(encolhimento bayesiano)</i>.</li>
+  </ul>
+  <p class="mute" style="margin:6px 0 0">O overall é a média das áreas de campo (a de GR não conta). A forma dos últimos jogos (Elo) não mexe na carta: só ajusta as equipas. Nome técnico: modelo de avaliadores com efeitos aleatórios cruzados.</p></details>`;
 function htmlCarta(p, c, d = null) {
   const st = c?.stats || {};
   const ov = c?.overall;
@@ -2614,9 +2627,9 @@ function votosRecebidosHTML(id, cartas) {
   const media = (v) => { const n = AREAS.map((a) => v.r[id][a.k]).filter((x) => typeof x === 'number'); return n.length ? (n.reduce((a, b) => a + b, 0) / n.length).toFixed(1) : '–'; };
   const c = cartas[id];
   return `<p class="mute">${deram.length} votaram · ${nc.length} não conhecem${nc.length ? ` (${nc.map(nmv).join(', ')})` : ''}</p>
-    <div style="overflow-x:auto"><table><tr><th>Votante</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}<th>Média</th><th title="Jogos em que o votante e este jogador estiveram juntos (mesma equipa ou contra)">Jogos juntos</th><th>Peso</th></tr>
-    ${deram.map((v) => { const n = A.juntos?.[v.voter]?.[id] || 0, pts = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>${Math.round(pesoVoto(pts) * 100)}%</td></tr>`; }).join('')}
-    ${c ? `<tr><td><b>Carta</b> <small class="mute">(média aparada e pesada)</small></td>${AREAS.map((a) => `<td><b>${c.stats[a.k] != null ? c.stats[a.k].toFixed(1) : '–'}</b></td>`).join('')}<td><b>${c.overall ?? '–'}</b></td></tr>` : ''}</table></div>`;
+    <div style="overflow-x:auto"><table><tr><th>Votante</th>${AREAS.map((a) => `<th>${a.ab}</th>`).join('')}<th>Média</th><th title="Jogos em que o votante e este jogador estiveram juntos (mesma equipa ou contra)">Jogos juntos</th><th title="Peso do voto: 1 = quem nunca aparece; até 4,5 = quem vem sempre e já jogou muitas vezes com ele">Peso</th></tr>
+    ${deram.map((v) => { const n = A.juntos?.[v.voter]?.[id] || 0, pts = A.conv?.[v.voter]?.[id] || 0; return `<tr><td>${nmv(v)}</td>${AREAS.map((a) => `<td>${v.r[id][a.k] ?? ''}</td>`).join('')}<td><b>${media(v)}</b></td><td>${n}</td><td>×${pesoVoto2(pts, A.conv?.__jogos?.[v.voter] || 0, A.conv?.__total || 0).toFixed(1)}</td></tr>`; }).join('')}
+    ${c ? `<tr><td><b>Carta</b> <small class="mute">(${c.metodo === 'modelo' ? 'modelo de avaliadores — ver «Como é calculada a carta?»' : 'média aparada e pesada'})</small></td>${AREAS.map((a) => `<td><b>${c.stats[a.k] != null ? c.stats[a.k].toFixed(1) : '–'}</b></td>`).join('')}<td><b>${c.overall ?? '–'}</b></td></tr>` : ''}</table></div>`;
 }
 
 // Ficha de um jogador (ou novo jogador): dados, foto, convidado/nível, ativo; a carta e os votos recebidos.
@@ -3042,7 +3055,9 @@ function secEquipas(el, X = A.ctxEq) {
       // Quem só joga à baliza (players/{id}.soGR, marcado no plantel): o gerador põe-no a GR e equilibra com isso.
       soGR: [...A.sel].filter(soGR),
     };
-    const anteriores = [...X.games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 3).map((x) => [x.brancos || [], x.pretos || []]);
+    const recentes = [...X.games].sort((a, b) => (b.criado || 0) - (a.criado || 0)).slice(0, 5).map((x) => [x.brancos || [], x.pretos || []]);
+    const anteriores = recentes.slice(0, 3);
+    restr.recentes = recentes;   // 👥 duplas repetidas nos últimos 5 jogos pagam no custo (todos com todos)
     // 🎲 Outras opções: as divisões já vistas com estes mesmos jogadores ficam de fora; outro grupo de jogadores recomeça.
     const grupoSel = [...ids].sort().join(',');
     if (!A.reroll || A.vistas?.grupo !== grupoSel) A.vistas = { grupo: grupoSel, chaves: [] };

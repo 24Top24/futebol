@@ -35,7 +35,8 @@ export const pesoVoto = (pts) => PESO.min + (PESO.max - PESO.min) * Math.min(pts
 
 // Pontos de convívio de cada par, jogo a jogo por ordem de data. Devolve P[votante][votado].
 export function pontosConvivio(jogos) {
-  const P = {}, vistos = new Set(), todos = new Set();
+  const P = {}, vistos = new Set(), todos = new Set(), nj = {};
+  let total = 0;
   const ord = [...jogos].sort((a, b) => (a.inicioEpoch || 0) - (b.inicioEpoch || 0));
   for (const j of ord) {
     const chave = j.gameId || j.id;
@@ -44,12 +45,16 @@ export function pontosConvivio(jogos) {
     const ids = [...(j.brancos || []), ...(j.pretos || [])].map((x) => (typeof x === 'string' ? x : x.id)).filter(Boolean);
     const aqui = new Set(ids);
     ids.forEach((x) => todos.add(x));
+    total++; for (const x of aqui) nj[x] = (nj[x] || 0) + 1;
     for (const a of aqui) for (const b of todos) {
       if (a === b) continue;
       const v = (P[a] ||= {})[b] || 0;
       P[a][b] = aqui.has(b) ? Math.min(PESO.teto, v + PESO.sobe) : Math.max(0, v - PESO.desce);
     }
   }
+  // assiduidade (para o peso do voto, pesoVoto2): jogos de cada um e total de jogos — escondidos (não aparecem a percorrer P)
+  Object.defineProperty(P, '__jogos', { value: nj, enumerable: false });
+  Object.defineProperty(P, '__total', { value: total, enumerable: false });
   return P;
 }
 
@@ -81,9 +86,101 @@ function percentil(arr, q) {
   return v[lo] + (v[hi] - v[lo]) * (i - lo);
 }
 
-// players: [{id,nome,convidado,nivel,...}], votes: [{voter, r:{targetId:{skip}|{rem..}}}]
-export function calcularCartas(players, votes, convivio = {}) {
+// ---------- Peso de cada voto, versão 2 (Rui, 17/11: "quem joga e joga com essa pessoa conta até 4 ou 5 vezes mais") ----------
+// w = 1 + (máx − 1) · q, q = ½·min(1, pontos de convívio do par / 5) + ½·min(1, jogos de quem vota / 60 % dos jogos da liga).
+// Quem nunca aparece = 1; quem vem sempre e já jogou ≥5 vezes com o votado = 4,5; vem sempre mas nunca com ele = 2,75.
+// Estudo offline (C:\Claude_Pessoal\futebolada\dados-algoritmos, RELATORIO.md): neutro nas cartas (vota-se sobretudo em quem se
+// conhece), mas é o que o Rui pediu e não piora nada.
+export const PESO2 = { max: 4.5, ptsCheio: 5, assidCheia: 0.6 };
+export function pesoVoto2(pts, jogosVotante, jogosLiga) {
+  const gRef = Math.max(1, Math.ceil(PESO2.assidCheia * (jogosLiga || 0)));
+  return 1 + (PESO2.max - 1) * (0.5 * Math.min(1, (pts || 0) / PESO2.ptsCheio) + 0.5 * Math.min(1, (jogosVotante || 0) / gRef));
+}
+// Jogos de cada um e total de jogos: vêm escondidos no objeto do convívio (pontosConvivio põe-nos lá), para não mudar quem chama.
+export const assiduidadeDe = (convivio) => ({ jogos: convivio?.__jogos || {}, total: convivio?.__total || 0 });
+
+// ---------- Modelo de avaliadores (Rui, 18/11: "aplica o novo método estatístico às cartas") ----------
+// Cada nota dada = nível do jogador × escala de quem vota + viés de quem vota + erro   (efeitos aleatórios cruzados, tipo
+// "peer assessment" de Piech et al. 2013, com robustez de Huber). O que isto corrige:
+//  • viés: quem vota sempre alto ou sempre baixo deixa de puxar as notas para cima/baixo;
+//  • escala: quem usa só 6–8 e quem usa 2–10 passam a contar o mesmo;
+//  • fiabilidade: quem concorda com o consenso nos jogadores em que votou pesa mais; quem não concorda pesa menos;
+//  • votos planos (todos iguais): a escala dá ~0 → não informa as diferenças (sem regra fixa: o modelo mede-o);
+//  • votos fora do normal (amigos/rivais): contam menos (Huber, k = 1,5);
+//  • poucos votos: a nota é puxada para o meio até haver informação (encolhimento).
+// O "votante típico" (o nível da escala) é a MEDIANA dos votantes que distinguem os jogadores. Testes offline: o erro da carta
+// face ao nível verdadeiro desce ~8 % e votantes falsos (1 ou 10 a todos, combinados, amigos) mexem ≤ 1 ponto nos outros.
+export const MODELO = { minVotantes: 5, iter: 200, huber: 1.5, nu: 12, sPrior: 0.5, sMax: 2 };
+const mediaL = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+const medianaP = (xs, ws) => { const o = xs.map((x, i) => [x, ws[i]]).sort((a, b) => a[0] - b[0]); const T = ws.reduce((s, x) => s + x, 0); let acc = 0;
+  for (const [x, p] of o) { acc += p; if (acc >= T / 2) return x; } return o.length ? o[o.length - 1][0] : 0; };
+// obs: [{ v (quem vota), t (votado), a (área), y (nota 1–10), p0 (peso do voto) }] → { stats: { t: { área: nota } } } ou null
+function modeloAvaliadores(obs) {
+  const K = AREAS.map((a) => a.k), M = MODELO;
+  if (!obs.length) return null;
+  const pm = mediaL(obs.map((o) => o.p0)); for (const o of obs) { o.p0 /= pm; o.h = 1; }
+  const T = [...new Set(obs.map((o) => o.t))], V = [...new Set(obs.map((o) => o.v))];
+  const mu = {}; for (const a of K) mu[a] = mediaL(obs.filter((o) => o.a === a).map((o) => o.y));
+  const b = Object.fromEntries(T.map((t) => [t, Object.fromEntries(K.map((a) => [a, 0]))]));
+  const c = Object.fromEntries(V.map((v) => [v, 0])), s = Object.fromEntries(V.map((v) => [v, 1])), s2v = Object.fromEntries(V.map((v) => [v, 1]));
+  let se2 = 1, sc2 = 0.5; const sb2 = Object.fromEntries(K.map((a) => [a, 1]));
+  const porT = {}, porV = {}, porA = {}; for (const o of obs) { (porT[o.t + '|' + o.a] ||= []).push(o); (porV[o.v] ||= []).push(o); (porA[o.a] ||= []).push(o); }
+  const prec = (o) => (o.p0 * o.h) / s2v[o.v];
+  const res = (o) => o.y - mu[o.a] - s[o.v] * b[o.t][o.a] - c[o.v];
+  const resF = (o) => o.y - mu[o.a] - b[o.t][o.a] - c[o.v];   // fiabilidade = concordância com o consenso (escala 1)
+  const post = {};
+  for (let it = 0; it < M.iter; it++) {
+    let mexeu = 0;
+    for (const key in porT) { const os = porT[key], i = key.lastIndexOf('|'), t = key.slice(0, i), a = key.slice(i + 1); let num = 0, den = 0;
+      for (const o of os) { const p = prec(o); num += p * s[o.v] * (o.y - mu[a] - c[o.v]); den += p * s[o.v] ** 2; }
+      const nb = num / (den + 1 / sb2[a]); mexeu = Math.max(mexeu, Math.abs(nb - b[t][a])); b[t][a] = nb; post[key] = 1 / (den + 1 / sb2[a]); }
+    for (const v in porV) { const os = porV[v];
+      let num = 0, den = 0; for (const o of os) { const p = prec(o); num += p * (o.y - mu[o.a] - s[v] * b[o.t][o.a]); den += p; }
+      c[v] = num / (den + 1 / sc2);
+      let n2 = 0, d2 = 0; for (const o of os) { const p = prec(o), bb = b[o.t][o.a]; n2 += p * bb * (o.y - mu[o.a] - c[v]); d2 += p * bb * bb; }
+      s[v] = Math.max(0, Math.min(M.sMax, (n2 + 1 / M.sPrior ** 2) / (d2 + 1 / M.sPrior ** 2))); }
+    // âncora: votante típico = mediana simples do viés (cada votante conta min(1, escala): quem não distingue não define o nível)
+    const cm = medianaP(V.map((v) => c[v]), V.map((v) => Math.min(1, s[v]) + 1e-6));
+    for (const v of V) c[v] -= cm; for (const a of K) mu[a] += cm;
+    for (const a of K) { let n = 0, d = 0; for (const o of porA[a] || []) { const p = prec(o); n += p * (o.y - s[o.v] * b[o.t][a] - c[o.v]); d += p; } if (d) mu[a] = n / d; }
+    let r2 = 0, pw = 0; for (const o of obs) { r2 += o.p0 * o.h * res(o) ** 2; pw += o.p0 * o.h; }
+    se2 = Math.max(0.05, r2 / pw);
+    for (const v in porV) { let rr = 0, ww = 0; for (const o of porV[v]) { rr += o.p0 * o.h * resF(o) ** 2; ww += o.p0 * o.h; }
+      s2v[v] = Math.max(0.5 * se2, Math.min(2 * se2, (rr + M.nu * se2) / (ww + M.nu))); }   // fiabilidade entre ½ e 2× a do grupo
+    for (const o of obs) { const z = Math.abs(res(o)) / Math.sqrt(s2v[o.v]); o.h = z <= M.huber ? 1 : M.huber / z; }
+    for (const a of K) { const ks = Object.keys(post).filter((x) => x.endsWith('|' + a)); if (ks.length) sb2[a] = Math.max(0.01, mediaL(ks.map((x) => b[x.slice(0, x.lastIndexOf('|'))][a] ** 2 + post[x]))); }
+    sc2 = Math.max(0.01, mediaL(V.map((v) => c[v] ** 2)) + 0.01);
+    if (it > 30 && mexeu < 1e-5) break;
+  }
+  // a nota sai na escala do votante típico: μ + s_típico·b (s_típico = mediana da escala de quem distingue os jogadores)
+  const sInf = V.map((v) => s[v]).filter((x) => x > 0.3);
+  if (sInf.length < M.minVotantes) return null;   // poucos votantes que distinguem: o modelo não tem onde se apoiar
+  const sTip = medianaP(sInf, sInf.map(() => 1));
+  const stats = {}; for (const t of T) { stats[t] = {}; for (const a of K) if (porT[t + '|' + a]) stats[t][a] = mu[a] + sTip * b[t][a]; }
+  return { stats, vies: c, escala: s, votantes: V.length };
+}
+// O mesmo (votes, convivio) dá sempre o mesmo modelo: guarda-se para as chamadas seguintes (o admin chama calcularCartas várias vezes).
+const _memo = new WeakMap();
+function modeloDosVotos(votes, convivio) {
+  const porConv = _memo.get(votes) || new WeakMap(); _memo.set(votes, porConv);
+  const k = convivio && typeof convivio === 'object' ? convivio : _semConv;
+  if (porConv.has(k)) return porConv.get(k);
+  const { jogos, total } = assiduidadeDe(convivio), obs = [];
+  for (const v of votes) for (const [t, r] of Object.entries(v.r || {})) {
+    if (!r || r.skip || t === v.voter) continue;   // nunca conta voto em si próprio
+    const p0 = pesoVoto2(convivio?.[v.voter]?.[t] || 0, jogos[v.voter] || 0, total);
+    for (const a of AREAS) if (typeof r[a.k] === 'number') obs.push({ v: v.voter, t, a: a.k, y: r[a.k], p0 });
+  }
+  const m = modeloAvaliadores(obs); porConv.set(k, m); return m;
+}
+const _semConv = {};
+
+// players: [{id,nome,convidado,nivel,...}], votes: [{voter, r:{targetId:{skip}|{rem..}}}], convivio = pontosConvivio(jogos)
+// opts.metodo = 'media' força o cálculo antigo (média aparada pesada) — usado também quando há menos de MODELO.minVotantes votantes.
+export function calcularCartas(players, votes, convivio = {}, opts = {}) {
   const cartas = {};
+  const mod = opts.metodo === 'media' ? null : modeloDosVotos(votes, convivio);
+  const { jogos: jogosV, total: jogosL } = assiduidadeDe(convivio);
   for (const p of players) {
     const st = {}, n = {};
     let conhecem = 0;
@@ -92,14 +189,17 @@ export function calcularCartas(players, votes, convivio = {}) {
       for (const v of votes) {
         if (v.voter === p.id) continue; // nunca conta voto em si próprio
         const r = v.r && v.r[p.id];
-        if (r && !r.skip && typeof r[a.k] === 'number') vals.push([r[a.k], pesoVoto(convivio[v.voter]?.[p.id] || 0)]);
+        if (r && !r.skip && typeof r[a.k] === 'number') vals.push([r[a.k], pesoVoto2(convivio[v.voter]?.[p.id] || 0, jogosV[v.voter] || 0, jogosL)]);
       }
-      st[a.k] = mediaAparada(vals);
+      // Quem só joga à baliza (soGR) é um caso à parte na área de GR: o modelo puxá-lo-ia para a média de GR dos jogadores de
+      // campo (no World Crap, 91 → 81). Aí fica a média aparada de sempre; as outras áreas dele seguem o modelo.
+      const soGRgr = p.soGR && a.k === 'gr';
+      st[a.k] = mod && !soGRgr ? (vals.length ? mod.stats[p.id]?.[a.k] ?? mediaAparada(vals) : null) : mediaAparada(vals);
       n[a.k] = vals.length;
     }
     for (const v of votes) { const r = v.r && v.r[p.id]; if (r && !r.skip) conhecem++; }
     const provisoria = AREAS.some((a) => n[a.k] < MIN_VOTOS);
-    cartas[p.id] = { id: p.id, stats: st, n, conhecem, provisoria, overall: overallDe(st) };
+    cartas[p.id] = { id: p.id, stats: st, n, conhecem, provisoria, overall: overallDe(st), metodo: mod ? 'modelo' : 'media' };
   }
   // Convidados com nota provisória (1–10): igual em todas as áreas sem votos suficientes.
   for (const p of players) {
@@ -186,6 +286,20 @@ export const textoLado = (l) => (l?.B ? `🚪 Lado dos balneários: ${l.B === 'b
 
 // A mesma divisão dá sempre a mesma chave, troquem-se ou não as cores.
 export const chaveEquipas = (A, B) => [A, B].map((x) => [...x].sort().join(',')).sort().join('|');
+// Duplas repetidas: λ por cada vez que o par foi da mesma equipa nos últimos `jogos` jogos, com decaimento por jogo.
+// Estudo offline (150 épocas simuladas da Futebolada semanal): colegas diferentes em cada 5 jogos 60 % → 64 % (o teto ronda 65–70 %,
+// porque nem todos vêm sempre), duplas "sempre juntas" 7 % → 3 %, adversários de sempre 6 % → 2 %; equilíbrio verdadeiro +3 %.
+// Escala do custo: 1 ponto de diferença na média das equipas custa 15.
+export const DUPLAS = { jogos: 5, lambda: 15, decai: 0.85 };
+const parDe = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+export function pesoDuplas(recentes) {
+  const W = {};
+  recentes.slice(0, DUPLAS.jogos).forEach(([pb, pp], i) => {
+    const w = DUPLAS.decai ** i;
+    for (const eq of [pb || [], pp || []]) for (let x = 0; x < eq.length; x++) for (let y = x + 1; y < eq.length; y++) { const k = parDe(eq[x], eq[y]); W[k] = (W[k] || 0) + w; }
+  });
+  return W;
+}
 export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) {
   const N = ids.length, metade = Math.floor(N / 2);
   if (N < 2) return [];
@@ -234,6 +348,8 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     return Object.entries(cor).every(([id, c]) => (c === 'B') === sA.has(id));
   };
   const res = [];
+  // restr.recentes = [[brancos], [pretos]] dos últimos jogos, o MAIS RECENTE PRIMEIRO (só se usam os DUPLAS.jogos primeiros).
+  const pesoDupla = restr.recentes?.length ? pesoDuplas(restr.recentes) : null;
   // 🎲 Outras opções (Rui, 17/11): divisões já mostradas nesta sessão (restr.excluir = chaves de chaveEquipas) ficam de fora.
   const excluir = new Set(restr.excluir || []);
   // A nota de campo de cada um (sem a área GR; com a forma, se vier nas cartas). O GR fixo mostra a nota de GR.
@@ -254,6 +370,9 @@ export function gerarEquipas(ids, cartas, anteriores = [], top = 3, restr = {}) 
     // (dados-algoritmos, custo C5L): com a forma ligada, as opções com 5–6 áreas para a mesma equipa quase desaparecem.
     custo += 4 * Math.max(0, Math.max(ganhaA, ganhaB) - 3);
     if (melhorRoda) { const comG = A.some((id) => fixo.has(id)) ? A : B; if (comG.includes(melhorRoda)) custo += 15; }   // preferência, não obrigação
+    // 👥 Duplas repetidas (Rui, 18/11: "todos a jogar com todos ao longo de 5 jogos"): cada par de colegas paga λ por cada vez que
+    // já foi da mesma equipa nos últimos 5 jogos (o mais recente pesa 1, o anterior 0,85, …).
+    if (pesoDupla) for (const eq of [A, B]) for (let i = 0; i < eq.length; i++) for (let j = i + 1; j < eq.length; j++) custo += DUPLAS.lambda * (pesoDupla[parDe(eq[i], eq[j])] || 0);
     for (const [pa, pb] of anteriores) {
       const sA = new Set(A);
       if (Math.max(pa.filter((x) => sA.has(x)).length, pb.filter((x) => sA.has(x)).length) === metade) custo += 40;
