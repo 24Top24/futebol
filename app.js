@@ -5,7 +5,7 @@ import { AREAS, NIVEIS, POSICOES, calcularCartas, gerarEquipas, tier, notaDe, ca
 import { paginaMarcador, hojeLocal, campoLados } from './marcador.js?v=27';
 import { resumoFisico, campoDeNuvem, somarGrelhas, gpsValido } from './fisico.js?v=8';
 import { htmlDNAJogo, htmlFisicoJogo, htmlHeatmap, htmlConquistas, imagemCartao, jogosDe as jogosConq, htmlDesafiosAntes, htmlDesafiosJogo, htmlDesafioMes } from './conquistas-ui.js?v=16';
-import { prazoVotacao, vencedora, htmlVotacao, ligarContagem } from './votoequipas.js?v=1';
+import { prazoVotacao, vencedora, htmlVotacao, ligarContagem } from './votoequipas.js?v=2';
 import { dnaJogo } from './conquistas.js?v=6';
 import { atribuirDesafios, completarDesafiosMes } from './desafios.js?v=5';
 import { lerFicheiro, zonas, ZONAS, fcMaxIdade, mediasTreinos, idadeDe, fitDeTreino, temGpsPista } from './treinos.js?v=28';

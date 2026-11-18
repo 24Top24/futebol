@@ -80,7 +80,7 @@ export function htmlVotacao(v, votos, eu, nome, { moderador = false } = {}) {
   const lista = (ids) => ids.map((id) => esc(nome(id))).join(', ');
   const cond = textoRestr(v.restr, nome);
   const camisolas = votos.filter((x) => x.so);
-  return `<section class="cartao votacao"><div class="cartao-tit">🗳 Escolhe as equipas — jogo de ${esc(v.data || '')}</div>
+  return `<section class="cartao votacao"><div class="cartao-tit">🗳 Escolhe as equipas — jogo de ${esc((v.data || '').split('-').reverse().join('/'))}</div>
     <p class="mute" style="margin:0 0 6px">${aberta ? `A votação fecha daqui a <b data-prazo="${prazo}">${faltaTexto(prazo - Date.now())}</b>` : '<b>Votação fechada.</b> Fica a mais votada (em empate, a mais equilibrada).'}
       · votam os ${(v.sel || []).length} convocados, com sessão iniciada.</p>
     ${cond.length ? `<details class="mute" style="margin:0 0 8px"><summary>Condicionantes de quem abriu o jogo (${cond.length})</summary>${cond.map((c) => `<div>${c}</div>`).join('')}</details>` : ''}
