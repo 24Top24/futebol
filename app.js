@@ -1706,12 +1706,20 @@ async function notasDeTodasAsLigas() {
   }
   lsSet('notas-todas', String(Date.now()));
 }
+// Cartas de todos para a página Jogadores (só a Futebolada semanal): o mesmo formato de antes de 29/10 (cartaPublica lê-o).
+function publicarCartasTodos(ps, cartas) {
+  return DB.setPublic('cartas', { visivel: true, ts: Date.now(), cartas: ps.filter((p) => !p.convidado && p.ativo !== false && cartas[p.id])
+    .map((p) => { const c = cartas[p.id];
+      return { p: { nome: p.nome, alias: p.alias || '', foto: p.fotoPropria || p.foto || '' }, c: { stats: c.stats, overall: c.overall, posicao: c.posicao || null, provisoria: !!c.provisoria, estimada: !!c.estimada } }; }) });
+}
 async function publicarCartasPessoais() {
   notasDeTodasAsLigas().catch((e) => console.error(e));
   promoverEmprestados().then((n) => n && toast(`${n} emprestado(s) passaram a jogador da liga ✔`)).catch((e) => console.error(e));
   const ativos = A.players.filter((p) => p.ativo !== false && !p.convidado);
   const cartas = calcularCartas(A.players.filter((p) => p.ativo !== false), A.votes, A.conv);
   publicarNotasFora(cartas, A.players).catch((e) => console.error(e));   // a nota geral de cada um para as outras ligas onde joga
+  // Cartas de todos publicadas (Futebolada semanal): acompanham as cartas de agora.
+  if (!DB.ligaAtual()) DB.getPublic('cartas').then((pc) => pc?.visivel && publicarCartasTodos(A.players, cartas)).catch((e) => console.error(e));
   const antes = Object.fromEntries((await DB.listMinhasCartas()).map((x) => [x.id, x]));
   const mes = new Date().toISOString().slice(0, 7);
   const RV = await resultadosValidos();
@@ -2489,6 +2497,7 @@ function secJogadores(el) {
       ${vista === 'votacao' ? '' : `<input id="pl-busca" type="search" placeholder="Procurar jogador…" value="${esc(A.plBusca)}" style="max-width:240px;flex:1">`}</div>
     ${vista === 'cartas' ? `<div class="cartao"><div class="cartao-tit">🃏 Mostrar as cartas</div>
       <div class="linha"><span>Cartas pessoais <span class="mute">(cada um vê só a sua, no 👤 Eu)</span>:</span><span id="cp-estado" class="mute">…</span><button class="peq" id="cp-toggle">…</button></div>
+      ${DB.ligaAtual() ? '' : '<div class="linha" style="margin-top:8px"><span>Cartas de todos <span class="mute">(página Jogadores, todos veem; votos continuam privados)</span>:</span><span id="ct-estado" class="mute">…</span><button class="peq" id="ct-toggle">…</button></div>'}
       <p class="mute" style="font-size:12px;margin:8px 0 0">As cartas de todos nunca são públicas: cada um só vê a sua.<br>"Provisória" = menos de 3 votos numa área. "Estimada" = completada pelo nível que deste.</p></div>` : ''}
     <div id="pl-corpo"></div>
     ${vista === 'votacao' ? `<details class="cartao"><summary><b>Votos por votante</b> <span class="mute">(só tu vês)</span></summary>
@@ -2526,6 +2535,23 @@ function secJogadores(el) {
   g('pl-add').onclick = () => fichaJogador(el, null, cartas);
   el.querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { A.plVista = b.dataset.v; secJogadores(el); }));
   if (g('pl-busca')) g('pl-busca').oninput = (e) => { A.plBusca = e.target.value; corpo(); };
+  // 👥 Cartas de todos visíveis a todos (Rui, 18/11, só na Futebolada semanal): public/cartas = { visivel, cartas }.
+  // As regras deixam qualquer um ler só quando visivel é true; ao recalcular as cartas, publicarCartasPessoais atualiza-as.
+  if (g('ct-toggle')) {
+    (async () => {
+      const on = !!(await DB.getPublic('cartas').catch(() => null))?.visivel;
+      if (!g('ct-estado')) return;
+      g('ct-estado').textContent = on ? '🟢 Publicadas' : '🔴 Privadas';
+      const b = g('ct-toggle');
+      b.textContent = on ? 'Esconder' : 'Publicar para todos';
+      b.className = 'peq ' + (on ? 'perigo' : 'prim');
+      b.onclick = async () => {
+        if (!on && !confirm('Publicar as cartas de todos? Qualquer pessoa com o link vê o overall e as áreas de cada um.')) return;
+        await (on ? DB.setPublic('cartas', { visivel: false, ts: Date.now() }) : publicarCartasTodos(porOvr, cartas));
+        toast(on ? 'Cartas escondidas' : 'Cartas publicadas'); secJogadores(el);
+      };
+    })();
+  }
   if (g('cp-toggle')) {
     (async () => {
       const estado = (await DB.getPublic('estado')) || {}, on = !!estado.cartasPessoais;

@@ -315,7 +315,7 @@ export function calcularElo(jogos, cartas = {}) {
   return F;
 }
 
-// Cartas com o overall corrigido pela forma (para gerar equipas), no máximo ±maxPct. Não mexe nas áreas.
+// Cartas com o overall corrigido pela forma (para gerar equipas), no máximo ±maxPct; as áreas mudam na mesma proporção.
 export function aplicarForma(cartas, elo) {
   const out = {};
   for (const [id, c] of Object.entries(cartas)) {
